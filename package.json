@@ -1,0 +1,53 @@
+{
+  "name": "browgent",
+  "version": "0.2.0",
+  "description": "Local-first browser for AI agents — desktop co-browse, tools, trajectory, policies, MCP",
+  "main": "./out/main/index.js",
+  "author": "Browgent contributors",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Errr0rr404/browgent.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Errr0rr404/browgent/issues"
+  },
+  "homepage": "https://github.com/Errr0rr404/browgent#readme",
+  "keywords": [
+    "electron",
+    "browser",
+    "ai-agent",
+    "browser-automation",
+    "mcp",
+    "grok",
+    "xai",
+    "local-first",
+    "co-browse"
+  ],
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "postinstall": "electron-builder install-app-deps"
+  },
+  "dependencies": {
+    "lucide-react": "^0.511.0",
+    "uuid": "^11.1.0",
+    "zustand": "^5.0.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.21",
+    "@types/react": "^19.1.4",
+    "@types/react-dom": "^19.1.5",
+    "@types/uuid": "^10.0.0",
+    "@vitejs/plugin-react": "^4.4.1",
+    "electron": "^36.2.1",
+    "electron-builder": "^26.0.12",
+    "electron-vite": "^3.1.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "typescript": "^5.8.3",
+    "vite": "^6.3.5"
+  }
+}

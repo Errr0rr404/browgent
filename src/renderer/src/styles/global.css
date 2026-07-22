@@ -1,0 +1,134 @@
+:root {
+  color-scheme: dark;
+
+  --bg-app: #090a0d;
+  --bg-chrome: #0e1016;
+  --bg-elevated: #151922;
+  --bg-hover: #1c2130;
+  --bg-active: #242b3d;
+  --bg-input: #0b0d12;
+  --bg-tab: #12151e;
+  --bg-tab-active: #1a1f2c;
+
+  --text-primary: #f2f4f8;
+  --text-secondary: #a0a8ba;
+  --text-muted: #6a7285;
+  --text-inverse: #081016;
+
+  --accent: #3ee0c5;
+  --accent-2: #5b8cff;
+  --accent-dim: rgba(62, 224, 197, 0.12);
+  --accent-strong: #22c7ae;
+  --accent-glow: rgba(62, 224, 197, 0.28);
+
+  --danger: #ff7b7b;
+  --warning: #f5c14a;
+  --info: #7aa7ff;
+
+  --border: rgba(255, 255, 255, 0.06);
+  --border-strong: rgba(255, 255, 255, 0.11);
+  --border-focus: rgba(62, 224, 197, 0.5);
+
+  --radius-sm: 7px;
+  --radius-md: 11px;
+  --radius-lg: 16px;
+  --radius-pill: 999px;
+
+  --titlebar-h: 42px;
+  --tabbar-h: 38px;
+  --toolbar-h: 50px;
+  --statusbar-h: 30px;
+  --agent-w: 400px;
+  --sidebar-w: 248px;
+
+  --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --shadow-soft: 0 8px 32px rgba(0, 0, 0, 0.35);
+  --shadow-panel: -12px 0 40px rgba(0, 0, 0, 0.28);
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  background: var(--bg-app);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  user-select: none;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+  border: none;
+  background: none;
+  padding: 0;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+input,
+textarea {
+  outline: none;
+}
+
+::selection {
+  background: rgba(62, 224, 197, 0.28);
+  color: var(--text-primary);
+}
+
+::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.18);
+  background-clip: padding-box;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

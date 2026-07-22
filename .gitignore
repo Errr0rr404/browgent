@@ -1,0 +1,35 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+out/
+release/
+*.tsbuildinfo
+
+# Env & secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials.json
+
+# Logs & OS
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+
+# Editors
+.idea/
+.vscode/
+*.local
+*.swp
+*~
+
+# Packaging artifacts
+*.dmg
+*.exe
+*.AppImage
+*.blockmap

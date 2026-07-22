@@ -1,0 +1,21 @@
+appId: ai.browgent.app
+productName: Browgent
+directories:
+  buildResources: build
+files:
+  - '!**/.vscode/*'
+  - '!src/*'
+  - '!electron.vite.config.*'
+  - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
+mac:
+  category: public.app-category.developer-tools
+  target:
+    - dmg
+    - zip
+win:
+  target:
+    - nsis
+linux:
+  target:
+    - AppImage
+  category: Network
