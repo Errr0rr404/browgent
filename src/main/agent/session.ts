@@ -72,16 +72,6 @@ export class AgentSession {
     this.emit()
   }
 
-  /** True while a task loop is executing (thinking/acting/paused mid-run). */
-  isBusy(): boolean {
-    return (
-      this.taskInFlight ||
-      this.status === 'thinking' ||
-      this.status === 'acting' ||
-      this.status === 'paused'
-    )
-  }
-
   private refreshProvider(): void {
     this.provider = getProviderLabel()
     this.model = isLlmConfigured() ? getModel() : null
@@ -292,8 +282,8 @@ export class AgentSession {
       if (!this.isActiveRun(gen)) return
       const err = e instanceof Error ? e.message : 'Agent error'
       this.trace('system', 'Agent error', err)
-      // Fallback to heuristics if LLM fails (e.g. bad key, network)
-      if (this.provider !== 'heuristic' && this.isActiveRun(gen)) {
+      // Fallback to heuristics only when no mutating steps ran yet (avoid re-submits).
+      if (this.provider !== 'heuristic' && this.isActiveRun(gen) && this.stepCount === 0) {
         this.pushSystem(
           `${getProviderDisplayName()} error — falling back to heuristics: ${err}`
         )
@@ -311,7 +301,11 @@ export class AgentSession {
           return
         }
       } else if (this.isActiveRun(gen)) {
-        this.pushAssistant(`Failed: ${err}`)
+        this.pushAssistant(
+          this.stepCount > 0
+            ? `Stopped after LLM error (partial progress kept — check trajectory): ${err}`
+            : `Failed: ${err}`
+        )
         this.status = 'error'
         this.taskInFlight = false
         this.tabs.setOwner(null, null)
@@ -351,12 +345,15 @@ export class AgentSession {
         `- Suggested start URL: ${intent.navigateUrl}\n` +
         (intent.task ? `- Remaining goal: ${intent.task}\n` : '')
     }
+    // Point at values already in the user message — do NOT re-echo secrets into the prompt.
     if (creds.email || creds.password || creds.username) {
       intentHint +=
-        `\n(Hint) Values already in the user message — type them into the right fields when needed:\n` +
-        (creds.email ? `- email-like: ${creds.email}\n` : '') +
-        (creds.username ? `- username-like: ${creds.username}\n` : '') +
-        (creds.password ? `- password-like: ${creds.password}\n` : '')
+        `\n(Hint) The user message already includes credentials/values to type into the form:\n` +
+        (creds.email ? `- email is present in the message (type it into the email field)\n` : '') +
+        (creds.username ? `- username is present in the message\n` : '') +
+        (creds.password
+          ? `- password is present in the message — type it into the password field; never repeat it in chat or think text\n`
+          : '')
     }
     if (this.mode === 'act') {
       intentHint +=
@@ -544,6 +541,7 @@ export class AgentSession {
         if (call.name === 'done') {
           finalSummary = String(call.args.summary ?? result.summary)
           hitDone = true
+          break
         }
       }
 
@@ -665,6 +663,7 @@ export class AgentSession {
         if (call.name === 'done' && result.ok) {
           finalSummary = String(call.args.summary ?? result.summary)
           finished = true
+          break
         }
 
         action.status = result.ok ? 'done' : 'error'
@@ -801,13 +800,24 @@ function summarizeArgs(c: ToolCall): string {
   const a = c.args
   if (a.url) return String(a.url)
   if (a.ref) return String(a.ref)
-  if (a.text) return String(a.text).slice(0, 40)
+  if (a.text != null && String(a.text).length > 0) {
+    // Never show typed secrets in action chips / trajectory titles
+    if (c.name === 'type' && looksSecretText(String(a.text))) return '••••••'
+    return String(a.text).slice(0, 40)
+  }
   if (a.summary) return String(a.summary).slice(0, 60)
   if (a.thought) return String(a.thought).slice(0, 60)
   if (a.question) return String(a.question).slice(0, 60)
   if (a.key) return String(a.key)
   if (a.direction) return String(a.direction)
   return ''
+}
+
+/** Heuristic: likely password / token — hide from UI summaries. */
+function looksSecretText(text: string): boolean {
+  if (text.length >= 8 && /[A-Za-z]/.test(text) && /\d/.test(text)) return true
+  if (text.length >= 12 && !/\s/.test(text)) return true
+  return false
 }
 
 /** Heuristic: model is narrating / listing refs instead of finishing a real browser task */

@@ -47,20 +47,20 @@ src/
       llm.ts              OpenAI-compatible LLM (Grok default)
       env.ts              .env loader
     mcp/
-      server.ts           In-process tool bridge status
+      server.ts           Tool catalog / MCP status (STDIO MCP is roadmap)
   preload/
     index.ts              Safe API surface for renderer
   renderer/
     src/                  React chrome UI, themes, bookmarks
   shared/
     tools.ts              Canonical tool definitions
-    policies.ts           Allow/block hosts, confirm rules
+    policies.ts           Allow/block hosts, confirm rules, mode tool sets
     sites.ts              Aliases + browse-intent parsing
     types.ts              Tab/agent IPC types
     driver.ts             DriverMode + CdpEndpointStatus
     bookmarks.ts          Arc-style bookmark model
-  examples/
-    playwright-connect.mjs  connectOverCDP sample
+examples/
+  playwright-connect.mjs  connectOverCDP sample (repo root, not under src/)
 ```
 
 ## Dual driver
@@ -97,8 +97,9 @@ Exposed as `window.browgent` (see `src/preload/index.ts`):
 
 - Tabs: create, close, activate, navigate, back/forward/reload/stop
 - Chrome metrics for view layout
-- Agent: send, stop, clear, pause, resume, takeover, mode, policy, confirm, export
+- Agent: send, getState, stop, clear, pause, resume, takeover, mode, policy, confirm, reject, answerHuman, export
 - Driver: status (CDP URL, mode), setMode (`dom` | `cdp`)
+- MCP: getMcpStatus (tool catalog; full STDIO server roadmap)
 - Window controls (non-macOS)
 
 ## Related

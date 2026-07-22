@@ -42,18 +42,32 @@ export function AgentPanel({ open, state, onClose }: Props): React.JSX.Element {
   const busy =
     state?.status === 'thinking' ||
     state?.status === 'acting' ||
+    state?.status === 'waiting_human' ||
+    state?.status === 'paused'
+  const canStop =
+    state?.status === 'thinking' ||
+    state?.status === 'acting' ||
+    state?.status === 'paused' ||
     state?.status === 'waiting_human'
   const showSuggestions = (state?.messages?.length ?? 0) <= 1 && !busy
   const provider = state?.provider ?? 'heuristic'
   const model = state?.model
 
   const onVoiceFinal = useCallback((text: string) => {
-    setDraft(text)
+    const t = text.trim()
+    if (t) setDraft(t)
   }, [])
 
   const onVoiceInterim = useCallback((text: string) => {
-    // Live partial transcript so Send can use it immediately
-    if (text) setDraft(text)
+    // Only live-update draft when the user is not mid-edit (empty or STT-owned)
+    if (!text) return
+    setDraft((prev) => {
+      // Don't clobber user-typed content that differs from last STT stream
+      if (prev && !prev.startsWith(text.slice(0, Math.min(12, text.length))) && text.length < prev.length) {
+        return prev
+      }
+      return text
+    })
   }, [])
 
   const voice = useVoiceInput({
@@ -137,13 +151,25 @@ export function AgentPanel({ open, state, onClose }: Props): React.JSX.Element {
           {provider !== 'heuristic' ? providerLabel(provider) : 'Heuristic'}
         </span>
         <div className="agent-header-actions">
-          <button type="button" className="icon-btn" title="Export trajectory" onClick={() => void exportJson()}>
+          <button
+            type="button"
+            className="icon-btn"
+            title="Export trajectory"
+            aria-label="Export trajectory"
+            onClick={() => void exportJson()}
+          >
             <Download size={15} strokeWidth={1.75} />
           </button>
-          <button type="button" className="icon-btn" title="Clear" onClick={() => void window.browgent.clearAgent()}>
+          <button
+            type="button"
+            className="icon-btn"
+            title="Clear"
+            aria-label="Clear session"
+            onClick={() => void window.browgent.clearAgent()}
+          >
             <Eraser size={15} strokeWidth={1.75} />
           </button>
-          <button type="button" className="icon-btn" title="Close" onClick={onClose}>
+          <button type="button" className="icon-btn" title="Close" aria-label="Close agent panel" onClick={onClose}>
             <X size={15} strokeWidth={1.75} />
           </button>
         </div>
@@ -178,27 +204,45 @@ export function AgentPanel({ open, state, onClose }: Props): React.JSX.Element {
             <Pause size={13} /> Pause
           </button>
         )}
-        {busy && (
+        {canStop && (
           <button type="button" className="ctrl-btn danger" onClick={() => void window.browgent.stopAgent()}>
             <Square size={11} fill="currentColor" /> Stop
           </button>
         )}
       </div>
 
-      <div className="panel-tabs">
-        <button type="button" className={tab === 'chat' ? 'on' : ''} onClick={() => setTab('chat')}>
+      <div className="panel-tabs" role="tablist" aria-label="Agent views">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === 'chat'}
+          className={tab === 'chat' ? 'on' : ''}
+          onClick={() => setTab('chat')}
+        >
           Chat
         </button>
-        <button type="button" className={tab === 'trajectory' ? 'on' : ''} onClick={() => setTab('trajectory')}>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === 'trajectory'}
+          className={tab === 'trajectory' ? 'on' : ''}
+          onClick={() => setTab('trajectory')}
+        >
           Trajectory
         </button>
-        <button type="button" className={tab === 'policy' ? 'on' : ''} onClick={() => setTab('policy')}>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === 'policy'}
+          className={tab === 'policy' ? 'on' : ''}
+          onClick={() => setTab('policy')}
+        >
           Policy
         </button>
       </div>
 
       {state?.pendingConfirmation && (
-        <div className="confirm-banner">
+        <div className="confirm-banner" role="alert" aria-live="assertive">
           <p>{state.pendingConfirmation.reason}</p>
           <div className="confirm-actions">
             <button
@@ -220,7 +264,7 @@ export function AgentPanel({ open, state, onClose }: Props): React.JSX.Element {
       )}
 
       {state?.waitingQuestion && (
-        <div className="confirm-banner">
+        <div className="confirm-banner" role="alert" aria-live="assertive">
           <p>
             <strong>Agent needs you:</strong> {state.waitingQuestion}
           </p>
@@ -307,6 +351,9 @@ export function AgentPanel({ open, state, onClose }: Props): React.JSX.Element {
           className="agent-input"
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
+          aria-label={
+            state?.waitingQuestion ? 'Answer for the agent' : 'Agent instruction'
+          }
           placeholder={
             voice.status === 'listening'
               ? 'Listening… speak a browser instruction'
@@ -386,7 +433,12 @@ function ModeBtn({
   onClick: () => void
 }): React.JSX.Element {
   return (
-    <button type="button" className={`mode-btn${active ? ' on' : ''}`} onClick={onClick}>
+    <button
+      type="button"
+      className={`mode-btn${active ? ' on' : ''}`}
+      aria-pressed={active}
+      onClick={onClick}
+    >
       {icon}
       {label}
     </button>
@@ -565,7 +617,8 @@ function PolicyPane({ state }: { state: AgentSessionState | null }): React.JSX.E
           ? `${providerLabel(state.provider)} (${state.model ?? 'model'}) — OpenAI-compatible tools`
           : 'Heuristic fallback — set XAI_API_KEY (Grok default) or BROWGENT_PROVIDER + API key'}
         <br />
-        MCP tools: navigate, click, type, observe, extract… — same session as this desktop.
+        Desktop tools: navigate, click, type, observe, extract… Full STDIO MCP server is on the
+        roadmap; Playwright attaches via CDP (status bar).
       </div>
     </div>
   )

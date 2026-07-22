@@ -15,5 +15,7 @@
 Root project files:
 
 - [README](../README.md) — short overview + download
+- [AGENTS](../AGENTS.md) — short map for coding agents
+- [CONTRIBUTING](../CONTRIBUTING.md) — pointer to this guide
 - [SECURITY](../SECURITY.md) — private vulnerability reports
 - [LICENSE](../LICENSE) — MIT

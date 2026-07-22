@@ -20,14 +20,14 @@ Research synthesized from Browserbase/Stagehand, browser-use, Skyvern, MultiOn, 
 | Navigate / click / type / scroll / keys | browser-use, Stagehand, CU | ✅ Tool surface |
 | Compact element refs (`@e1`) | agent-browser, browser-use | ✅ A11y+DOM index |
 | Screenshots + text extract | Everyone | ✅ Dual observation |
-| Structured extract | Stagehand, Skyvern | ✅ extract_text / links / JSON-ish |
+| Structured extract | Stagehand, Skyvern | ✅ `extract_text` / `extract_links` |
 | Session cookies / profile | BaaS contexts | ✅ `persist:browgent-pages` |
 | Human takeover / confirm | Operator, Claude Chrome | ✅ Takeover + policy gates |
 | Action trajectory / export | Skyvern audit, Stagehand replay | ✅ Trajectory log + JSON export |
 | Live narration of steps | ChatGPT agent UX | ✅ Action chips + activity feed |
 | Research vs act modes | Comet vs Operator | ✅ research / act / watch |
-| Domain policy / safety | Claude allowlists | ✅ Policy engine (differentator) |
-| MCP server same session | Browserbase MCP (cloud) | ✅ Local MCP → same tabs |
+| Domain policy / safety | Claude allowlists | ✅ Policy engine (differentiator) |
+| MCP server same session | Browserbase MCP (cloud) | ⚠️ Tool catalog ready; STDIO MCP roadmap |
 | Playwright connectOverCDP | Browserbase / raw Chromium | ✅ Dual mode (CDP endpoint + DOM driver) |
 | Shared tool/type surface | All infra | ✅ `src/shared` tools + policies + driver types |
 | CAPTCHA solve / residential proxy | Cloud BaaS | ⏳ Optional later (cloud runner) |
@@ -38,7 +38,7 @@ Research synthesized from Browserbase/Stagehand, browser-use, Skyvern, MultiOn, 
 
 1. **Human + agent true co-browsing** — same tab tree, not cloud live-view
 2. **Local-first identity** — real cookies/SSO without shipping session to multi-tenant cloud
-3. **Desktop + MCP + SDK one object model**
+3. **Shared tool surface** (`src/shared`) — STDIO MCP + published SDK planned
 4. **Browser-native policy engine** (allowlist, max steps, confirm submits/payments)
 5. **Dual observation timeline** (compact refs + optional screenshots) in one UI
 6. **Tab locks / ownership** primitives for multi-agent (foundation)
@@ -47,5 +47,5 @@ Research synthesized from Browserbase/Stagehand, browser-use, Skyvern, MultiOn, 
 
 ## Implementation priority (this sprint)
 
-P0 tools + observations + trajectory + policies + takeover + modes + MCP + UI  
-P1 cloud runners, CAPTCHA, skill replay compiler, multi-agent locks
+P0 tools + observations + trajectory + policies + takeover + modes + dual driver + UI ✅  
+P1 STDIO MCP server, cloud runners, CAPTCHA, skill replay, multi-agent locks

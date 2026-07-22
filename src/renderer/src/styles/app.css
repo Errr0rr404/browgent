@@ -875,7 +875,7 @@
 .content-hole {
   min-width: 0;
   min-height: 0;
-  background: #050608;
+  background: var(--bg-app, #050608);
   position: relative;
   overflow: hidden;
 }
@@ -1284,7 +1284,7 @@
   gap: 12px;
   height: var(--statusbar-h);
   padding: 0 14px;
-  background: #08090d;
+  background: var(--bg-chrome, #08090d);
   border-top: 1px solid var(--border);
   color: var(--text-muted);
   font-size: 11px;

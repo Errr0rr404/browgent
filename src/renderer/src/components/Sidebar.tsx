@@ -197,9 +197,9 @@ export function Sidebar({
           <button
             key={fav.id}
             type="button"
-            role="listitem"
             className="arc-favorite-tile"
             title={fav.title}
+            aria-label={fav.title || fav.url}
             onClick={() => onOpenUrl(fav.url)}
             onContextMenu={(e) =>
               openCtx(e, { kind: 'favorite', id: fav.id, x: e.clientX, y: e.clientY })
@@ -386,8 +386,9 @@ export function Sidebar({
           ref={menuRef}
           className="arc-menu"
           style={{
-            left: Math.min(menu.x, window.innerWidth - 200),
-            top: Math.min(menu.y, window.innerHeight - 160)
+            // Keep menu inside chrome (sidebar) — WebContentsView paints above HTML
+            left: Math.min(Math.max(8, menu.x), Math.min(window.innerWidth - 200, 236)),
+            top: Math.min(Math.max(48, menu.y), window.innerHeight - 160)
           }}
           role="menu"
         >

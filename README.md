@@ -26,7 +26,7 @@ Consumer AI browsers (Comet, Dia, Atlas) optimize for “ask the assistant.” C
 | **Compact element refs** (`e1`, `e2`…) — Stagehand / browser-use style observe | ✅ | — | ❌ | ❌ | ❌ | via frameworks |
 | **Works offline of a vendor chat** — heuristic planner without API key | ✅ | n/a | ❌ | ❌ | ❌ | n/a |
 | **Model not locked to one cloud chat** — Grok via key; swap/extend the loop | ✅ | n/a | Perplexity | product LLM | OpenAI | bring-your-agent |
-| **MCP-ready same session** — tools map to the desktop tabs you see | ✅ | extensions | ❌ | ❌ | ❌ | cloud MCP |
+| **Shared tool surface** — desktop tools catalog; STDIO MCP roadmap; Playwright CDP today | ⚠️ | extensions | ❌ | ❌ | ❌ | cloud MCP |
 | **Voice → agent on real tabs** | ✅ | — | ⚠️ | ⚠️ | ⚠️ | — |
 
 \*Browserbase, Steel, Kernel, Hyperbrowser, etc. — great for fleets; not a local co-browse desktop.
@@ -39,7 +39,7 @@ Consumer AI browsers (Comet, Dia, Atlas) optimize for “ask the assistant.” C
 Chrome          →  You browse. No agent runtime.
 Comet / Dia / Atlas →  Polished AI product browser (closed, vendor brain).
 Cloud BaaS      →  Agents at scale in someone else's Chromium.
-Browgent        →  You + agent + Playwright/MCP on *your* tabs, with policy + audit.
+Browgent        →  You + agent + Playwright (CDP) on *your* tabs, with policy + audit.
 ```
 
 Browgent is not trying to be lighter than headless Playwright. It is trying to be the **best local co-browse agent browser**: open, attachable, policy-aware, and human-in-the-loop by default.
@@ -69,8 +69,8 @@ Optional: copy `.env.example` → `.env` and set `XAI_API_KEY` for [Grok](https:
 | Mode | Behavior |
 |------|----------|
 | **Act** | Full browser control (navigate, click, type, …) |
-| **Research** | Read-mostly tools (observe, extract, navigate) |
-| **Watch** | You browse; agent only observes / answers |
+| **Research** | Read-mostly (nav + observe/extract/tabs; no click/type) |
+| **Watch** | You browse; agent observes / answers |
 
 ### Dual driver + Playwright
 
@@ -83,10 +83,10 @@ Optional: copy `.env.example` → `.env` and set `XAI_API_KEY` for [Grok](https:
 CDP listens on `http://127.0.0.1:9222` by default (localhost only).
 
 ```bash
-npm run dev                                          # normal + CDP
-BROWGENT_AGENT_ONLY=1 npm run dev                    # compact automation shell
-BROWGENT_HEADLESS=1 BROWGENT_AGENT_ONLY=1 npm run dev
-npm i -D playwright && node examples/playwright-connect.mjs
+npm run dev                 # normal UI + CDP on :9222 (localhost)
+npm run dev:agent           # compact automation shell
+npm run dev:headless        # hidden window + agent-only + CDP
+npm i -D playwright && npm run playwright:example
 ```
 
 Disable remote debugging with `BROWGENT_CDP=0`. Details: [docs/playwright.md](./docs/playwright.md).

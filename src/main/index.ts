@@ -145,6 +145,12 @@ function pushFullState(): void {
   if (agent) mainWindow.webContents.send(IPC.AGENT_STATE, agent.getState())
 }
 
+function assertChromeSender(e: Electron.IpcMainInvokeEvent): void {
+  if (!mainWindow || mainWindow.isDestroyed() || e.sender !== mainWindow.webContents) {
+    throw new Error('Unauthorized IPC sender')
+  }
+}
+
 function registerIpcOnce(): void {
   if (ipcRegistered) return
   ipcRegistered = true
@@ -161,53 +167,126 @@ function registerIpcOnce(): void {
     }
   }
 
-  ipcMain.handle(IPC.TABS_GET, () => tabs?.getState() ?? [])
-  ipcMain.handle(IPC.TAB_CREATE, (_e, url?: string) => tabs?.createTab(url ?? HOME_URL, true) ?? null)
-  ipcMain.handle(IPC.TAB_CLOSE, (_e, id: TabId) => tabs?.closeTab(id))
-  ipcMain.handle(IPC.TAB_ACTIVATE, (_e, id: TabId) => tabs?.activateTab(id))
-  ipcMain.handle(IPC.TAB_NAVIGATE, (_e, payload: NavigatePayload) =>
-    tabs?.navigate(payload.tabId, payload.input)
-  )
-  ipcMain.handle(IPC.TAB_BACK, (_e, id?: TabId) => tabs?.goBack(id))
-  ipcMain.handle(IPC.TAB_FORWARD, (_e, id?: TabId) => tabs?.goForward(id))
-  ipcMain.handle(IPC.TAB_RELOAD, (_e, id?: TabId) => tabs?.reload(id))
-  ipcMain.handle(IPC.TAB_STOP, (_e, id?: TabId) => tabs?.stop(id))
+  ipcMain.handle(IPC.TABS_GET, (e) => {
+    assertChromeSender(e)
+    return tabs?.getState() ?? []
+  })
+  ipcMain.handle(IPC.TAB_CREATE, (e, url?: string) => {
+    assertChromeSender(e)
+    return tabs?.createTab(url ?? HOME_URL, true) ?? null
+  })
+  ipcMain.handle(IPC.TAB_CLOSE, (e, id: TabId) => {
+    assertChromeSender(e)
+    return tabs?.closeTab(id)
+  })
+  ipcMain.handle(IPC.TAB_ACTIVATE, (e, id: TabId) => {
+    assertChromeSender(e)
+    return tabs?.activateTab(id)
+  })
+  ipcMain.handle(IPC.TAB_NAVIGATE, (e, payload: NavigatePayload) => {
+    assertChromeSender(e)
+    return tabs?.navigate(payload.tabId, payload.input)
+  })
+  ipcMain.handle(IPC.TAB_BACK, (e, id?: TabId) => {
+    assertChromeSender(e)
+    return tabs?.goBack(id)
+  })
+  ipcMain.handle(IPC.TAB_FORWARD, (e, id?: TabId) => {
+    assertChromeSender(e)
+    return tabs?.goForward(id)
+  })
+  ipcMain.handle(IPC.TAB_RELOAD, (e, id?: TabId) => {
+    assertChromeSender(e)
+    return tabs?.reload(id)
+  })
+  ipcMain.handle(IPC.TAB_STOP, (e, id?: TabId) => {
+    assertChromeSender(e)
+    return tabs?.stop(id)
+  })
 
-  ipcMain.handle(IPC.CHROME_METRICS, (_e, metrics: BrowserChromeMetrics) =>
-    tabs?.setChromeMetrics(metrics)
-  )
-  ipcMain.handle(IPC.WINDOW_MINIMIZE, () => mainWindow?.minimize())
-  ipcMain.handle(IPC.WINDOW_MAXIMIZE, () => {
+  ipcMain.handle(IPC.CHROME_METRICS, (e, metrics: BrowserChromeMetrics) => {
+    assertChromeSender(e)
+    return tabs?.setChromeMetrics(metrics)
+  })
+  ipcMain.handle(IPC.WINDOW_MINIMIZE, (e) => {
+    assertChromeSender(e)
+    return mainWindow?.minimize()
+  })
+  ipcMain.handle(IPC.WINDOW_MAXIMIZE, (e) => {
+    assertChromeSender(e)
     if (!mainWindow) return
     if (mainWindow.isMaximized()) mainWindow.unmaximize()
     else mainWindow.maximize()
   })
-  ipcMain.handle(IPC.WINDOW_CLOSE, () => mainWindow?.close())
+  ipcMain.handle(IPC.WINDOW_CLOSE, (e) => {
+    assertChromeSender(e)
+    return mainWindow?.close()
+  })
 
-  ipcMain.handle(IPC.AGENT_SEND, async (_e, text: string, tabId?: TabId) => {
+  ipcMain.handle(IPC.AGENT_SEND, async (e, text: string, tabId?: TabId) => {
+    assertChromeSender(e)
     await agent?.send(text, tabId)
   })
-  ipcMain.handle(IPC.AGENT_GET, () => agent?.getState() ?? null)
-  ipcMain.handle(IPC.AGENT_STOP, () => agent?.stop())
-  ipcMain.handle(IPC.AGENT_CLEAR, () => agent?.clear())
-  ipcMain.handle(IPC.AGENT_PAUSE, () => agent?.pause())
-  ipcMain.handle(IPC.AGENT_RESUME, () => agent?.resume())
-  ipcMain.handle(IPC.AGENT_TAKEOVER, () => agent?.takeover())
-  ipcMain.handle(IPC.AGENT_SET_MODE, (_e, mode: AgentMode) => agent?.setMode(mode))
-  ipcMain.handle(IPC.AGENT_SET_POLICY, (_e, partial: Partial<AgentPolicy>) =>
-    agent?.setPolicy(partial)
-  )
-  ipcMain.handle(IPC.AGENT_CONFIRM, (_e, id: string) => agent?.confirm(id))
-  ipcMain.handle(IPC.AGENT_REJECT, (_e, id: string) => agent?.reject(id))
-  ipcMain.handle(IPC.AGENT_ANSWER, (_e, text: string) => agent?.answerHuman(text))
-  ipcMain.handle(IPC.AGENT_EXPORT, () => agent?.exportTrajectory() ?? '{}')
-  ipcMain.handle(IPC.MCP_STATUS, () => getMcpStatus())
+  ipcMain.handle(IPC.AGENT_GET, (e) => {
+    assertChromeSender(e)
+    return agent?.getState() ?? null
+  })
+  ipcMain.handle(IPC.AGENT_STOP, (e) => {
+    assertChromeSender(e)
+    return agent?.stop()
+  })
+  ipcMain.handle(IPC.AGENT_CLEAR, (e) => {
+    assertChromeSender(e)
+    return agent?.clear()
+  })
+  ipcMain.handle(IPC.AGENT_PAUSE, (e) => {
+    assertChromeSender(e)
+    return agent?.pause()
+  })
+  ipcMain.handle(IPC.AGENT_RESUME, (e) => {
+    assertChromeSender(e)
+    return agent?.resume()
+  })
+  ipcMain.handle(IPC.AGENT_TAKEOVER, (e) => {
+    assertChromeSender(e)
+    return agent?.takeover()
+  })
+  ipcMain.handle(IPC.AGENT_SET_MODE, (e, mode: AgentMode) => {
+    assertChromeSender(e)
+    return agent?.setMode(mode)
+  })
+  ipcMain.handle(IPC.AGENT_SET_POLICY, (e, partial: Partial<AgentPolicy>) => {
+    assertChromeSender(e)
+    return agent?.setPolicy(partial)
+  })
+  ipcMain.handle(IPC.AGENT_CONFIRM, (e, id: string) => {
+    assertChromeSender(e)
+    return agent?.confirm(id)
+  })
+  ipcMain.handle(IPC.AGENT_REJECT, (e, id: string) => {
+    assertChromeSender(e)
+    return agent?.reject(id)
+  })
+  ipcMain.handle(IPC.AGENT_ANSWER, (e, text: string) => {
+    assertChromeSender(e)
+    return agent?.answerHuman(text)
+  })
+  ipcMain.handle(IPC.AGENT_EXPORT, (e) => {
+    assertChromeSender(e)
+    return agent?.exportTrajectory() ?? '{}'
+  })
+  ipcMain.handle(IPC.MCP_STATUS, (e) => {
+    assertChromeSender(e)
+    return getMcpStatus()
+  })
 
-  ipcMain.handle(IPC.DRIVER_STATUS, async () => {
+  ipcMain.handle(IPC.DRIVER_STATUS, async (e) => {
+    assertChromeSender(e)
     const mode = tabs?.getDriverMode() ?? getRuntimeFlags().driverMode
     return getCdpStatus(mode)
   })
-  ipcMain.handle(IPC.DRIVER_SET_MODE, (_e, mode: string) => {
+  ipcMain.handle(IPC.DRIVER_SET_MODE, (e, mode: string) => {
+    assertChromeSender(e)
     const parsed = parseDriverMode(mode)
     tabs?.setDriverMode(parsed)
     return parsed

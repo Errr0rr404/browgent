@@ -5,8 +5,8 @@
 | Mode | Tools | Use when |
 |------|-------|----------|
 | **Act** | Full set (navigate, click, type, …) | Automation and multi-step goals |
-| **Research** | Navigate + observe/extract (no click/type) | Read pages without mutating |
-| **Watch** | Observe / extract only | You drive; agent answers questions |
+| **Research** | Navigate/history, observe, extract, screenshot, scroll/wait, tabs — **no** click/type/hover/press | Read + move without form mutation |
+| **Watch** | observe, extract, get_url, screenshot, list_tabs, think, done, ask_human | You drive; agent answers from page state |
 
 Set mode in the agent panel. Mode updates policy (`researchOnly` when Research).
 
@@ -34,7 +34,8 @@ Defined in `src/shared/tools.ts`, executed in `src/main/agent/executor.ts`:
 | `click` / `type` / `hover` / `select_option` / `press_key` | DOM actions via `eN` refs or CSS |
 | `scroll` / `wait` | Viewport timing |
 | `observe` | Interactive elements + text preview |
-| `extract_text` / `extract_links` / `screenshot` | Page content |
+| `extract_text` / `extract_links` | Page content |
+| `screenshot` | Viewport size metadata only (not stored in trajectory) |
 | `get_url` / `list_tabs` / `new_tab` / `close_tab` / `switch_tab` | Tab control |
 | `ask_human` | Pause for credentials / CAPTCHA / choice |
 | `think` / `done` | Reasoning + completion |
@@ -79,15 +80,16 @@ Configurable in the **Policy** tab (and via IPC):
 
 | Control | Behavior |
 |---------|----------|
-| **Takeover / Pause** | You own the tab; agent waits |
+| **Takeover / Pause** | You own the tab; agent waits (Stop still available) |
 | **Resume** | Continue after pause |
-| **Stop** | Cancel run; you keep the tabs |
+| **Stop** | Cancel run (works while thinking/acting/paused/waiting); you keep the tabs |
 | **Clear** | Wipe chat/trajectory; tabs unchanged |
 | **Allow / Deny** | Policy confirmation banners |
+| **Reply in composer** | When `waiting_human`, Enter answers `ask_human` (not a new goal) |
 
 ## Trajectory
 
-Every tool step is logged. **Export** downloads JSON (`exportedAt`, messages, steps, policy, provider). Useful for debugging and later skill replay.
+Every tool step is logged. **Export** downloads JSON (`exportedAt`, `mode`, `provider`, `model`, `policy`, `steps`, `messages`). Useful for debugging and later skill replay. Password field values are masked in observe snapshots.
 
 ## Voice
 
@@ -95,4 +97,4 @@ Mic uses Chromium **Web Speech API** (system STT on many macOS setups). Guest pa
 
 ## MCP
 
-In-process tool names match the desktop tool surface (`getMcpStatus`). Full STDIO MCP binary is on the roadmap — see [market notes](./market.md).
+`getMcpStatus` returns the **tool catalog** (same names as the desktop agent). There is **no** live STDIO MCP server yet — that is on the roadmap. External automation today uses **Playwright over CDP** ([playwright.md](./playwright.md)).

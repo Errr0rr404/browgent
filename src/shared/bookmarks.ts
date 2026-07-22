@@ -79,10 +79,6 @@ export function createFolderId(): BookmarkId {
   return id('fd')
 }
 
-export function createSpaceId(): string {
-  return id('sp')
-}
-
 /** Seed data that mirrors the Arc favorites + folders aesthetic */
 export function createDefaultBookmarks(): BookmarksState {
   const now = Date.now()

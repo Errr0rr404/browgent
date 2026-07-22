@@ -46,9 +46,11 @@ Copy `.env.example` to `.env` (never commit `.env`).
 | `OLLAMA_BASE_URL` / `OLLAMA_HOST` | No | Local Ollama OpenAI-compatible endpoint |
 | `SPACE_XAI_API_KEY` / `GROK_API_KEY` | No | Aliases for the Grok key |
 | `BROWGENT_CDP_PORT` | No | CDP port (default **9222**; `0` = off) |
+| `BROWGENT_CDP` | No | Shorthand: `0`/`off` disables CDP; `1`/`on` → port 9222 |
 | `BROWGENT_DRIVER` | No | In-app driver: `dom` (default) or `cdp` |
 | `BROWGENT_AGENT_ONLY` | No | Compact automation shell (`1` = on) |
 | `BROWGENT_HEADLESS` | No | Hide window; drive via CDP (`1` = on) |
+| `BROWGENT_CDP_URL` | No | Playwright example endpoint override |
 
 **Auto-detect order:** Grok → OpenAI → OpenRouter → Groq → DeepSeek → Ollama (if host set) → custom `BROWGENT_*`.
 

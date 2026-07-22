@@ -17,7 +17,10 @@ export default function App(): React.JSX.Element {
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [agent, setAgent] = useState<AgentSessionState | null>(null)
   const { theme, setTheme } = useTheme()
-  const platform = window.browgent?.platform ?? 'darwin'
+  const platformRaw = window.browgent?.platform ?? 'darwin'
+  /** CSS class token: win32 → win (matches app.css .platform-win) */
+  const platform =
+    platformRaw === 'win32' ? 'win' : platformRaw === 'darwin' ? 'darwin' : 'linux'
   const contentRef = useRef<HTMLDivElement>(null)
   const creatingRef = useRef(false)
   const pinCurrentAsFavorite = useBookmarks((s) => s.pinCurrentAsFavorite)
@@ -88,7 +91,10 @@ export default function App(): React.JSX.Element {
         }
         if (
           !typing &&
-          (agent?.status === 'thinking' || agent?.status === 'acting')
+          (agent?.status === 'thinking' ||
+            agent?.status === 'acting' ||
+            agent?.status === 'paused' ||
+            agent?.status === 'waiting_human')
         ) {
           e.preventDefault()
           void window.browgent.stopAgent()
@@ -158,7 +164,8 @@ export default function App(): React.JSX.Element {
   const agentBusy =
     agent?.status === 'thinking' ||
     agent?.status === 'acting' ||
-    agent?.status === 'waiting_human'
+    agent?.status === 'waiting_human' ||
+    agent?.status === 'paused'
 
   const bookmarkedId = activeTab?.url ? isBookmarkedUrl(activeTab.url) : null
   const favorited = bookmarkedId ? isFavorite(bookmarkedId) : false
@@ -175,8 +182,7 @@ export default function App(): React.JSX.Element {
 
   return (
     <div
-      className={`app-shell platform-${platform}${sidebarOpen ? ' sidebar-open' : ''}`}
-      data-theme={theme}
+      className={`app-shell platform-${platform}`}
     >
       <div className="ambient" aria-hidden />
       <div className="chrome-top">

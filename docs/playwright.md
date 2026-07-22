@@ -54,8 +54,10 @@ CLI equivalents: `--cdp-port=9222`, `--driver=cdp`, `--agent-only`, `--headless`
 ```bash
 npm i -D playwright
 npx playwright install chromium
-# Browgent already running…
-node examples/playwright-connect.mjs
+# Browgent already running (npm run dev)…
+npm run playwright:example
+# or custom endpoint:
+# BROWGENT_CDP_URL=http://127.0.0.1:9333 npm run playwright:example
 ```
 
 ```js
@@ -74,7 +76,7 @@ await page.goto('https://example.com')
 2. **Shared session** — Guest tabs use `persist:browgent-pages`. Playwright sees those cookies when attached to the right context.
 3. **Dual control** — Human + in-app agent + Playwright can all act; use takeover / pause when coordinating.
 4. **Debugger exclusivity** — A page target accepts one active debugger client. Keep the **in-app driver on `dom`** while Playwright is attached (default). Switching in-app driver to `cdp` uses `webContents.debugger` and can contend with remote CDP on that tab.
-5. **Security** — CDP is localhost-only; do not tunnel it to the public internet without auth.
+5. **Security** — CDP defaults **on** (port 9222) for local Playwright attach. It is localhost-only; any local process can control the session. Disable with `BROWGENT_CDP=0` when you do not need external automation. Never tunnel CDP to the public internet without auth.
 6. **No Playwright dependency in app** — keeps Browgent install lean; attach from outside.
 
 ## Toggle in-app driver

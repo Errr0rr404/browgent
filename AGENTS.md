@@ -8,7 +8,11 @@ Short map for coding agents. Full architecture: [docs/architecture.md](./docs/ar
 npm install && npm run dev
 npm run typecheck
 npm run build
+npm run preview
 npm run dist:mac              # DMG → release/
+npm run dist / dist:dir       # all targets / unpacked dir
+npm run dev:agent             # compact automation shell
+npm run dev:headless          # hidden + agent-only + CDP
 npm run playwright:example    # needs Browgent running + playwright
 ```
 

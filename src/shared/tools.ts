@@ -82,8 +82,8 @@ export const TOOL_DEFS: ToolDef[] = [
   },
   {
     name: 'screenshot',
-    description: 'Capture viewport screenshot (returns size metadata; image kept in session for export)',
-    params: { tabId: 'string?', fullPage: 'boolean?' }
+    description: 'Capture viewport screenshot (returns size metadata only; bytes are not stored in trajectory)',
+    params: { tabId: 'string?' }
   },
   {
     name: 'observe',

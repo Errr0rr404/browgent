@@ -66,11 +66,6 @@ export class TabManager {
     return this.activeTabId
   }
 
-  getActiveView(): WebContentsView | null {
-    if (!this.activeTabId) return null
-    return this.tabs.get(this.activeTabId)?.view ?? null
-  }
-
   getWebContents(tabId?: TabId): WebContents | null {
     const id = tabId ?? this.activeTabId
     if (!id) return null

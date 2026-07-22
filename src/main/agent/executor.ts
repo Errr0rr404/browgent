@@ -4,16 +4,19 @@ import type { ToolArgs, ToolCall, ToolName, ToolResult } from '../../shared/tool
 import {
   DEFAULT_POLICY,
   hostFromUrl,
+  isAgentNavigableUrl,
   isHostAllowed,
   looksSensitiveLabel,
   RESEARCH_TOOLS,
+  WATCH_TOOLS,
+  type AgentMode,
   type AgentPolicy
 } from '../../shared/policies'
 import { normalizeUrl } from '../../shared/types'
 
 export interface ExecuteContext {
   policy: AgentPolicy
-  mode: 'act' | 'research' | 'watch'
+  mode: AgentMode
   /** Return false to block and request human confirmation */
   requestConfirm?: (reason: string, tool: ToolName, args: ToolArgs) => Promise<boolean>
 }
@@ -31,7 +34,7 @@ export class ToolExecutor {
       }
     }
 
-    if (ctx.mode === 'watch' && !['observe', 'extract_text', 'extract_links', 'get_url', 'screenshot', 'list_tabs', 'think', 'done'].includes(name)) {
+    if (ctx.mode === 'watch' && !WATCH_TOOLS.has(name)) {
       return fail(name, 'Watch mode is observation-only (human controls the browser)')
     }
 
@@ -52,6 +55,9 @@ export class ToolExecutor {
         case 'new_tab': {
           const raw = String(args.url ?? 'https://www.google.com')
           const url = normalizeUrl(raw)
+          if (!isAgentNavigableUrl(url)) {
+            return fail(name, `Blocked URL scheme (agent may only open http/https/about): ${url.slice(0, 80)}`)
+          }
           const host = hostFromUrl(url)
           if (host && !isHostAllowed(host, policy)) {
             return fail(name, `Host blocked by policy: ${host}`)
@@ -82,6 +88,9 @@ export class ToolExecutor {
           const input = String(args.url ?? '')
           if (!input) return fail(name, 'url required')
           const url = normalizeUrl(input)
+          if (!isAgentNavigableUrl(url)) {
+            return fail(name, `Blocked URL scheme (agent may only open http/https/about): ${url.slice(0, 80)}`)
+          }
           const host = hostFromUrl(url)
           if (host && !isHostAllowed(host, policy)) {
             return fail(name, `Host blocked by policy: ${host}`)
@@ -101,7 +110,15 @@ export class ToolExecutor {
           const tabId = typeof args.tabId === 'string' ? args.tabId : undefined
           this.tabs.navigate(tabId, url)
           await this.tabs.waitForLoad(tabId)
-          return ok(name, { url }, `Navigated to ${url}`)
+          const finalUrl = this.tabs.getState().find((t) =>
+            tabId ? t.id === tabId : t.isActive
+          )?.url
+          if (finalUrl && /failed to load/i.test(
+            this.tabs.getState().find((t) => (tabId ? t.id === tabId : t.isActive))?.title ?? ''
+          )) {
+            return fail(name, `Navigation failed: ${url}`)
+          }
+          return ok(name, { url, finalUrl }, `Navigated to ${finalUrl || url}`)
         }
 
         case 'back':
@@ -234,8 +251,9 @@ export class ToolExecutor {
         }
 
         case 'wait': {
+          const ms = clampMs(num(args.ms, args.ref || args.selector ? 5000 : 1000))
           if (args.ref || args.selector) {
-            const deadline = Date.now() + num(args.ms, 5000)
+            const deadline = Date.now() + ms
             while (Date.now() < deadline) {
               const r = await this.tabs.domAction('wait_for', args, str(args.tabId))
               if (r.ok) return ok(name, {}, 'Element appeared')
@@ -243,8 +261,8 @@ export class ToolExecutor {
             }
             return fail(name, 'Wait timeout')
           }
-          await sleep(num(args.ms, 1000))
-          return ok(name, {}, `Waited ${num(args.ms, 1000)}ms`)
+          await sleep(ms)
+          return ok(name, {}, `Waited ${ms}ms`)
         }
 
         default:
@@ -271,6 +289,12 @@ function str(v: unknown): string | undefined {
 function num(v: unknown, fallback: number): number {
   const n = Number(v)
   return Number.isFinite(n) ? n : fallback
+}
+
+/** Cap wait duration so a bad model arg cannot hang Stop for minutes. */
+function clampMs(ms: number): number {
+  if (!Number.isFinite(ms) || ms < 0) return 0
+  return Math.min(Math.round(ms), 30_000)
 }
 
 function sleep(ms: number): Promise<void> {

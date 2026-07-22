@@ -21,6 +21,8 @@ npm run dev
 | `npm run playwright:example` | Attach Playwright via CDP (Browgent must be running) |
 | `npm run dev:agent` | Compact automation shell |
 | `npm run dev:headless` | Hidden window + agent-only + CDP |
+| `npm run dist` | Build + electron-builder (mac/win/linux targets in yml) |
+| `npm run dist:dir` | Unpacked app directory under `release/` |
 
 ## Conventions
 

@@ -10,7 +10,7 @@
  *   XAI_API_KEY, OPENAI_API_KEY, …  provider-specific keys
  */
 import { TOOL_DEFS, type ToolName } from '../../shared/tools'
-import type { AgentMode } from '../../shared/policies'
+import { RESEARCH_TOOLS, WATCH_TOOLS, type AgentMode } from '../../shared/policies'
 import type { AgentProvider } from '../../shared/types'
 
 const DEFAULT_GROK_BASE = 'https://api.x.ai/v1'
@@ -295,40 +295,8 @@ export function buildOpenAiTools(mode: AgentMode): Array<{
 }
 
 function toolsForMode(mode: AgentMode): Set<ToolName> {
-  if (mode === 'watch') {
-    return new Set([
-      'observe',
-      'extract_text',
-      'extract_links',
-      'get_url',
-      'screenshot',
-      'list_tabs',
-      'think',
-      'done',
-      'ask_human'
-    ])
-  }
-  if (mode === 'research') {
-    return new Set([
-      'navigate',
-      'back',
-      'forward',
-      'reload',
-      'scroll',
-      'wait',
-      'observe',
-      'extract_text',
-      'extract_links',
-      'get_url',
-      'screenshot',
-      'list_tabs',
-      'switch_tab',
-      'new_tab',
-      'think',
-      'done',
-      'ask_human'
-    ])
-  }
+  if (mode === 'watch') return new Set(WATCH_TOOLS) as Set<ToolName>
+  if (mode === 'research') return new Set(RESEARCH_TOOLS) as Set<ToolName>
   return new Set(TOOL_DEFS.map((t) => t.name))
 }
 
@@ -422,7 +390,8 @@ export async function completeWithTools(
         messages,
         tools,
         tool_choice: 'auto',
-        parallel_tool_calls: true,
+        // Serialize tools so `done` / navigate order is reliable
+        parallel_tool_calls: false,
         temperature: 0.2
       }),
       signal

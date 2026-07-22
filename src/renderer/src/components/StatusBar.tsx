@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { AgentSessionState, TabState } from '@shared/types'
-import type { CdpEndpointStatus, DriverMode } from '../../../shared/driver'
+import type { CdpEndpointStatus, DriverMode } from '@shared/driver'
 
 interface Props {
   activeTab: TabState | undefined

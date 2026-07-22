@@ -27,8 +27,11 @@ export function applyCdpCommandLine(): CdpApplyResult {
   }
 
   app.commandLine.appendSwitch('remote-debugging-port', String(cdpPort))
-  // Playwright and other clients need CORS-friendly WS upgrade from non-file origins
-  app.commandLine.appendSwitch('remote-allow-origins', '*')
+  // Localhost Playwright attach only — avoid wildcard origins
+  app.commandLine.appendSwitch(
+    'remote-allow-origins',
+    `http://127.0.0.1:${cdpPort},http://localhost:${cdpPort}`
+  )
 
   return { enabled: true, port: cdpPort }
 }

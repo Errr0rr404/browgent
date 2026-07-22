@@ -13,13 +13,9 @@ export interface McpStatus {
 
 export function getMcpStatus(): McpStatus {
   return {
-    enabled: true,
+    enabled: false,
     tools: TOOL_DEFS.map((t) => t.name),
     note:
-      'In-process tool bridge ready. Dual mode: in-app agent uses DOM or CDP driver; Playwright attaches via remote-debugging-port (see driver:status / BROWGENT_CDP_PORT).'
+      'Tool catalog ready (same names as the desktop agent). Full STDIO MCP server is on the roadmap. Playwright uses CDP (BROWGENT_CDP_PORT), not MCP.'
   }
-}
-
-export function listMcpTools(): typeof TOOL_DEFS {
-  return TOOL_DEFS
 }

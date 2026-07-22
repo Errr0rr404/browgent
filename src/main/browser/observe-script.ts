@@ -46,14 +46,23 @@ export const OBSERVE_SCRIPT = `(() => {
       || ''
     ).trim().replace(/\\s+/g, ' ').slice(0, 120);
 
+    // Never leak live password field values into observe → LLM / trajectory / export
+    const isPassword = inputType === 'password' || role === 'password';
+    const rawValue = typeof el.value === 'string' ? el.value : '';
+    const value = isPassword
+      ? (rawValue.length > 0 ? '••••••' : undefined)
+      : (rawValue ? rawValue.slice(0, 80) : undefined);
+
     elements.push({
       ref,
       role,
-      name,
+      name: isPassword && !el.getAttribute('aria-label') && !el.getAttribute('placeholder')
+        ? (name && !rawValue ? name : 'password')
+        : name,
       tag: el.tagName.toLowerCase(),
       href: el.href || undefined,
       placeholder: el.getAttribute('placeholder') || undefined,
-      value: typeof el.value === 'string' ? el.value.slice(0, 80) : undefined,
+      value,
       bbox: { x: Math.round(rect.x), y: Math.round(rect.y), w: Math.round(rect.width), h: Math.round(rect.height) }
     });
   }
