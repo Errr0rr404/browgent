@@ -4,11 +4,17 @@ import { app } from 'electron'
 
 /** Load `.env` into process.env without overriding existing vars. */
 export function loadEnvFile(): void {
-  const candidates = [
-    join(process.cwd(), '.env'),
-    join(app.getAppPath(), '.env'),
-    join(app.getPath('userData'), '.env')
-  ]
+  const candidates: string[] = [join(process.cwd(), '.env')]
+  try {
+    candidates.push(join(app.getAppPath(), '.env'))
+  } catch {
+    // app path unavailable in rare pre-bootstrap states
+  }
+  try {
+    candidates.push(join(app.getPath('userData'), '.env'))
+  } catch {
+    // userData may require ready on some platforms — retry after whenReady
+  }
 
   for (const file of candidates) {
     if (!existsSync(file)) continue

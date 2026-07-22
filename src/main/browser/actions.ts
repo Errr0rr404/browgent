@@ -7,7 +7,7 @@ import {
   OBSERVE_SCRIPT
 } from './observe-script'
 import type { ObserveSnapshot } from '../../shared/types'
-import type { ToolArgs, ToolName, ToolResult } from '../../shared/tools'
+import type { ToolArgs } from '../../shared/tools'
 
 async function evalJson<T>(wc: WebContents, script: string): Promise<T> {
   if (wc.isDestroyed()) throw new Error('Page closed')
@@ -51,24 +51,4 @@ export async function extractText(wc: WebContents, maxChars = 8000): Promise<unk
 
 export async function extractLinks(wc: WebContents, limit = 40): Promise<unknown> {
   return evalJson(wc, EXTRACT_LINKS_SCRIPT(limit))
-}
-
-export function toolSummary(name: ToolName, args: ToolArgs, result: ToolResult): string {
-  if (!result.ok) return `${name} failed: ${result.error}`
-  switch (name) {
-    case 'navigate':
-      return `Navigated to ${String(args.url ?? '')}`
-    case 'click':
-      return `Clicked ${String(args.ref ?? args.selector ?? 'element')}`
-    case 'type':
-      return `Typed into ${String(args.ref ?? args.selector ?? 'field')}`
-    case 'observe':
-      return `Observed page`
-    case 'extract_text':
-      return `Extracted page text`
-    case 'done':
-      return `Done`
-    default:
-      return result.summary
-  }
 }

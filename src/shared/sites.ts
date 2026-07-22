@@ -91,6 +91,7 @@ export interface BrowseIntent {
  * Parse user text into a browse intent.
  * Examples:
  *  - "go to fb and sign up" → facebook.com + "sign up"
+ *  - "sign up for github using a@b.com/Pass" → github.com + full task
  *  - "open github.com" → github.com + navigateOnly
  *  - "search electron webcontentsview" → google search + navigateOnly-ish
  *  - "summarize this page" → no navigate, full task
@@ -125,6 +126,11 @@ export function parseBrowseIntent(goal: string): BrowseIntent {
       siteToken: 'google'
     }
   }
+
+  // "sign up for github …" / "log in to facebook …" / "register on github using …"
+  // Site comes AFTER the task verb — very common natural phrasing.
+  const actionOnSite = parseActionOnSite(trimmed)
+  if (actionOnSite) return actionOnSite
 
   let rest = trimmed
   let hadNavPrefix = false
@@ -196,7 +202,122 @@ export function parseBrowseIntent(goal: string): BrowseIntent {
     }
   }
 
+  // Site token appears anywhere + auth/task verb (e.g. "please sign up github now")
+  const embedded = findSiteTokenInText(trimmed)
+  if (embedded && TASK_VERBS.test(trimmed)) {
+    return {
+      navigateUrl: embedded.url,
+      task: trimmed,
+      navigateOnly: false,
+      siteToken: embedded.token
+    }
+  }
+
   return { navigateUrl: null, task: trimmed, navigateOnly: false, siteToken: null }
+}
+
+/**
+ * "sign up for github using email/pass", "log into facebook", "create account on gh"
+ */
+function parseActionOnSite(trimmed: string): BrowseIntent | null {
+  const re =
+    /^(?:please\s+)?(?:can you\s+)?(?:could you\s+)?(?:help me\s+)?(sign\s*up|signup|register|create\s+(?:an?\s+)?account|log\s*in|login|sign\s*in|signin)\s+(?:for|on|to|at|into|onto)\s+([a-z0-9][\w.-]*)\b([\s\S]*)$/i
+  const m = trimmed.match(re)
+  if (!m) return null
+  const action = (m[1] ?? '').trim()
+  const siteRaw = (m[2] ?? '').trim()
+  const rest = (m[3] ?? '').trim()
+  const resolved = resolveSiteToken(siteRaw)
+  if (!resolved) return null
+  const task = [action, rest].filter(Boolean).join(' ').trim()
+  return {
+    navigateUrl: resolved.url,
+    task: task || action,
+    navigateOnly: false,
+    siteToken: resolved.token
+  }
+}
+
+/** First known site alias / domain token found as a whole word in free text */
+function findSiteTokenInText(
+  text: string
+): { token: string; host: string; url: string } | null {
+  const words = text.toLowerCase().split(/[^a-z0-9.-]+/).filter(Boolean)
+  for (const w of words) {
+    // Skip pure TLD-ish noise; require alias or domain-like
+    if (w.length < 2) continue
+    if (SITE_ALIASES[w]) {
+      const host = SITE_ALIASES[w]
+      return { token: w, host, url: `https://${host}/` }
+    }
+  }
+  // Domain-like token: github.com
+  for (const w of words) {
+    if (/^[\w-]+\.[a-z]{2,}$/i.test(w)) {
+      const hit = resolveSiteToken(w)
+      if (hit) return hit
+    }
+  }
+  return null
+}
+
+/** Pull email / password / username the user already supplied in the goal */
+export interface GoalCredentials {
+  email?: string
+  password?: string
+  username?: string
+}
+
+export function extractCredentials(goal: string): GoalCredentials {
+  const text = goal.trim()
+  if (!text) return {}
+
+  const out: GoalCredentials = {}
+
+  // email/password or email:password (common slash form)
+  const slash = text.match(
+    /([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})\s*[\/|]\s*(\S+)/
+  )
+  if (slash) {
+    out.email = slash[1]
+    out.password = stripTrailingPunct(slash[2] ?? '')
+    return out
+  }
+
+  const emailMatch = text.match(/\b([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})\b/)
+  if (emailMatch) out.email = emailMatch[1]
+
+  const passLabeled = text.match(
+    /(?:password|passwd|pwd|pass)\s*[:=]\s*["']?([^\s"']+)["']?/i
+  )
+  if (passLabeled) {
+    out.password = stripTrailingPunct(passLabeled[1] ?? '')
+  } else if (out.email) {
+    // "using demo@x.com Demo123" or "with demo@x.com and Demo123"
+    const afterEmail = text.slice(text.indexOf(out.email) + out.email.length)
+    const nextTok = afterEmail.match(
+      /^\s*(?:\/|,|and|&|with|password|pass|pwd|:)?\s*["']?([^\s"'/,]{4,})["']?/i
+    )
+    const cand = nextTok?.[1]
+    if (
+      cand &&
+      !/^(using|with|and|for|on|to|at|please|password|pass|pwd)$/i.test(cand) &&
+      !/@/.test(cand)
+    ) {
+      out.password = stripTrailingPunct(cand)
+    }
+  }
+
+  const userLabeled = text.match(
+    /(?:username|user\s*name|login)\s*[:=]\s*["']?([^\s"']+)["']?/i
+  )
+  if (userLabeled && !out.email) out.username = stripTrailingPunct(userLabeled[1] ?? '')
+
+  return out
+}
+
+function stripTrailingPunct(s: string): string {
+  return s.replace(/[.,;:!?)]+$/g, '')
 }
 
 function extractTaskFromHead(head: string, token: string): string {
@@ -288,19 +409,4 @@ export function resolveNavigableTarget(input: string): string {
   }
 
   return `https://www.google.com/search?q=${encodeURIComponent(trimmed)}`
-}
-
-/** Labels that usually open sign-up / account creation flows */
-export const SIGNUP_NAME_RE =
-  /\b(sign\s*up|signup|create\s*(an?\s*)?account|register|join\s*(now|free|today)?|get\s*started|start\s*free|try\s*free|new\s*user)\b/i
-
-export const LOGIN_NAME_RE =
-  /\b(log\s*in|login|sign\s*in|signin|already\s*have|existing\s*account)\b/i
-
-export function taskWantsSignup(task: string): boolean {
-  return /\b(sign\s*up|signup|register|create\s*(an?\s*)?account|join)\b/i.test(task)
-}
-
-export function taskWantsLogin(task: string): boolean {
-  return /\b(log\s*in|login|sign\s*in|signin)\b/i.test(task)
 }

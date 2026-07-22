@@ -987,6 +987,18 @@
   background: rgba(139, 92, 246, 0.12);
 }
 
+/* OpenAI-compatible non-Grok brains share a teal accent */
+.provider-badge.openai,
+.provider-badge.openrouter,
+.provider-badge.groq,
+.provider-badge.deepseek,
+.provider-badge.ollama,
+.provider-badge.custom {
+  color: #5eead4;
+  border-color: rgba(45, 212, 191, 0.35);
+  background: rgba(20, 184, 166, 0.12);
+}
+
 .provider-badge.heuristic {
   color: var(--warning);
   border-color: rgba(245, 193, 74, 0.28);
@@ -1299,6 +1311,27 @@
   color: var(--accent);
 }
 
+.statusbar-btn {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  padding: 0;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.statusbar-btn:hover {
+  color: var(--text-secondary);
+}
+
+.statusbar-btn:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+
 /* ── Agent modes / trajectory / policy ─────────────────────── */
 .mode-bar {
   display: grid;
@@ -1504,7 +1537,8 @@
 }
 
 .policy-row input[type='number'],
-.policy-row input[type='text'] {
+.policy-row input[type='text'],
+.policy-row select {
   height: 34px;
   padding: 0 10px;
   border-radius: 9px;
@@ -1512,6 +1546,10 @@
   background: var(--bg-input);
   color: var(--text-primary);
   user-select: text;
+}
+
+.policy-row select {
+  cursor: pointer;
 }
 
 .policy-row input[type='checkbox'] {

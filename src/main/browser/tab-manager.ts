@@ -5,10 +5,12 @@ import { normalizeUrl } from '../../shared/types'
 import {
   extractLinks,
   extractText,
-  observePage,
-  runDomAction
+  observePage
 } from './actions'
 import type { ObserveSnapshot } from '../../shared/types'
+import type { DriverMode } from '../../shared/driver'
+import { getRuntimeFlags, setDriverMode as setRuntimeDriverMode } from './runtime-flags'
+import { detachDebugger, runPageAction, type DomActionKind } from './page-driver'
 
 interface ManagedTab {
   id: TabId
@@ -39,11 +41,22 @@ export class TabManager {
   }
   private destroyed = false
   private lastPopupAt = 0
+  /** In-app agent actuation path (dom | cdp). External Playwright always uses CDP endpoint. */
+  private driverMode: DriverMode = getRuntimeFlags().driverMode
 
   constructor(
     private window: BrowserWindow,
     private onStateChange: (tabs: TabState[]) => void
   ) {}
+
+  getDriverMode(): DriverMode {
+    return this.driverMode
+  }
+
+  setDriverMode(mode: DriverMode): void {
+    this.driverMode = mode
+    setRuntimeDriverMode(mode)
+  }
 
   count(): number {
     return this.tabs.size
@@ -356,14 +369,14 @@ export class TabManager {
   }
 
   async domAction(
-    kind: 'click' | 'type' | 'hover' | 'select' | 'press' | 'scroll' | 'wait_for',
+    kind: DomActionKind,
     args: Record<string, unknown>,
     tabId?: TabId
-  ): Promise<{ ok: boolean; error?: string; name?: string }> {
+  ): Promise<{ ok: boolean; error?: string; name?: string; via?: 'dom' | 'cdp' }> {
     const wc = this.getWebContents(tabId)
     if (!wc) return { ok: false, error: 'No active page' }
     try {
-      return await runDomAction(wc, kind, args)
+      return await runPageAction(wc, kind, args, this.driverMode)
     } catch (e) {
       return { ok: false, error: e instanceof Error ? e.message : 'Action failed' }
     }
@@ -380,11 +393,6 @@ export class TabManager {
     }
   }
 
-  async extractActiveText(): Promise<string | null> {
-    const data = await this.extractText()
-    return data ? JSON.stringify(data) : null
-  }
-
   destroy(): void {
     this.destroyed = true
     for (const tab of this.tabs.values()) this.destroyTab(tab)
@@ -394,6 +402,11 @@ export class TabManager {
   }
 
   private destroyTab(tab: ManagedTab): void {
+    try {
+      if (!tab.view.webContents.isDestroyed()) detachDebugger(tab.view.webContents)
+    } catch {
+      // ignore
+    }
     try {
       this.window.contentView.removeChildView(tab.view)
     } catch {

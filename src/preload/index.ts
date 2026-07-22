@@ -8,6 +8,7 @@ import {
   type TabState
 } from '../shared/types'
 import type { AgentMode, AgentPolicy } from '../shared/policies'
+import type { CdpEndpointStatus, DriverMode } from '../shared/driver'
 
 const api = {
   getTabs: (): Promise<TabState[]> => ipcRenderer.invoke(IPC.TABS_GET),
@@ -49,6 +50,9 @@ const api = {
   exportTrajectory: (): Promise<string> => ipcRenderer.invoke(IPC.AGENT_EXPORT),
   getMcpStatus: (): Promise<{ enabled: boolean; tools: string[]; note: string }> =>
     ipcRenderer.invoke(IPC.MCP_STATUS),
+  getDriverStatus: (): Promise<CdpEndpointStatus> => ipcRenderer.invoke(IPC.DRIVER_STATUS),
+  setDriverMode: (mode: DriverMode): Promise<DriverMode> =>
+    ipcRenderer.invoke(IPC.DRIVER_SET_MODE, mode),
   onAgentState: (cb: (state: AgentSessionState) => void): (() => void) => {
     const listener = (_: Electron.IpcRendererEvent, state: AgentSessionState): void => cb(state)
     ipcRenderer.on(IPC.AGENT_STATE, listener)

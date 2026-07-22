@@ -129,12 +129,12 @@ export function AgentPanel({ open, state, onClose }: Props): React.JSX.Element {
         <span
           className={`provider-badge ${provider}`}
           title={
-            provider === 'grok'
-              ? `xAI Grok tool-calling (${model ?? 'grok'})`
-              : 'Local heuristics — set XAI_API_KEY in .env for Grok'
+            provider !== 'heuristic'
+              ? `${providerLabel(provider)} tool-calling (${model ?? 'model'})`
+              : 'Local heuristics — set XAI_API_KEY (Grok) or BROWGENT_PROVIDER for any OpenAI-compatible API'
           }
         >
-          {provider === 'grok' ? `Grok` : 'Heuristic'}
+          {provider !== 'heuristic' ? providerLabel(provider) : 'Heuristic'}
         </span>
         <div className="agent-header-actions">
           <button type="button" className="icon-btn" title="Export trajectory" onClick={() => void exportJson()}>
@@ -269,7 +269,9 @@ export function AgentPanel({ open, state, onClose }: Props): React.JSX.Element {
                 </div>
                 <div className="msg-bubble thinking-bubble">
                   <Loader2 size={13} className="spin" />{' '}
-                  {provider === 'grok' ? 'Grok is planning…' : 'Planning steps…'}
+                  {provider !== 'heuristic'
+                    ? `${providerLabel(provider)} is planning…`
+                    : 'Planning steps…'}
                 </div>
               </div>
             )}
@@ -429,12 +431,22 @@ function PolicyPane({ state }: { state: AgentSessionState | null }): React.JSX.E
   const p = state?.policy
   const [allowDraft, setAllowDraft] = useState((p?.allowHosts ?? []).join(', '))
   const [blockDraft, setBlockDraft] = useState((p?.blockHosts ?? []).join(', '))
+  const [driverMode, setDriverMode] = useState<'dom' | 'cdp'>('dom')
+  const [cdpNote, setCdpNote] = useState('')
 
   // Sync drafts when policy is replaced (e.g. clear session)
   useEffect(() => {
     setAllowDraft((p?.allowHosts ?? []).join(', '))
     setBlockDraft((p?.blockHosts ?? []).join(', '))
   }, [p?.allowHosts, p?.blockHosts])
+
+  useEffect(() => {
+    if (!window.browgent?.getDriverStatus) return
+    void window.browgent.getDriverStatus().then((s) => {
+      setDriverMode(s.driverMode)
+      setCdpNote(s.note)
+    })
+  }, [])
 
   const parseHosts = (raw: string): string[] =>
     raw
@@ -448,6 +460,24 @@ function PolicyPane({ state }: { state: AgentSessionState | null }): React.JSX.E
         Browser-native safety (differentiator vs pure cloud agents). Changes apply immediately to
         the next tool step.
       </p>
+      <label className="policy-row">
+        <span>In-app driver</span>
+        <select
+          value={driverMode}
+          onChange={(e) => {
+            const mode = e.target.value === 'cdp' ? 'cdp' : 'dom'
+            void window.browgent.setDriverMode(mode).then((m) => {
+              setDriverMode(m)
+              void window.browgent.getDriverStatus().then((s) => setCdpNote(s.note))
+            })
+          }}
+          title={cdpNote}
+        >
+          <option value="dom">DOM (fast inject)</option>
+          <option value="cdp">CDP (Playwright-parity events)</option>
+        </select>
+      </label>
+      {cdpNote && <p className="empty-hint" style={{ marginTop: -4 }}>{cdpNote}</p>}
       <label className="policy-row">
         <span>Max steps</span>
         <input
@@ -531,14 +561,29 @@ function PolicyPane({ state }: { state: AgentSessionState | null }): React.JSX.E
       </label>
       <div className="policy-note">
         <strong>Brain:</strong>{' '}
-        {state?.provider === 'grok'
-          ? `Grok (${state.model ?? 'grok-4.5'}) via XAI_API_KEY`
-          : 'Heuristic fallback — copy .env.example → .env and set XAI_API_KEY'}
+        {state?.provider && state.provider !== 'heuristic'
+          ? `${providerLabel(state.provider)} (${state.model ?? 'model'}) — OpenAI-compatible tools`
+          : 'Heuristic fallback — set XAI_API_KEY (Grok default) or BROWGENT_PROVIDER + API key'}
         <br />
         MCP tools: navigate, click, type, observe, extract… — same session as this desktop.
       </div>
     </div>
   )
+}
+
+const PROVIDER_LABELS: Record<string, string> = {
+  grok: 'Grok',
+  openai: 'OpenAI',
+  openrouter: 'OpenRouter',
+  groq: 'Groq',
+  deepseek: 'DeepSeek',
+  ollama: 'Ollama',
+  custom: 'Custom',
+  heuristic: 'Heuristic'
+}
+
+function providerLabel(id: string): string {
+  return PROVIDER_LABELS[id] ?? id
 }
 
 /** Lightweight **bold** + keep whitespace */

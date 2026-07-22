@@ -10,15 +10,18 @@
 
 Set mode in the agent panel. Mode updates policy (`researchOnly` when Research).
 
-## Brain: Grok vs heuristic
+## Brain: LLM vs heuristic
 
-| | Grok | Heuristic |
-|--|------|-----------|
-| Requires | `XAI_API_KEY` | Nothing |
-| Loop | Multi-turn tool-calling API | Pattern planner + observe |
+| | LLM (default: Grok) | Heuristic |
+|--|---------------------|-----------|
+| Requires | API key (see below) | Nothing |
+| Loop | Multi-turn OpenAI-compatible tool-calling | Pattern planner + observe |
 | Best for | Open-ended multi-step tasks | Offline, demos, known patterns |
 
-If Grok fails (network, bad key), the session falls back to heuristics and notes it in chat.
+**Default:** set `XAI_API_KEY` for [Grok](https://console.x.ai).  
+**Any OpenAI-compatible API** works — OpenAI, OpenRouter (Claude/Gemini/…), Groq, DeepSeek, Ollama, custom proxies — via `BROWGENT_PROVIDER`, `BROWGENT_API_KEY`, `BROWGENT_BASE_URL`, and `BROWGENT_MODEL`. See [Getting started](./getting-started.md#environment-variables).
+
+If the LLM fails (network, bad key), the session falls back to heuristics and notes it in chat.
 
 ## Tools (canonical)
 
@@ -46,12 +49,25 @@ Always **observe** before inventing refs. Refs look like `e1`, `e2` from the las
 - `gh`, `yt`, `ig`, … → real hosts (not Google-by-default)
 - Explicit `search …` → Google search URL
 
+## Dual driver
+
+In-app actuation path (independent of Playwright attach):
+
+| Mode | Mechanism | When |
+|------|-----------|------|
+| **DOM** (default) | Injected observe/act + `eN` refs | Fastest agent loop |
+| **CDP** | `webContents.debugger` Input events | Real key/mouse events |
+
+Toggle in the **status bar** (`drive dom · cdp:9222`) or **Policy** tab. Env: `BROWGENT_DRIVER=dom|cdp`.  
+External Playwright always uses the **CDP endpoint** (`connectOverCDP`) — keep the in-app driver on **DOM** while Playwright is attached to avoid debugger contention. Details: [playwright.md](./playwright.md).
+
 ## Policies
 
 Configurable in the **Policy** tab (and via IPC):
 
 | Setting | Default | Effect |
 |---------|---------|--------|
+| In-app driver | DOM | DOM inject vs CDP Input events |
 | Max steps | 40 | Cap tool steps per task |
 | Confirm sensitive clicks | on | Pay / submit / delete-style labels |
 | Confirm new host | off | Cross-host navigation gate |

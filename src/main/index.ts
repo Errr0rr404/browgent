@@ -1,9 +1,12 @@
 import { app, BrowserWindow, ipcMain, session } from 'electron'
 import { join } from 'path'
-import { PAGE_PARTITION, TabManager } from './browser/tab-manager'
+import { HOME_URL, PAGE_PARTITION, TabManager } from './browser/tab-manager'
 import { AgentSession } from './agent/session'
 import { loadEnvFile } from './agent/env'
 import { getMcpStatus } from './mcp/server'
+import { applyCdpCommandLine, getCdpStatus } from './browser/cdp-endpoint'
+import { getRuntimeFlags } from './browser/runtime-flags'
+import { parseDriverMode } from '../shared/driver'
 import { IPC, type BrowserChromeMetrics, type NavigatePayload, type TabId } from '../shared/types'
 import type { AgentMode, AgentPolicy } from '../shared/policies'
 
@@ -13,6 +16,19 @@ if (!gotLock) {
   process.exit(0)
 }
 
+// Env must load before CDP flags + command-line switches (pre-ready).
+loadEnvFile()
+const runtime = getRuntimeFlags()
+const cdpBoot = applyCdpCommandLine()
+if (cdpBoot.enabled) {
+  console.info(`[browgent] CDP enabled on port ${cdpBoot.port} → http://127.0.0.1:${cdpBoot.port}`)
+}
+console.info(
+  `[browgent] driver=${runtime.driverMode}` +
+    (runtime.agentOnly ? ' agent-only' : '') +
+    (runtime.headless ? ' headless' : '')
+)
+
 let mainWindow: BrowserWindow | null = null
 let tabs: TabManager | null = null
 let agent: AgentSession | null = null
@@ -20,7 +36,6 @@ let ipcRegistered = false
 let initialTabCreated = false
 
 const isDev = !app.isPackaged
-const HOME_URL = 'https://www.google.com'
 
 function createWindow(): void {
   if (mainWindow && !mainWindow.isDestroyed()) {
@@ -29,12 +44,14 @@ function createWindow(): void {
   }
 
   initialTabCreated = false
+  const flags = getRuntimeFlags()
+  const compact = flags.agentOnly
 
   mainWindow = new BrowserWindow({
-    width: 1480,
-    height: 940,
-    minWidth: 1024,
-    minHeight: 680,
+    width: compact ? 1100 : 1480,
+    height: compact ? 720 : 940,
+    minWidth: compact ? 800 : 1024,
+    minHeight: compact ? 560 : 680,
     show: false,
     title: 'Browgent',
     backgroundColor: '#090a0d',
@@ -57,6 +74,17 @@ function createWindow(): void {
     }
   })
 
+  // Agent-only: start with a thinner chrome reserve (panel still usable)
+  if (flags.agentOnly) {
+    tabs.setChromeMetrics({
+      top: 100,
+      right: 320,
+      bottom: 28,
+      left: 0,
+      agentPanelOpen: true
+    })
+  }
+
   agent = new AgentSession(tabs, (state) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send(IPC.AGENT_STATE, state)
@@ -67,11 +95,14 @@ function createWindow(): void {
 
   mainWindow.webContents.once('did-finish-load', () => {
     ensureInitialTab()
-    // Sync initial state — constructor emit can fire before renderer subscribes
     pushFullState()
   })
   mainWindow.once('ready-to-show', () => {
-    mainWindow?.show()
+    if (!getRuntimeFlags().headless) {
+      mainWindow?.show()
+    } else {
+      console.info('[browgent] headless: window hidden — use CDP/Playwright to drive tabs')
+    }
     ensureInitialTab()
     pushFullState()
   })
@@ -171,9 +202,20 @@ function registerIpcOnce(): void {
   ipcMain.handle(IPC.AGENT_ANSWER, (_e, text: string) => agent?.answerHuman(text))
   ipcMain.handle(IPC.AGENT_EXPORT, () => agent?.exportTrajectory() ?? '{}')
   ipcMain.handle(IPC.MCP_STATUS, () => getMcpStatus())
+
+  ipcMain.handle(IPC.DRIVER_STATUS, async () => {
+    const mode = tabs?.getDriverMode() ?? getRuntimeFlags().driverMode
+    return getCdpStatus(mode)
+  })
+  ipcMain.handle(IPC.DRIVER_SET_MODE, (_e, mode: string) => {
+    const parsed = parseDriverMode(mode)
+    tabs?.setDriverMode(parsed)
+    return parsed
+  })
 }
 
 app.whenReady().then(() => {
+  // Reload .env in case userData path is now available
   loadEnvFile()
 
   const pageSession = session.fromPartition(PAGE_PARTITION)
@@ -195,7 +237,7 @@ app.whenReady().then(() => {
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
-    else {
+    else if (!getRuntimeFlags().headless) {
       mainWindow?.show()
       mainWindow?.focus()
     }
@@ -205,7 +247,9 @@ app.whenReady().then(() => {
 app.on('second-instance', () => {
   if (mainWindow) {
     if (mainWindow.isMinimized()) mainWindow.restore()
-    mainWindow.focus()
+    if (!getRuntimeFlags().headless) {
+      mainWindow.focus()
+    }
   }
 })
 

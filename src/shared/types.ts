@@ -72,7 +72,16 @@ export interface PendingConfirmation {
   args: Record<string, unknown>
 }
 
-export type AgentProvider = 'grok' | 'heuristic'
+/** LLM brain id — Grok is default when configured; others are OpenAI-compatible presets */
+export type AgentProvider =
+  | 'grok'
+  | 'openai'
+  | 'openrouter'
+  | 'groq'
+  | 'deepseek'
+  | 'ollama'
+  | 'custom'
+  | 'heuristic'
 
 export interface AgentSessionState {
   status: AgentSessionStatus
@@ -85,7 +94,7 @@ export interface AgentSessionState {
   stepCount: number
   maxSteps: number
   policy: AgentPolicy
-  /** Brain behind the agent: Grok (xAI) or local heuristics */
+  /** Brain: configured OpenAI-compatible LLM, or local heuristics */
   provider: AgentProvider
   model: string | null
 }
@@ -150,5 +159,9 @@ export const IPC = {
   AGENT_ANSWER: 'agent:answer',
   AGENT_EXPORT: 'agent:export',
 
-  MCP_STATUS: 'mcp:status'
+  MCP_STATUS: 'mcp:status',
+
+  /** Dual-mode driver + Playwright CDP endpoint */
+  DRIVER_STATUS: 'driver:status',
+  DRIVER_SET_MODE: 'driver:setMode'
 } as const

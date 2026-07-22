@@ -1,18 +1,19 @@
 /**
- * Heuristic planner — used when XAI_API_KEY is missing, or as Grok fallback.
- * Multi-step: navigate → observe → act on the remaining task (signup, click, type…).
- * Production path: Grok tool-calling in session.ts (same ToolCall schema).
+ * Heuristic planner — offline / no-API-key fallback only.
+ *
+ * Production path is the LLM tool-calling loop in session.ts: the model
+ * understands any user goal and drives the browser via navigate/observe/click/type.
+ *
+ * This fallback is intentionally general (keyword match + value fill), not a
+ * hard-coded login/signup script. It will never match a real LLM for open-ended tasks.
  */
 import type { AgentMode } from '../../shared/policies'
-import type { ObserveSnapshot } from '../../shared/types'
+import type { ObserveElement, ObserveSnapshot } from '../../shared/types'
 import type { ToolCall } from '../../shared/tools'
 import {
-  LOGIN_NAME_RE,
-  SIGNUP_NAME_RE,
+  extractCredentials,
   parseBrowseIntent,
-  resolveNavigableTarget,
-  taskWantsLogin,
-  taskWantsSignup
+  resolveNavigableTarget
 } from '../../shared/sites'
 import { makeToolCall } from './executor'
 
@@ -47,7 +48,7 @@ export function planNextActions(ctx: PlanContext): ToolCall[] {
         ]
       }
 
-      // Multi-step goal: open site, then continue working the task — do NOT done yet
+      // Multi-step goal: open site, then keep working — do NOT done yet
       return [
         makeToolCall('think', {
           thought: `Navigate to ${target}, then work on: ${intent.task}`
@@ -64,7 +65,6 @@ export function planNextActions(ctx: PlanContext): ToolCall[] {
         .replace(/^find\s+/i, '')
         .trim()
       const url = resolveNavigableTarget(q.includes('.') && !q.includes(' ') ? q : q)
-      // Prefer google search for free-form queries
       const searchUrl =
         url.includes('google.com/search') || !/^https?:\/\//.test(q)
           ? `https://www.google.com/search?q=${encodeURIComponent(q)}`
@@ -132,14 +132,14 @@ export function planNextActions(ctx: PlanContext): ToolCall[] {
       if (typePlan) return typePlan
     }
 
-    // Default on current page: observe first so follow-up steps can act
+    // Default: observe first so follow-up steps can act on any goal
     return [
-      makeToolCall('think', { thought: `Interpret and act on: ${goal.slice(0, 160)}` }),
+      makeToolCall('think', { thought: `Work toward: ${goal.slice(0, 160)}` }),
       makeToolCall('observe', {})
     ]
   }
 
-  // ── Follow-up steps: act on the page toward the goal ───────
+  // ── Follow-up steps: general goal-directed browser control ─
   const task = intent.task || goal
   const snap = ctx.lastObservation
 
@@ -147,19 +147,7 @@ export function planNextActions(ctx: PlanContext): ToolCall[] {
     return [makeToolCall('observe', {})]
   }
 
-  // Signup / register flow
-  if (taskWantsSignup(task) || taskWantsSignup(goal)) {
-    const signupPlan = planAuthFlow(ctx, 'signup')
-    if (signupPlan) return signupPlan
-  }
-
-  // Login flow
-  if (taskWantsLogin(task) || taskWantsLogin(goal)) {
-    const loginPlan = planAuthFlow(ctx, 'login')
-    if (loginPlan) return loginPlan
-  }
-
-  // Explicit click / type language
+  // Explicit click / type language always wins
   if (/click |press |open link|first result|second result|third result/i.test(lower)) {
     const clickPlan = planClick(ctx, goal)
     if (clickPlan) return clickPlan
@@ -179,35 +167,21 @@ export function planNextActions(ctx: PlanContext): ToolCall[] {
     ]
   }
 
-  // After initial observe on a free-form goal: try to click a matching control
-  if (ctx.step === 1) {
-    const ref = findRefByGoalKeywords(snap, task)
-    if (ref) {
-      return [
-        makeToolCall('click', { ref }),
-        makeToolCall('wait', { ms: 1000 }),
-        makeToolCall('observe', {})
-      ]
-    }
-
-    // Research-ish free form after observe
-    if (/summar|what|explain|describe|extract|read/i.test(lower)) {
-      return [
-        makeToolCall('extract_text', { maxChars: 5000 }),
-        makeToolCall('extract_links', { limit: 12 }),
-        makeToolCall('done', { summary: buildResearchSummary(ctx) })
-      ]
-    }
+  if (/summar|what|explain|describe|extract|read/i.test(lower) && ctx.step <= 2) {
+    return [
+      makeToolCall('extract_text', { maxChars: 5000 }),
+      makeToolCall('extract_links', { limit: 12 }),
+      makeToolCall('done', { summary: buildResearchSummary(ctx) })
+    ]
   }
 
-  // Form fields visible — if goal mentions typing something
-  if (ctx.step >= 1 && ctx.step < 5) {
-    const formPlan = planFormProgress(ctx, task)
-    if (formPlan) return formPlan
+  // General: fill values found in the goal into matching fields, then click goal-related controls
+  if (ctx.step >= 1 && ctx.step < 8) {
+    const toward = planTowardGoal(ctx, task)
+    if (toward) return toward
   }
 
-  // Cap heuristic multi-step — hand off cleanly
-  if (ctx.step >= 4) {
+  if (ctx.step >= 6) {
     return [
       makeToolCall('done', {
         summary: buildProgressSummary(ctx, task)
@@ -223,67 +197,34 @@ export function planNextActions(ctx: PlanContext): ToolCall[] {
   ]
 }
 
-function planAuthFlow(ctx: PlanContext, kind: 'signup' | 'login'): ToolCall[] | null {
+/**
+ * Generic act-toward-goal loop:
+ * 1) type any values the user already put in the goal into matching inputs
+ * 2) click the control whose label best matches the goal
+ * 3) otherwise scroll / hand off
+ */
+function planTowardGoal(ctx: PlanContext, task: string): ToolCall[] | null {
   const snap = ctx.lastObservation
   if (!snap) return null
 
-  const nameRe = kind === 'signup' ? SIGNUP_NAME_RE : LOGIN_NAME_RE
-  const prefer = kind === 'signup' ? SIGNUP_NAME_RE : LOGIN_NAME_RE
-  const avoid = kind === 'signup' ? LOGIN_NAME_RE : SIGNUP_NAME_RE
+  const fill = planFillValuesFromGoal(ctx)
+  if (fill) return fill
 
-  // Prefer buttons/links matching the intent
-  const candidates = snap.elements.filter((e) => {
-    const label = `${e.name} ${e.role} ${e.tag}`.toLowerCase()
-    if (avoid.test(label) && !prefer.test(label)) return false
-    return nameRe.test(e.name) || nameRe.test(label)
-  })
-
-  // Score: buttons > links > anything
-  candidates.sort((a, b) => scoreAuthEl(b) - scoreAuthEl(a))
-  const hit = candidates[0]
-
-  if (hit && ctx.step <= 3) {
-    // Avoid re-clicking the same thing forever
-    const already = ctx.lastToolResults.some(
-      (n) => n.toLowerCase().includes('clicked') && n.includes(hit.ref)
-    )
-    if (!already) {
-      return [
-        makeToolCall('think', {
-          thought: `Click ${kind} control [${hit.ref}] “${hit.name}”`
-        }),
-        makeToolCall('click', { ref: hit.ref }),
-        makeToolCall('wait', { ms: 1200 }),
-        makeToolCall('observe', {})
-      ]
-    }
-  }
-
-  // On a form page — look for email/password fields
-  const email = snap.elements.find(
-    (e) =>
-      /email|e-mail|phone|mobile/i.test(e.name) ||
-      /email|e-mail/i.test(e.placeholder ?? '') ||
-      e.role === 'textbox' ||
-      e.tag === 'input'
-  )
-  const password = snap.elements.find(
-    (e) => /password|passcode/i.test(e.name) || /password/i.test(e.placeholder ?? '')
-  )
-
-  if (email || password) {
+  const hit = findBestControlForGoal(snap, task, ctx.lastToolResults)
+  if (hit) {
     return [
-      makeToolCall('ask_human', {
-        question:
-          kind === 'signup'
-            ? 'I found the sign-up form. Please type the email/phone and password you want to use (I will not store them), or take over the tab and finish signup yourself.'
-            : 'I found the login form. Please provide credentials to type, or take over the tab to sign in yourself.'
-      })
+      makeToolCall('think', {
+        thought: `Click [${hit.ref}] “${hit.name}” toward goal`
+      }),
+      makeToolCall('click', { ref: hit.ref }),
+      makeToolCall('wait', { ms: 1100 }),
+      makeToolCall('observe', {})
     ]
   }
 
-  // Maybe need to scroll to find CTA
-  if (ctx.step <= 2) {
+  // No strong match yet — scroll once to reveal more controls
+  const scrolled = ctx.lastToolResults.some((n) => /scroll/i.test(n))
+  if (!scrolled && ctx.step <= 3) {
     return [
       makeToolCall('scroll', { direction: 'down', amount: 500 }),
       makeToolCall('wait', { ms: 400 }),
@@ -291,56 +232,220 @@ function planAuthFlow(ctx: PlanContext, kind: 'signup' | 'login'): ToolCall[] | 
     ]
   }
 
-  return [
-    makeToolCall('done', {
-      summary:
-        kind === 'signup'
-          ? `Opened the site and looked for sign-up. ${snap.title || 'Page'} is ready — take over to complete registration (CAPTCHA / phone verify often need a human), or say “click eN” on a specific control.`
-          : `Opened the site and looked for log-in. Take over to enter credentials, or point me at a control (e.g. click e3).${isHeuristicNote()}`
-    })
-  ]
+  return null
 }
 
-function scoreAuthEl(e: { role: string; tag: string; name: string }): number {
-  let s = 0
-  if (e.role === 'button' || e.tag === 'button') s += 5
-  if (e.role === 'link' || e.tag === 'a') s += 3
-  if (/create|sign\s*up|register|join/i.test(e.name)) s += 4
-  if (/log\s*in|sign\s*in/i.test(e.name)) s += 2
-  return s
-}
-
-function planFormProgress(ctx: PlanContext, task: string): ToolCall[] | null {
+/** Map values mentioned in the goal onto visible form fields (any task, not just auth). */
+function planFillValuesFromGoal(ctx: PlanContext): ToolCall[] | null {
   const snap = ctx.lastObservation
   if (!snap) return null
 
-  // If user quoted text to type
-  const textMatch = task.match(/["“](.+?)["”]/) || task.match(/\btype\s+(.+)/i)
-  if (textMatch?.[1]) {
-    const typePlan = planType(ctx, `type "${textMatch[1]}"`)
-    if (typePlan) return typePlan
+  const values = collectGoalValues(ctx.goal)
+  if (!values.length) return null
+
+  const typedRef = (ref: string): boolean =>
+    ctx.lastToolResults.some((n) => /typed into/i.test(n) && n.includes(ref))
+
+  const inputs = snap.elements.filter(
+    (e) =>
+      e.role === 'textbox' ||
+      e.role === 'searchbox' ||
+      e.role === 'email' ||
+      e.role === 'password' ||
+      e.role === 'search' ||
+      e.tag === 'input' ||
+      e.tag === 'textarea'
+  )
+  if (!inputs.length) return null
+
+  const calls: ToolCall[] = []
+  const usedRefs = new Set<string>()
+
+  for (const v of values) {
+    const field = pickFieldForValue(inputs, v, usedRefs)
+    if (!field || typedRef(field.ref)) continue
+    usedRefs.add(field.ref)
+    calls.push(
+      makeToolCall('type', {
+        ref: field.ref,
+        text: v.text,
+        clear: true
+      })
+    )
   }
 
-  // Submit buttons
-  if (/\bsubmit|continue|next|done|finish|create account|sign up\b/i.test(task)) {
-    const btn = snap.elements.find(
-      (e) =>
-        (e.role === 'button' || e.tag === 'button') &&
-        /submit|continue|next|create|sign\s*up|register|join|done|finish/i.test(e.name)
+  if (!calls.length) return null
+
+  // After filling, click a primary action that matches goal keywords if present
+  const action = findBestControlForGoal(snap, ctx.goal, ctx.lastToolResults)
+  if (action) {
+    calls.push(
+      makeToolCall('click', { ref: action.ref }),
+      makeToolCall('wait', { ms: 1200 }),
+      makeToolCall('observe', {})
     )
-    if (btn) {
-      return [
-        makeToolCall('click', { ref: btn.ref }),
-        makeToolCall('wait', { ms: 1000 }),
-        makeToolCall('observe', {}),
-        makeToolCall('done', {
-          summary: `Clicked “${btn.name || btn.ref}”. Check the page — CAPTCHA or verification may need you.`
-        })
-      ]
+  } else {
+    calls.push(makeToolCall('wait', { ms: 500 }), makeToolCall('observe', {}))
+  }
+  return calls
+}
+
+interface GoalValue {
+  text: string
+  kind: 'email' | 'password' | 'quoted' | 'generic'
+}
+
+function collectGoalValues(goal: string): GoalValue[] {
+  const out: GoalValue[] = []
+  const seen = new Set<string>()
+  const push = (text: string, kind: GoalValue['kind']): void => {
+    const t = text.trim()
+    if (!t || seen.has(t)) return
+    seen.add(t)
+    out.push({ text: t, kind })
+  }
+
+  // Structured credentials if present (also useful for any form with email/password)
+  const creds = extractCredentials(goal)
+  if (creds.email) push(creds.email, 'email')
+  if (creds.password) push(creds.password, 'password')
+  if (creds.username) push(creds.username, 'generic')
+
+  // Quoted strings: type "hello world"
+  for (const m of goal.matchAll(/["“](.+?)["”]/g)) {
+    if (m[1]) push(m[1], 'quoted')
+  }
+
+  // key: value / key=value pairs (username: bob, query=foo)
+  for (const m of goal.matchAll(
+    /\b([a-z][a-z0-9_-]{1,20})\s*[:=]\s*["']?([^\s"',]{2,80})["']?/gi
+  )) {
+    const key = (m[1] ?? '').toLowerCase()
+    const val = m[2] ?? ''
+    if (/password|passwd|pwd|pass/.test(key)) push(val, 'password')
+    else if (/email|e-mail/.test(key)) push(val, 'email')
+    else if (
+      /user|login|name|query|search|message|text|city|phone|code|otp|url/.test(key)
+    ) {
+      push(val, 'generic')
     }
   }
 
-  return null
+  return out
+}
+
+function pickFieldForValue(
+  inputs: ObserveElement[],
+  value: GoalValue,
+  used: Set<string>
+): ObserveElement | null {
+  const free = inputs.filter((e) => !used.has(e.ref))
+  if (!free.length) return null
+
+  const score = (e: ObserveElement): number => {
+    const hay = `${e.name} ${e.role} ${e.placeholder ?? ''} ${e.tag}`.toLowerCase()
+    let s = 0
+    if (value.kind === 'email') {
+      if (e.role === 'email' || /email|e-mail/.test(hay)) s += 10
+      if (/phone|mobile|user/.test(hay)) s += 3
+    } else if (value.kind === 'password') {
+      if (e.role === 'password' || /password|passcode/.test(hay)) s += 10
+    } else if (value.kind === 'quoted' || value.kind === 'generic') {
+      if (/search|query|q\b/.test(hay)) s += 4
+      if (/message|comment|compose|text|body/.test(hay)) s += 3
+      if (e.role === 'textbox' || e.tag === 'textarea' || e.tag === 'input') s += 1
+    }
+    if (/password|passcode/.test(hay) && value.kind !== 'password') s -= 8
+    return s
+  }
+
+  const ranked = free
+    .map((e) => ({ e, s: score(e) }))
+    .filter((x) => x.s > 0)
+    .sort((a, b) => b.s - a.s)
+
+  if (ranked[0]) return ranked[0].e
+
+  // Fallback: first free non-password field for generic/quoted/email
+  if (value.kind !== 'password') {
+    return (
+      free.find((e) => !/password/i.test(`${e.name} ${e.role} ${e.placeholder ?? ''}`)) ?? null
+    )
+  }
+  return free.find((e) => /password/i.test(`${e.name} ${e.role}`)) ?? null
+}
+
+function findBestControlForGoal(
+  snap: ObserveSnapshot,
+  task: string,
+  lastToolResults: string[]
+): ObserveElement | null {
+  const words = goalKeywords(task)
+  const phrases = goalPhrases(task)
+  if (!words.length && !phrases.length) return null
+
+  let best: { el: ObserveElement; score: number } | null = null
+  for (const el of snap.elements) {
+    // Never re-click the same ref in this run (observe again after navigation)
+    if (
+      lastToolResults.some((n) => n.toLowerCase().includes('clicked') && n.includes(el.ref))
+    ) {
+      continue
+    }
+
+    const hay = `${el.name} ${el.role} ${el.placeholder ?? ''}`.toLowerCase()
+    let score = 0
+    let phraseHits = 0
+    let wordHits = 0
+
+    // Multi-word phrases from the goal beat single tokens ("sign up" vs "sign in")
+    for (const p of phrases) {
+      if (hay.includes(p)) {
+        phraseHits++
+        score += 14 + p.length
+      }
+    }
+    for (const w of words) {
+      if (hay.includes(w)) {
+        wordHits++
+        score += Math.min(w.length, 10)
+      }
+    }
+    // Prefer buttons/links for actions
+    if (el.role === 'button' || el.tag === 'button') score += 3
+    if (el.role === 'link' || el.tag === 'a') score += 2
+
+    // Single-token overlap is too weak when the goal has multi-word phrases
+    // (avoids "sign" matching both "Sign up" and "Sign in")
+    if (phraseHits === 0 && phrases.length > 0 && wordHits < 2) {
+      score = 0
+    }
+
+    if (score > 0 && (!best || score > best.score)) best = { el, score }
+  }
+
+  // Require a meaningful match so we don't click noise
+  return best && best.score >= 6 ? best.el : null
+}
+
+function goalKeywords(task: string): string[] {
+  return task
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((w) => w.length > 2 && !STOP.has(w))
+}
+
+/** Bigrams / short phrases so "sign up" ranks above "sign in" */
+function goalPhrases(task: string): string[] {
+  const toks = task
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((w) => w.length > 1 && !STOP.has(w))
+  const phrases: string[] = []
+  for (let i = 0; i < toks.length - 1; i++) {
+    phrases.push(`${toks[i]} ${toks[i + 1]}`)
+  }
+  return phrases
 }
 
 function planClick(ctx: PlanContext, goal: string): ToolCall[] | null {
@@ -419,27 +524,6 @@ function findRefByName(snap: ObserveSnapshot, goal: string): string | null {
   return scored[0]?.e.ref ?? null
 }
 
-function findRefByGoalKeywords(snap: ObserveSnapshot, task: string): string | null {
-  const words = task
-    .toLowerCase()
-    .split(/[^a-z0-9]+/)
-    .filter((w) => w.length > 2 && !STOP.has(w))
-  if (!words.length) return null
-
-  let best: { ref: string; score: number } | null = null
-  for (const el of snap.elements) {
-    const hay = `${el.name} ${el.role} ${el.placeholder ?? ''}`.toLowerCase()
-    let score = 0
-    for (const w of words) {
-      if (hay.includes(w)) score += w.length
-    }
-    if (score > 0 && (!best || score > best.score)) {
-      best = { ref: el.ref, score }
-    }
-  }
-  return best && best.score >= 4 ? best.ref : null
-}
-
 const STOP = new Set([
   'the',
   'and',
@@ -460,7 +544,17 @@ const STOP = new Set([
   'an',
   'to',
   'on',
-  'in'
+  'in',
+  'using',
+  'from',
+  'into',
+  'your',
+  'you',
+  'can',
+  'could',
+  'help',
+  'just',
+  'then'
 ])
 
 function prettyHost(url: string): string {
@@ -482,13 +576,13 @@ function buildProgressSummary(ctx: PlanContext, task: string): string {
     `I controlled the browser toward “${task.slice(0, 120)}” on ${page} ` +
     `(${els} interactive elements observed). ` +
     `Check the trajectory for clicks/navigation. ` +
-    `Next: “click eN”, “type \\"…\\"”, or take over the tab.` +
+    `Next: keep going in chat, say “click eN”, or take over the tab.` +
     isHeuristicNote()
   )
 }
 
 function isHeuristicNote(): string {
-  return ' (Heuristic mode — set XAI_API_KEY for Grok multi-step.)'
+  return ' (Offline heuristic fallback — set an LLM API key for full natural-language browser control.)'
 }
 
 export function formatObservationForUser(data: unknown): string {

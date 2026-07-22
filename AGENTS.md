@@ -8,7 +8,8 @@ Short map for coding agents. Full architecture: [docs/architecture.md](./docs/ar
 npm install && npm run dev
 npm run typecheck
 npm run build
-npm run dist:mac    # DMG → release/
+npm run dist:mac              # DMG → release/
+npm run playwright:example    # needs Browgent running + playwright
 ```
 
 ## Layout
@@ -16,9 +17,12 @@ npm run dist:mac    # DMG → release/
 | Path | Role |
 |------|------|
 | `src/main/` | Window, tabs, agent, MCP status |
+| `src/main/browser/page-driver.ts` | Dual DOM / CDP actuation |
+| `src/main/browser/cdp-endpoint.ts` | Playwright `connectOverCDP` endpoint |
 | `src/renderer/` | Chrome UI only (no guest DOM) |
-| `src/shared/` | Tools, policies, sites, types |
-| `docs/` | Human documentation |
+| `src/shared/` | Tools, policies, sites, types, driver |
+| `examples/` | Playwright attach sample |
+| `docs/` | Human documentation (incl. playwright.md) |
 
 ## Invariants
 

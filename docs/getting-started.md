@@ -6,7 +6,7 @@
    **[Browgent-mac-arm64.dmg](https://github.com/Errr0rr404/browgent/releases/latest/download/Browgent-mac-arm64.dmg)**
 2. Open the DMG and drag **Browgent** to Applications.
 3. First launch: right-click → **Open** (or System Settings → Privacy & Security → Open Anyway). The app is unsigned open-source software.
-4. Optional Grok brain: create a `.env` next to the app is **not** used for packaged builds. For API keys in the packaged app, set env vars in your shell before launch, or run from source (Option B).
+4. Optional LLM brain: packaged builds do **not** read a `.env` next to the DMG. Set env vars in your shell before launch, put a `.env` in the app userData folder, or run from source (Option B). **Grok is the default** (`XAI_API_KEY`); any OpenAI-compatible provider works via `BROWGENT_PROVIDER` / `BROWGENT_API_KEY` / `BROWGENT_BASE_URL`.
 
 > **Apple Silicon only** for the published DMG right now. Intel Mac or Windows/Linux: build from source or watch [Releases](https://github.com/Errr0rr404/browgent/releases) for more artifacts.
 
@@ -36,14 +36,44 @@ Copy `.env.example` to `.env` (never commit `.env`).
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `XAI_API_KEY` | No | xAI key for Grok multi-step tool-calling |
-| `BROWGENT_MODEL` | No | Model id (default `grok-4.5`) |
-| `XAI_BASE_URL` | No | API base (default `https://api.x.ai/v1`) |
-| `SPACE_XAI_API_KEY` / `GROK_API_KEY` | No | Aliases for the same key |
+| `XAI_API_KEY` | No | **Default brain** — xAI Grok ([console.x.ai](https://console.x.ai)) |
+| `BROWGENT_MODEL` | No | Model id (default `grok-4.5` for Grok) |
+| `BROWGENT_PROVIDER` | No | `auto` · `grok` · `openai` · `openrouter` · `groq` · `deepseek` · `ollama` · `custom` |
+| `BROWGENT_API_KEY` | No | Generic API key (any OpenAI-compatible provider) |
+| `BROWGENT_BASE_URL` | No | Generic base URL (…`/v1`) |
+| `XAI_BASE_URL` | No | Grok API base (default `https://api.x.ai/v1`) |
+| `OPENAI_API_KEY` / `OPENROUTER_API_KEY` / `GROQ_API_KEY` / `DEEPSEEK_API_KEY` | No | Provider keys (auto-detected) |
+| `OLLAMA_BASE_URL` / `OLLAMA_HOST` | No | Local Ollama OpenAI-compatible endpoint |
+| `SPACE_XAI_API_KEY` / `GROK_API_KEY` | No | Aliases for the Grok key |
+| `BROWGENT_CDP_PORT` | No | CDP port (default **9222**; `0` = off) |
+| `BROWGENT_DRIVER` | No | In-app driver: `dom` (default) or `cdp` |
+| `BROWGENT_AGENT_ONLY` | No | Compact automation shell (`1` = on) |
+| `BROWGENT_HEADLESS` | No | Hide window; drive via CDP (`1` = on) |
 
-Without a key, Browgent uses a **heuristic planner** (site aliases, observe, click/type patterns). Still useful for demos and offline work.
+**Auto-detect order:** Grok → OpenAI → OpenRouter → Groq → DeepSeek → Ollama (if host set) → custom `BROWGENT_*`.
 
-Get a key: [console.x.ai](https://console.x.ai).
+Without any key, Browgent uses a **heuristic planner** (site aliases, observe, click/type patterns). Still useful for demos and offline work.
+
+```bash
+# Default — Grok
+XAI_API_KEY=xai-...
+
+# OpenAI
+BROWGENT_PROVIDER=openai
+OPENAI_API_KEY=sk-...
+BROWGENT_MODEL=gpt-4o
+
+# OpenRouter → Claude / Gemini / etc.
+BROWGENT_PROVIDER=openrouter
+OPENROUTER_API_KEY=sk-or-...
+BROWGENT_MODEL=anthropic/claude-sonnet-4
+
+# Local Ollama
+BROWGENT_PROVIDER=ollama
+BROWGENT_MODEL=llama3.2
+```
+
+Playwright attach: see [playwright.md](./playwright.md) and `examples/playwright-connect.mjs`.
 
 ## First things to try
 

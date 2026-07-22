@@ -5,6 +5,45 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-teal.svg)](./LICENSE)
 [![Release](https://img.shields.io/github/v/release/Errr0rr404/browgent?include_prereleases&label=release)](https://github.com/Errr0rr404/browgent/releases/latest)
 
+Not another chat sidebar bolted onto Chrome. Browgent is a **desktop co-browse runtime**: real multi-tab Chromium, agent tools, safety policies, trajectory export, and Playwright over CDP — all on your machine.
+
+## What Browgent does that others don’t
+
+Consumer AI browsers (Comet, Dia, Atlas) optimize for “ask the assistant.” Cloud fleets (Browserbase, Steel…) optimize for headless scale. Browgent optimizes for **you + an agent on the same local tabs**, with builder-grade control.
+
+| Capability | **Browgent** | Chrome | Comet | Dia | ChatGPT Atlas | Cloud BaaS\* |
+|------------|:------------:|:------:|:-----:|:---:|:-------------:|:------------:|
+| **True co-browse** — agent & human share the same local tab tree (not a remote live-view) | ✅ | — | ⚠️ | ⚠️ | ⚠️ | ❌ remote |
+| **Local-first identity** — cookies / SSO stay on disk (`persist:browgent-pages`) | ✅ | ✅ human | ⚠️ product | ⚠️ product | ⚠️ product | ❌ multi-tenant |
+| **Open source (MIT)** — inspect, fork, self-host the runtime | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ / partial |
+| **Dual driver** — fast DOM inject *and* CDP for real input events | ✅ | — | ❌ | ❌ | ❌ | CDP only |
+| **Playwright attach** — `connectOverCDP` to the *same* desktop session | ✅ | ⚠️ manual | ❌ | ❌ | ❌ | ✅ separate fleet |
+| **Browser-native policy engine** — allow/block hosts, confirm sensitive clicks, max steps | ✅ | — | ⚠️ product | ⚠️ product | ⚠️ product | ⚠️ API |
+| **Act / Research / Watch modes** — full control, read-mostly, or human-only drive | ✅ | — | ⚠️ | ⚠️ | ⚠️ | — |
+| **Human takeover → resume same tab** — agent pauses; you log in / fix; agent continues | ✅ | — | ⚠️ | ⚠️ | ⚠️ | live-view only |
+| **Tab ownership badges** — see who owns the tab (`agent` / human) | ✅ | — | ❌ | ❌ | ❌ | — |
+| **Trajectory log + JSON export** — every tool step for debug, evals, replay | ✅ | — | ❌ | ❌ | ⚠️ | ⚠️ product |
+| **Compact element refs** (`e1`, `e2`…) — Stagehand / browser-use style observe | ✅ | — | ❌ | ❌ | ❌ | via frameworks |
+| **Works offline of a vendor chat** — heuristic planner without API key | ✅ | n/a | ❌ | ❌ | ❌ | n/a |
+| **Model not locked to one cloud chat** — Grok via key; swap/extend the loop | ✅ | n/a | Perplexity | product LLM | OpenAI | bring-your-agent |
+| **MCP-ready same session** — tools map to the desktop tabs you see | ✅ | extensions | ❌ | ❌ | ❌ | cloud MCP |
+| **Voice → agent on real tabs** | ✅ | — | ⚠️ | ⚠️ | ⚠️ | — |
+
+\*Browserbase, Steel, Kernel, Hyperbrowser, etc. — great for fleets; not a local co-browse desktop.
+
+**Legend:** ✅ strong / first-class · ⚠️ partial or product-gated · ❌ not the product · — not applicable
+
+### Why that combination matters
+
+```
+Chrome          →  You browse. No agent runtime.
+Comet / Dia / Atlas →  Polished AI product browser (closed, vendor brain).
+Cloud BaaS      →  Agents at scale in someone else's Chromium.
+Browgent        →  You + agent + Playwright/MCP on *your* tabs, with policy + audit.
+```
+
+Browgent is not trying to be lighter than headless Playwright. It is trying to be the **best local co-browse agent browser**: open, attachable, policy-aware, and human-in-the-loop by default.
+
 ## Download
 
 | Platform | Download |
@@ -23,17 +62,34 @@ cd browgent
 npm run dev
 ```
 
-Optional: copy `.env.example` → `.env` and set `XAI_API_KEY` for [Grok](https://console.x.ai) tool-calling. Without a key, the heuristic agent still drives the browser.
+Optional: copy `.env.example` → `.env` and set `XAI_API_KEY` for [Grok](https://console.x.ai) (default brain), or point `BROWGENT_PROVIDER` / `BROWGENT_API_KEY` / `BROWGENT_BASE_URL` at any OpenAI-compatible model. Without a key, the heuristic agent still drives the browser.
 
-## What it is
-
-Desktop co-browse runtime: multi-tab Chromium, agent tools (navigate / click / type / observe), policies, trajectory export, voice input, themes — all local.
+## Capabilities at a glance
 
 | Mode | Behavior |
 |------|----------|
-| **Act** | Full browser control |
-| **Research** | Read-mostly tools |
-| **Watch** | You browse; agent observes |
+| **Act** | Full browser control (navigate, click, type, …) |
+| **Research** | Read-mostly tools (observe, extract, navigate) |
+| **Watch** | You browse; agent only observes / answers |
+
+### Dual driver + Playwright
+
+| Path | Role |
+|------|------|
+| **DOM** (default in-app) | Fast inject observe/act for the chat agent |
+| **CDP** (in-app optional) | Real `Input` events via DevTools protocol |
+| **CDP endpoint** | Playwright / external tools: `connectOverCDP` |
+
+CDP listens on `http://127.0.0.1:9222` by default (localhost only).
+
+```bash
+npm run dev                                          # normal + CDP
+BROWGENT_AGENT_ONLY=1 npm run dev                    # compact automation shell
+BROWGENT_HEADLESS=1 BROWGENT_AGENT_ONLY=1 npm run dev
+npm i -D playwright && node examples/playwright-connect.mjs
+```
+
+Disable remote debugging with `BROWGENT_CDP=0`. Details: [docs/playwright.md](./docs/playwright.md).
 
 ## Documentation
 
@@ -42,10 +98,11 @@ Desktop co-browse runtime: multi-tab Chromium, agent tools (navigate / click / t
 | [Getting started](./docs/getting-started.md) | Install, env, first run |
 | [Architecture](./docs/architecture.md) | Process model & folders |
 | [Agent guide](./docs/agent-guide.md) | Modes, tools, policies, Grok |
+| [Playwright + dual driver](./docs/playwright.md) | CDP endpoint, drivers, headless |
 | [Shortcuts](./docs/shortcuts.md) | Keyboard shortcuts |
 | [Contributing](./docs/contributing.md) | Dev setup & PR guide |
 | [Releasing](./docs/releasing.md) | DMG / GitHub Releases |
-| [Market notes](./docs/market.md) | Competitive context |
+| [Market notes](./docs/market.md) | Full competitive research |
 | [Security](./SECURITY.md) | Vulnerability reporting |
 
 ## License

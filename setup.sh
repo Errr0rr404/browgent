@@ -20,7 +20,7 @@ npm install
 if [[ ! -f .env ]]; then
   cp .env.example .env
   echo "==> Created .env from .env.example"
-  echo "    Optional: set XAI_API_KEY for Grok tool-calling"
+  echo "    Optional: set XAI_API_KEY (Grok default) or BROWGENT_PROVIDER for another LLM"
 else
   echo "==> .env already present (left unchanged)"
 fi

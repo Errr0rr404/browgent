@@ -1,10 +1,11 @@
 import { randomUUID } from 'crypto'
 import type { TabManager } from '../browser/tab-manager'
-import { ToolExecutor, makeToolCall } from './executor'
+import { ToolExecutor } from './executor'
 import { formatObservationForUser, planNextActions } from './planner'
 import {
   completeWithTools,
   getModel,
+  getProviderDisplayName,
   getProviderLabel,
   isLlmConfigured,
   buildSystemPrompt,
@@ -13,7 +14,7 @@ import {
   type LlmProvider,
   type LlmToolCall
 } from './llm'
-import { parseBrowseIntent } from '../../shared/sites'
+import { extractCredentials, parseBrowseIntent } from '../../shared/sites'
 import {
   DEFAULT_POLICY,
   type AgentMode,
@@ -61,9 +62,9 @@ export class AgentSession {
     this.executor = new ToolExecutor(tabs)
     this.refreshProvider()
     const brain =
-      this.provider === 'grok'
-        ? `Powered by **Grok** (\`${this.model}\`) with live browser tools.`
-        : 'Running in **heuristic** mode (no `XAI_API_KEY`). Add your xAI key to `.env` for real Grok tool-calling.'
+      this.provider !== 'heuristic'
+        ? `Powered by **${getProviderDisplayName()}** (\`${this.model}\`) with live browser tools.`
+        : 'Running in **heuristic** mode (no API key). Set `XAI_API_KEY` for Grok (default), or any OpenAI-compatible provider via `BROWGENT_PROVIDER` / `BROWGENT_API_KEY` / `BROWGENT_BASE_URL`.'
     this.pushSystem(
       `Browgent agent online. ${brain}\nModes: **act** · **research** · **watch**. Shared tabs — take over anytime.`
     )
@@ -282,8 +283,8 @@ export class AgentSession {
     this.emit()
 
     try {
-      if (this.provider === 'grok') {
-        await this.runWithGrok(text, gen)
+      if (this.provider !== 'heuristic') {
+        await this.runWithLlm(text, gen)
       } else {
         await this.runHeuristic(text, gen)
       }
@@ -291,9 +292,11 @@ export class AgentSession {
       if (!this.isActiveRun(gen)) return
       const err = e instanceof Error ? e.message : 'Agent error'
       this.trace('system', 'Agent error', err)
-      // Fallback to heuristics if Grok fails (e.g. bad key, network)
-      if (this.provider === 'grok' && this.isActiveRun(gen)) {
-        this.pushSystem(`Grok error — falling back to heuristics: ${err}`)
+      // Fallback to heuristics if LLM fails (e.g. bad key, network)
+      if (this.provider !== 'heuristic' && this.isActiveRun(gen)) {
+        this.pushSystem(
+          `${getProviderDisplayName()} error — falling back to heuristics: ${err}`
+        )
         this.emit()
         try {
           await this.runHeuristic(text, gen)
@@ -335,17 +338,30 @@ export class AgentSession {
     return !this.cancelled && gen === this.runGeneration
   }
 
-  /** Multi-turn Grok tool-calling loop */
-  private async runWithGrok(goal: string, gen: number): Promise<void> {
+  /** Multi-turn OpenAI-compatible tool-calling loop (Grok default, any provider) */
+  private async runWithLlm(goal: string, gen: number): Promise<void> {
     const active = this.tabs.getState().find((t) => t.isActive)
     const intent = parseBrowseIntent(goal)
-    const intentHint = intent.navigateUrl
-      ? `\n\n(Parsed intent — follow this in the browser, do not Google the whole phrase)\n` +
-        `- Navigate to: ${intent.navigateUrl}\n` +
-        (intent.task
-          ? `- Then complete task: ${intent.task}\n`
-          : `- Navigate only (then observe and confirm).\n`)
-      : ''
+    const creds = extractCredentials(goal)
+    // Light hints only — the model owns planning for any goal (not a fixed auth script)
+    let intentHint = ''
+    if (intent.navigateUrl) {
+      intentHint +=
+        `\n\n(Hint) A site was recognized — navigate there and complete the user's full request:\n` +
+        `- Suggested start URL: ${intent.navigateUrl}\n` +
+        (intent.task ? `- Remaining goal: ${intent.task}\n` : '')
+    }
+    if (creds.email || creds.password || creds.username) {
+      intentHint +=
+        `\n(Hint) Values already in the user message — type them into the right fields when needed:\n` +
+        (creds.email ? `- email-like: ${creds.email}\n` : '') +
+        (creds.username ? `- username-like: ${creds.username}\n` : '') +
+        (creds.password ? `- password-like: ${creds.password}\n` : '')
+    }
+    if (this.mode === 'act') {
+      intentHint +=
+        `\nACT mode: use browser tools to carry out whatever they asked. Do not only describe the page.`
+    }
 
     const llmMessages: ChatMessage[] = [
       {
@@ -355,7 +371,7 @@ export class AgentSession {
       { role: 'user', content: goal + intentHint }
     ]
 
-    // Seed with a light page orientation so Grok doesn't guess
+    // Seed with a light page orientation so the model doesn't guess
     if (active?.url && active.url !== 'about:blank') {
       llmMessages.push({
         role: 'user',
@@ -377,7 +393,9 @@ export class AgentSession {
 
     let finalSummary = ''
     let rounds = 0
+    let textOnlyNudges = 0
     const maxRounds = Math.min(this.policy.maxSteps, 24)
+    const maxTextNudges = 2
 
     while (rounds < maxRounds && this.isActiveRun(gen)) {
       while (this.paused && this.isActiveRun(gen)) await sleep(150)
@@ -403,8 +421,32 @@ export class AgentSession {
       const toolCalls = turn.toolCalls ?? []
 
       if (toolCalls.length === 0) {
-        // Model answered in text without tools
-        finalSummary = (turn.content || '').trim() || 'Done.'
+        const text = (turn.content || '').trim()
+        // Model often "helpfully" describes the page instead of controlling it.
+        // Nudge it back into tool-calling unless it clearly finished after real work.
+        const shouldNudge =
+          this.mode === 'act' &&
+          textOnlyNudges < maxTextNudges &&
+          (this.stepCount === 0 || looksLikePassiveDescription(text))
+
+        if (shouldNudge) {
+          textOnlyNudges++
+          if (text) {
+            llmMessages.push({ role: 'assistant', content: text })
+          }
+          llmMessages.push({
+            role: 'user',
+            content:
+              'Stop describing. Call browser tools now (navigate / observe / type / click / wait). ' +
+              'If the user already gave email/password in their message, type them into the form. ' +
+              'Only call done when the task is finished or blocked on CAPTCHA/2FA/human verification.'
+          })
+          this.trace('system', 'Nudged model to use tools (text-only reply)')
+          rounds++
+          continue
+        }
+
+        finalSummary = text || 'Done.'
         break
       }
 
@@ -768,6 +810,24 @@ function summarizeArgs(c: ToolCall): string {
   return ''
 }
 
+/** Heuristic: model is narrating / listing refs instead of finishing a real browser task */
+function looksLikePassiveDescription(text: string): boolean {
+  if (!text) return true
+  const lower = text.toLowerCase()
+  if (
+    /i inspected|trajectory shows|interactive elements|use research mode|ask me to click|click\/type by ref|say [“"]?click e\d|here (are|is) (the )?element/i.test(
+      lower
+    )
+  ) {
+    return true
+  }
+  // Long element dumps without claiming completion
+  if (/\[e\d+\]/.test(lower) && !/\b(done|finished|completed|signed up|created|logged in)\b/i.test(lower)) {
+    return true
+  }
+  return false
+}
+
 function slimData(data: unknown): unknown {
   try {
     const s = JSON.stringify(data)
@@ -787,6 +847,3 @@ function chunkText(text: string, size: number): string[] {
   for (let i = 0; i < text.length; i += size) chunks.push(text.slice(i, i + size))
   return chunks
 }
-
-// re-export for tests / planner usage
-export { makeToolCall }

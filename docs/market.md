@@ -28,7 +28,8 @@ Research synthesized from Browserbase/Stagehand, browser-use, Skyvern, MultiOn, 
 | Research vs act modes | Comet vs Operator | ✅ research / act / watch |
 | Domain policy / safety | Claude allowlists | ✅ Policy engine (differentator) |
 | MCP server same session | Browserbase MCP (cloud) | ✅ Local MCP → same tabs |
-| SDK parity | All infra | ✅ `@browgent/core` types + tools |
+| Playwright connectOverCDP | Browserbase / raw Chromium | ✅ Dual mode (CDP endpoint + DOM driver) |
+| Shared tool/type surface | All infra | ✅ `src/shared` tools + policies + driver types |
 | CAPTCHA solve / residential proxy | Cloud BaaS | ⏳ Optional later (cloud runner) |
 | Visual workflow builder | Skyvern, Airtop | ⏳ Later |
 | Cloud fleet scale | Kernel/Steel | ⏳ Hybrid routing later |
@@ -42,6 +43,7 @@ Research synthesized from Browserbase/Stagehand, browser-use, Skyvern, MultiOn, 
 5. **Dual observation timeline** (compact refs + optional screenshots) in one UI
 6. **Tab locks / ownership** primitives for multi-agent (foundation)
 7. **Handoff**: agent stuck → human acts → agent resumes same tab
+8. **Dual driver** — DOM inject (fast in-app) + CDP endpoint (Playwright/Stagehand attach) without shipping Playwright inside the app
 
 ## Implementation priority (this sprint)
 
