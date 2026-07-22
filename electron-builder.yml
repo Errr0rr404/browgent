@@ -1,21 +1,58 @@
 appId: ai.browgent.app
 productName: Browgent
+copyright: Copyright © 2026 Browgent contributors
+
+# Stable names so README can use:
+#   .../releases/latest/download/Browgent-mac-arm64.dmg
+artifactName: ${productName}-${os}-${arch}.${ext}
+
 directories:
+  output: release
   buildResources: build
+
 files:
+  - 'out/**/*'
+  - 'package.json'
   - '!**/.vscode/*'
   - '!src/*'
+  - '!docs/*'
+  - '!release/*'
   - '!electron.vite.config.*'
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
+  - '!**/*.tsbuildinfo'
+  - '!.env'
+  - '!.env.*'
+
 mac:
   category: public.app-category.developer-tools
+  # Unsigned OSS builds (set CSC_IDENTITY for signed releases)
+  identity: null
   target:
-    - dmg
-    - zip
+    - target: dmg
+      arch:
+        - arm64
+  darkModeSupport: true
+  hardenedRuntime: false
+
+dmg:
+  artifactName: ${productName}-${os}-${arch}.${ext}
+  title: Browgent
+  writeUpdateInfo: false
+
 win:
   target:
-    - nsis
+    - target: nsis
+      arch:
+        - x64
+  artifactName: ${productName}-${os}-${arch}.${ext}
+
 linux:
   target:
-    - AppImage
+    - target: AppImage
+      arch:
+        - x64
   category: Network
+  artifactName: ${productName}-${os}-${arch}.${ext}
+
+# Do not auto-publish; releases are uploaded via gh CLI / CI
+publish: null

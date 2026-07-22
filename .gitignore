@@ -5,7 +5,10 @@ node_modules/
 dist/
 out/
 release/
+release-builds/
 *.tsbuildinfo
+# electron-builder intermediate
+dist_electron/
 
 # Env & secrets
 .env

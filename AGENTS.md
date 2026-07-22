@@ -1,43 +1,28 @@
-# Agent notes for Browgent
+# Agent notes
 
-Guidance for coding agents working in this repository.
-
-## Stack
-
-- **Electron 36** + **electron-vite** + **React 19** + **TypeScript**
-- Main process owns tabs (`WebContentsView`) and the agent session
-- Renderer is chrome-only UI; pages never render inside React
+Short map for coding agents. Full architecture: [docs/architecture.md](./docs/architecture.md).
 
 ## Commands
 
 ```bash
-npm install
-npm run dev
+npm install && npm run dev
 npm run typecheck
 npm run build
+npm run dist:mac    # DMG → release/
 ```
 
-## Critical invariants
-
-1. Guest pages use partition `persist:browgent-pages`, sandbox, no node integration.
-2. Chrome dropdowns must not paint over the content hole without expanding chrome — `WebContentsView` stacks above HTML (see ThemePicker flyout).
-3. Agent session uses a generation token; stop/clear must invalidate in-flight runs.
-4. Tools live in `src/shared/tools.ts`; execution in `src/main/agent/executor.ts`.
-5. Secrets only via env (`.env`); never hardcode keys.
-
-## Key paths
+## Layout
 
 | Path | Role |
 |------|------|
-| `src/main/index.ts` | Window + IPC |
-| `src/main/browser/tab-manager.ts` | Tabs / layout / observe |
-| `src/main/agent/session.ts` | Agent loop (Grok + heuristic) |
-| `src/main/agent/planner.ts` | Heuristic multi-step planner |
-| `src/shared/sites.ts` | Site aliases + browse intent |
-| `src/renderer/src/App.tsx` | Shell + shortcuts |
+| `src/main/` | Window, tabs, agent, MCP status |
+| `src/renderer/` | Chrome UI only (no guest DOM) |
+| `src/shared/` | Tools, policies, sites, types |
+| `docs/` | Human documentation |
 
-## Do not
+## Invariants
 
-- Commit `.env`, `out/`, `node_modules/`, or binary builds
-- Disable contextIsolation / enable nodeIntegration for guest pages
-- Add absolute menus over the page without chrome reserve
+1. Guest partition `persist:browgent-pages`, sandboxed, no nodeIntegration.
+2. Do not paint absolute menus over the content hole — `WebContentsView` stacks above HTML.
+3. Agent runs use a generation token; stop/clear must invalidate in-flight work.
+4. Secrets only via `.env` (gitignored). Never hardcode keys.
