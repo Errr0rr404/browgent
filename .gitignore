@@ -5,10 +5,7 @@ node_modules/
 dist/
 out/
 release/
-release-builds/
 *.tsbuildinfo
-# electron-builder intermediate
-dist_electron/
 
 # Env & secrets
 .env
@@ -36,3 +33,6 @@ Thumbs.db
 *.exe
 *.AppImage
 *.blockmap
+
+# AI Meta Controller runtime metadata
+.amc/

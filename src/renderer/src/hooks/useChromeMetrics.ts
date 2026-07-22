@@ -6,8 +6,6 @@ import { useEffect, useRef, type RefObject } from 'react'
  */
 export function useChromeMetrics(
   contentRef: RefObject<HTMLElement | null>,
-  agentPanelOpen: boolean,
-  /** Extra layout deps (sidebar open, etc.) so we remeasure after chrome toggles */
   layoutKey?: string | number | boolean
 ): void {
   const last = useRef('')
@@ -27,29 +25,42 @@ export function useChromeMetrics(
         top: Math.max(0, Math.round(rect.top)),
         left: Math.max(0, Math.round(rect.left)),
         right: Math.max(0, Math.round(window.innerWidth - rect.right)),
-        bottom: Math.max(0, Math.round(window.innerHeight - rect.bottom)),
-        agentPanelOpen
+        bottom: Math.max(0, Math.round(window.innerHeight - rect.bottom))
       }
 
       const key = JSON.stringify(metrics)
       if (key === last.current) return
       last.current = key
-      void window.browgent.setChromeMetrics(metrics)
+      window.browgent.setChromeMetrics(metrics).catch(() => {
+        /* ignore */
+      })
     }
 
-    publish()
-
     const ro = new ResizeObserver(() => publish())
-    if (contentRef.current) ro.observe(contentRef.current)
-    // Also observe body for sidebar/panel transitions that resize the hole
-    const body = contentRef.current?.parentElement
-    if (body) ro.observe(body)
+    const targets: Element[] = []
+    if (contentRef.current) {
+      ro.observe(contentRef.current)
+      targets.push(contentRef.current)
+      let p: HTMLElement | null = contentRef.current.parentElement
+      while (p && targets.length < 6) {
+        ro.observe(p)
+        targets.push(p)
+        p = p.parentElement
+      }
+    }
     window.addEventListener('resize', publish)
 
-    // Re-measure after layout settles (fonts, panel animation)
-    const t1 = window.setTimeout(publish, 50)
-    const t2 = window.setTimeout(publish, 200)
-    const t3 = window.setTimeout(publish, 400)
+    const onFontsReady = (): void => publish()
+    if (document.fonts && 'ready' in document.fonts) {
+      document.fonts.ready.then(onFontsReady).catch(() => {
+        /* ignore */
+      })
+    }
+
+    const t1 = window.setTimeout(publish, 0)
+    const t2 = window.setTimeout(publish, 50)
+    const t3 = window.setTimeout(publish, 200)
+    const t4 = window.setTimeout(publish, 400)
 
     return () => {
       ro.disconnect()
@@ -57,6 +68,7 @@ export function useChromeMetrics(
       window.clearTimeout(t1)
       window.clearTimeout(t2)
       window.clearTimeout(t3)
+      window.clearTimeout(t4)
     }
-  }, [contentRef, agentPanelOpen, layoutKey])
+  }, [contentRef, layoutKey])
 }

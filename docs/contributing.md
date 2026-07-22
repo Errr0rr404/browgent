@@ -13,14 +13,14 @@ npm run dev
 
 | Command | Purpose |
 |---------|---------|
-| `npm run dev` | Electron + Vite HMR (CDP on `:9222` by default) |
+| `npm run dev` | Electron + Vite HMR (CDP off by default — see [playwright.md](./playwright.md) to enable) |
 | `npm run build` | Compile main / preload / renderer |
 | `npm run typecheck` | TypeScript (node + web projects) |
 | `npm run dist:mac` | Build + package macOS DMG → `release/` |
 | `npm run preview` | Preview built app |
 | `npm run playwright:example` | Attach Playwright via CDP (Browgent must be running) |
-| `npm run dev:agent` | Compact automation shell |
-| `npm run dev:headless` | Hidden window + agent-only + CDP |
+| `npm run dev:agent` | Compact automation shell (implies CDP unless disabled) |
+| `npm run dev:headless` | Hidden window + agent-only (implies CDP unless disabled) |
 | `npm run dist` | Build + electron-builder (mac/win/linux targets in yml) |
 | `npm run dist:dir` | Unpacked app directory under `release/` |
 

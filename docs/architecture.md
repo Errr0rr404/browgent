@@ -20,8 +20,8 @@ Browgent is an **Electron** desktop app: the main process owns real Chromium tab
 │  Renderer (React) — chrome only                         │
 │  TitleBar · Tabs · Toolbar · Sidebar · Agent · Status   │
 └─────────────────────────────────────────────────────────┘
-         │ layout metrics (top/right/bottom/left)
-         ▼
+          │ chrome layout (top/right/bottom/left)
+          ▼
    WebContentsView bounds sit in the “content hole”
 ```
 
@@ -69,7 +69,7 @@ examples/
 |------|-----------|---------|
 | `dom` | `webContents.executeJavaScript` + observe refs | In-app agent |
 | `cdp` | `webContents.debugger` Input domain | Optional / agent-only |
-| Endpoint | Chromium `--remote-debugging-port` | Port **9222** (localhost) |
+| Endpoint | Chromium `--remote-debugging-port` | **Off** for normal `npm run dev`; opt in with `BROWGENT_CDP_PORT` (default 9222, localhost) |
 
 External Playwright uses the **endpoint**, not the in-app debugger. Prefer **DOM** driver while a remote Playwright client is attached to the same page (only one debugger client per target).
 
@@ -96,10 +96,10 @@ Generation tokens invalidate in-flight work on **Stop** / **Clear** so sessions 
 Exposed as `window.browgent` (see `src/preload/index.ts`):
 
 - Tabs: create, close, activate, navigate, back/forward/reload/stop
-- Chrome metrics for view layout
+- Chrome layout (top/right/bottom/left) for view bounds
 - Agent: send, getState, stop, clear, pause, resume, takeover, mode, policy, confirm, reject, answerHuman, export
-- Driver: status (CDP URL, mode), setMode (`dom` | `cdp`)
-- MCP: getMcpStatus (tool catalog; full STDIO server roadmap)
+- Driver: status (CDP URL when enabled, mode), setMode (`dom` | `cdp`)
+- MCP: getMcpStatus (tool catalog stub; full STDIO server roadmap)
 - Window controls (non-macOS)
 
 ## Related

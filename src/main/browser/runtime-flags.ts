@@ -46,28 +46,40 @@ function parsePort(raw: string | undefined): number | null {
   return Math.floor(n)
 }
 
+function defined(v: string | undefined): boolean {
+  return v != null && v !== ''
+}
+
 export function resolveRuntimeFlags(): RuntimeFlags {
   const agentOnly = truthy(process.env.BROWGENT_AGENT_ONLY) || truthy(argValue('agent-only'))
   const headless = truthy(process.env.BROWGENT_HEADLESS) || truthy(argValue('headless'))
 
-  const cdpEnv =
-    process.env.BROWGENT_CDP_PORT ??
-    process.env.BROWGENT_CDP ??
-    argValue('cdp-port') ??
-    argValue('cdp')
+  const portEnv = process.env.BROWGENT_CDP_PORT
+  const portArg = argValue('cdp-port')
+  const toggleEnv = process.env.BROWGENT_CDP
+  const toggleArg = argValue('cdp')
 
-  let cdpPort: number | null
-  if (cdpEnv === undefined) {
-    // Default ON for Playwright-friendliness (localhost only). Disable with BROWGENT_CDP=0
-    cdpPort = 9222
-  } else if (cdpEnv === '1' || cdpEnv.toLowerCase() === 'true' || cdpEnv.toLowerCase() === 'on') {
-    cdpPort = 9222
-  } else {
-    cdpPort = parsePort(cdpEnv)
+  const explicitPortRaw = portEnv ?? portArg
+  const explicitToggleRaw = toggleEnv ?? toggleArg
+
+  // Default ON for Playwright-friendliness (localhost only). Disable with BROWGENT_CDP=0
+  let cdpPort: number | null = null
+  let explicitSet = false
+
+  if (defined(explicitPortRaw)) {
+    explicitSet = true
+    cdpPort = parsePort(explicitPortRaw)
+  } else if (defined(explicitToggleRaw)) {
+    explicitSet = true
+    if (truthy(explicitToggleRaw)) {
+      cdpPort = 9222
+    } else {
+      cdpPort = parsePort(explicitToggleRaw)
+    }
   }
 
   // Agent-only / headless imply CDP so external tools can attach
-  if ((agentOnly || headless) && cdpPort == null) {
+  if (!explicitSet && (agentOnly || headless)) {
     cdpPort = 9222
   }
 

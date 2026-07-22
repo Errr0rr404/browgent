@@ -320,6 +320,96 @@ function stripTrailingPunct(s: string): string {
   return s.replace(/[.,;:!?)]+$/g, '')
 }
 
+export interface SecretRedactionMap {
+  placeholders: string[]
+  rawByPlaceholder: Record<string, string>
+}
+
+/**
+ * Replace extracted credentials / API tokens in user-supplied text with local
+ * opaque placeholders. The raw values stay in a local map and are only
+ * resolved immediately before a tool (e.g. type) executes — never sent to
+ * the remote LLM.
+ */
+export function redactSecrets(text: string): { redacted: string; map: SecretRedactionMap } {
+  const empty: SecretRedactionMap = { placeholders: [], rawByPlaceholder: {} }
+  if (!text) return { redacted: '', map: empty }
+
+  const placeholders: string[] = []
+  const rawByPlaceholder: Record<string, string> = {}
+  let counter = 0
+  const sub = (raw: string): string => {
+    const r = raw.replace(/[.,;:!?)]+$/g, '')
+    const ph = `[BROWGENT_SECRET_${++counter}]`
+    placeholders.push(ph)
+    rawByPlaceholder[ph] = r
+    return ph
+  }
+
+  let out = text
+
+  out = out.replace(
+    /\b([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})\b\s*[\/|]\s*(\S+)/g,
+    (_m, email, rest) => `${sub(String(email))} / ${sub(String(rest ?? ''))}`
+  )
+
+  out = out.replace(
+    /\b(password|passwd|pwd|pass|username|user\s*name|login|otp|code|token|secret|api[_-]?key)\s*[:=]\s*["']?([^\s"',]{2,200})["']?/gi,
+    (_m, k, v) => `${k} ${sub(String(v ?? ''))}`
+  )
+
+  const emailRe = /\b([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})\b/g
+  out = out.replace(emailRe, (m) => {
+    if (m.includes('[BROWGENT_SECRET_')) return m
+    return sub(m)
+  })
+
+  return { redacted: out, map: { placeholders, rawByPlaceholder } }
+}
+
+/** Inverse of redactSecrets — restore raw values for local tool execution. */
+export function resolveSecretPlaceholders(text: string, map: SecretRedactionMap): string {
+  if (!text || !map.placeholders.length) return text
+  let out = text
+  for (const ph of map.placeholders) {
+    const raw = map.rawByPlaceholder[ph]
+    if (raw === undefined) continue
+    out = out.split(ph).join(raw)
+  }
+  return out
+}
+
+const SENSITIVE_QUERY_PARAMS = new Set([
+  'api_key', 'apikey', 'token', 'auth', 'password', 'passwd', 'pwd', 'pass',
+  'secret', 'otp', 'code', 'sid', 'sessionid', 'session', 'csrf', 'phpsessid',
+  'sig', 'signature', 'access_token', 'refresh_token', 'bearer', 'key'
+])
+
+export const BLOCKED_URL_SENTINEL = '<blocked-url>'
+
+/** URL safe to send to a remote LLM — strips common credential-leaking query params.
+ *  Non-http(s) URLs collapse to a sentinel instead of an empty string so downstream
+ *  readers can still see that a URL existed but was redacted. */
+export function safeUrlForLlm(url: string, maxLen = 200): string {
+  if (typeof url !== 'string' || !url) return ''
+  if (url === 'about:blank') return 'about:blank'
+  try {
+    const u = new URL(url)
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return BLOCKED_URL_SENTINEL
+    let changed = false
+    for (const k of Array.from(u.searchParams.keys())) {
+      if (SENSITIVE_QUERY_PARAMS.has(k.toLowerCase())) {
+        u.searchParams.set(k, '[REDACTED]')
+        changed = true
+      }
+    }
+    const s = changed ? u.toString() : url
+    return s.length > maxLen ? s.slice(0, maxLen) + '…' : s
+  } catch {
+    return url.length > maxLen ? url.slice(0, maxLen) + '…' : url
+  }
+}
+
 function extractTaskFromHead(head: string, token: string): string {
   // "fb signup" without "and"
   const re = new RegExp(`^${escapeRe(token)}\\s+`, 'i')

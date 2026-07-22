@@ -5,7 +5,10 @@ Short map for coding agents. Full architecture: [docs/architecture.md](./docs/ar
 ## Commands
 
 ```bash
-npm install && npm run dev
+npm ci                         # when package-lock.json exists
+npm install                    # otherwise
+npm run dev                    # normal UI; CDP off by default
+BROWGENT_CDP_PORT=9222 npm run dev
 npm run typecheck
 npm run build
 npm run preview

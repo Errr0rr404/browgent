@@ -13,14 +13,14 @@ import type { CdpEndpointStatus, DriverMode } from '../shared/driver'
 const api = {
   getTabs: (): Promise<TabState[]> => ipcRenderer.invoke(IPC.TABS_GET),
   createTab: (url?: string): Promise<TabId | null> => ipcRenderer.invoke(IPC.TAB_CREATE, url),
-  closeTab: (id: TabId): Promise<void> => ipcRenderer.invoke(IPC.TAB_CLOSE, id),
-  activateTab: (id: TabId): Promise<void> => ipcRenderer.invoke(IPC.TAB_ACTIVATE, id),
-  navigate: (payload: NavigatePayload): Promise<void> =>
+  closeTab: (id: TabId): Promise<boolean> => ipcRenderer.invoke(IPC.TAB_CLOSE, id),
+  activateTab: (id: TabId): Promise<boolean> => ipcRenderer.invoke(IPC.TAB_ACTIVATE, id),
+  navigate: (payload: NavigatePayload): Promise<boolean> =>
     ipcRenderer.invoke(IPC.TAB_NAVIGATE, payload),
-  goBack: (id?: TabId): Promise<void> => ipcRenderer.invoke(IPC.TAB_BACK, id),
-  goForward: (id?: TabId): Promise<void> => ipcRenderer.invoke(IPC.TAB_FORWARD, id),
-  reload: (id?: TabId): Promise<void> => ipcRenderer.invoke(IPC.TAB_RELOAD, id),
-  stop: (id?: TabId): Promise<void> => ipcRenderer.invoke(IPC.TAB_STOP, id),
+  goBack: (id?: TabId): Promise<boolean> => ipcRenderer.invoke(IPC.TAB_BACK, id),
+  goForward: (id?: TabId): Promise<boolean> => ipcRenderer.invoke(IPC.TAB_FORWARD, id),
+  reload: (id?: TabId): Promise<boolean> => ipcRenderer.invoke(IPC.TAB_RELOAD, id),
+  stop: (id?: TabId): Promise<boolean> => ipcRenderer.invoke(IPC.TAB_STOP, id),
   onTabsState: (cb: (tabs: TabState[]) => void): (() => void) => {
     const listener = (_: Electron.IpcRendererEvent, tabs: TabState[]): void => cb(tabs)
     ipcRenderer.on(IPC.TABS_STATE, listener)
@@ -29,6 +29,7 @@ const api = {
 
   setChromeMetrics: (metrics: BrowserChromeMetrics): Promise<void> =>
     ipcRenderer.invoke(IPC.CHROME_METRICS, metrics),
+  appVersion: (): Promise<string> => ipcRenderer.invoke(IPC.APP_VERSION),
   minimize: (): Promise<void> => ipcRenderer.invoke(IPC.WINDOW_MINIMIZE),
   maximize: (): Promise<void> => ipcRenderer.invoke(IPC.WINDOW_MAXIMIZE),
   close: (): Promise<void> => ipcRenderer.invoke(IPC.WINDOW_CLOSE),

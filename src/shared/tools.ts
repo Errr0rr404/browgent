@@ -52,8 +52,9 @@ export const TOOL_DEFS: ToolDef[] = [
   },
   {
     name: 'type',
-    description: 'Type text into element (ref or selector). clear=true replaces content',
-    params: { text: 'string', ref: 'string?', selector: 'string?', clear: 'boolean?', tabId: 'string?' }
+    description:
+      'Type text into element (ref or selector). text is required unless clear=true (which wipes the field, optionally before typing a new value).',
+    params: { text: 'string?', ref: 'string?', selector: 'string?', clear: 'boolean?', tabId: 'string?' }
   },
   {
     name: 'press_key',

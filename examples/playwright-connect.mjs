@@ -1,8 +1,8 @@
 /**
  * Attach Playwright to a running Browgent window (dual-mode CDP path).
  *
- * 1. Start Browgent with CDP (default port 9222):
- *      npm run dev
+ * 1. Start Browgent with CDP explicitly enabled (default port 9222):
+ *      BROWGENT_CDP_PORT=9222 npm run dev
  *    or lightweight automation shell:
  *      BROWGENT_AGENT_ONLY=1 BROWGENT_HEADLESS=1 npm run dev
  *
@@ -56,9 +56,10 @@ main().catch((err) => {
   console.error(err)
   console.error(`
 Tips:
-  • Ensure Browgent is running (npm run dev)
-  • CDP defaults to http://127.0.0.1:9222 (BROWGENT_CDP_PORT)
-  • Disable with BROWGENT_CDP=0 if you do not want remote debugging
+   • Ensure Browgent is running with CDP enabled (BROWGENT_CDP_PORT=9222)
+   • Set BROWGENT_CDP_URL only for this external example
+   • CDP is localhost-only; any local process can control/read the session
+   • Disable with BROWGENT_CDP=0 if you do not want remote debugging
 `)
   process.exit(1)
 })

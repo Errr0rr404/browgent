@@ -22,7 +22,6 @@ export interface BrowserChromeMetrics {
   right: number
   bottom: number
   left: number
-  agentPanelOpen: boolean
 }
 
 export type AgentRole = 'user' | 'assistant' | 'system' | 'tool'
@@ -140,6 +139,7 @@ export const IPC = {
   TABS_GET: 'tabs:get',
 
   CHROME_METRICS: 'chrome:metrics',
+  APP_VERSION: 'app:version',
   WINDOW_MINIMIZE: 'window:minimize',
   WINDOW_MAXIMIZE: 'window:maximize',
   WINDOW_CLOSE: 'window:close',

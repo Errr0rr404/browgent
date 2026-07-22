@@ -1,10 +1,17 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState
+} from 'react'
 import {
   ChevronDown,
   ChevronRight,
   Folder,
   FolderPlus,
-  Globe,
   MoreHorizontal,
   Orbit,
   PanelLeftClose,
@@ -16,6 +23,8 @@ import {
 import type { TabState } from '@shared/types'
 import type { BookmarkFolder, BookmarkId, BookmarkItem } from '@shared/bookmarks'
 import { useBookmarks } from '../stores/bookmarks'
+import { useRovingTablist } from '../hooks/useRovingTablist'
+import { Favicon } from './Favicon'
 
 interface Props {
   tabs: TabState[]
@@ -27,42 +36,23 @@ interface Props {
   onOpenUrl: (url: string, newTab?: boolean) => void
 }
 
-type MenuState =
-  | { kind: 'favorite' | 'item'; id: BookmarkId; x: number; y: number }
-  | { kind: 'folder'; id: BookmarkId; x: number; y: number }
-  | { kind: 'space'; x: number; y: number }
-  | null
+type MenuKind = 'favorite' | 'item' | 'folder' | 'space'
 
-function Favicon({
-  src,
-  title,
-  size = 18
-}: {
-  src?: string
-  title: string
-  size?: number
-}): React.JSX.Element {
-  const [broken, setBroken] = useState(false)
-  if (!src || broken) {
-    return (
-      <span className="arc-favicon-fallback" aria-hidden style={{ width: size, height: size }}>
-        <Globe size={Math.max(11, size - 4)} strokeWidth={1.75} />
-      </span>
-    )
-  }
-  return (
-    <img
-      className="arc-favicon"
-      src={src}
-      alt=""
-      width={size}
-      height={size}
-      draggable={false}
-      onError={() => setBroken(true)}
-      title={title}
-    />
-  )
+interface MenuStateBase {
+  kind: MenuKind
+  anchor: DOMRect
+  openerId: string
 }
+
+type MenuState =
+  | (MenuStateBase & { kind: 'favorite' | 'item' | 'folder'; id: BookmarkId })
+  | (MenuStateBase & { kind: 'space' })
+
+const MENU_VPAD = 8
+const MENU_TOP_MIN = 48
+
+const isMenuKeyTrigger = (e: React.KeyboardEvent): boolean =>
+  e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')
 
 export function Sidebar({
   tabs,
@@ -87,10 +77,16 @@ export function Sidebar({
     renameSpace
   } = useBookmarks()
 
-  const [menu, setMenu] = useState<MenuState>(null)
+  const [menu, setMenu] = useState<MenuState | null>(null)
   const [editingSpace, setEditingSpace] = useState(false)
   const [spaceName, setSpaceName] = useState('')
+  const cancelledRef = useRef(false)
   const menuRef = useRef<HTMLDivElement>(null)
+  const spaceInputRef = useRef<HTMLInputElement>(null)
+  const spaceNameBtnRef = useRef<HTMLButtonElement>(null)
+
+  const sidebarTablistRef = useRef<HTMLDivElement>(null)
+  const menuListId = useId()
 
   const space = useMemo(
     () => spaces.find((s) => s.id === activeSpaceId) ?? spaces[0],
@@ -121,44 +117,270 @@ export function Sidebar({
     [space, items]
   )
 
+  const activeTabIdx = useMemo(
+    () => Math.max(0, tabs.findIndex((t) => t.isActive)),
+    [tabs]
+  )
+
+  const tabRoving = useRovingTablist({
+    items: tabs,
+    activeIndex: activeTabIdx,
+    orientation: 'vertical',
+    containerRef: sidebarTablistRef,
+    onActivate: (tab) => onActivateTab(tab.id),
+    onClose: (tab) => onCloseTab(tab.id)
+  })
+
+  const restoreOpener = useCallback((openerId: string) => {
+    window.requestAnimationFrame(() => {
+      document.getElementById(openerId)?.focus()
+    })
+  }, [])
+
+  const closeMenu = useCallback(() => {
+    setMenu(null)
+  }, [])
+
   useEffect(() => {
     if (!menu) return
     const onDown = (e: MouseEvent): void => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setMenu(null)
+        closeMenu()
       }
     }
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') setMenu(null)
-    }
     window.addEventListener('mousedown', onDown)
-    window.addEventListener('keydown', onKey)
     return () => {
       window.removeEventListener('mousedown', onDown)
-      window.removeEventListener('keydown', onKey)
     }
+  }, [menu, closeMenu])
+
+  useLayoutEffect(() => {
+    if (!menu || !menuRef.current) return
+    const el = menuRef.current
+    const rect = el.getBoundingClientRect()
+    const vw = window.innerWidth
+    const vh = window.innerHeight
+    let dx = 0
+    let dy = 0
+    if (rect.right > vw - MENU_VPAD) dx = vw - MENU_VPAD - rect.right
+    if (rect.bottom > vh - MENU_VPAD) dy = vh - MENU_VPAD - rect.bottom
+    if (rect.left + dx < MENU_VPAD) dx = MENU_VPAD - (rect.left + dx)
+    if (rect.top + dy < MENU_TOP_MIN) dy = MENU_TOP_MIN - (rect.top + dy)
+    if (dx !== 0 || dy !== 0) {
+      el.style.left = `${Math.round(rect.left + dx)}px`
+      el.style.top = `${Math.round(rect.top + dy)}px`
+    }
+    const first = el.querySelector<HTMLElement>('[role="menuitem"]')
+    first?.focus()
   }, [menu])
+
+  useEffect(() => {
+    if (editingSpace) {
+      cancelledRef.current = false
+      spaceInputRef.current?.select()
+    }
+  }, [editingSpace])
 
   if (!open || !space) return null
 
-  const openCtx = (
+  const closeAndRestoreOpener = (): void => {
+    const openerId = menu?.openerId
+    closeMenu()
+    if (openerId) restoreOpener(openerId)
+  }
+
+  const openCtxFromMouse = (
     e: React.MouseEvent,
-    next: Exclude<MenuState, null>
+    kind: 'favorite' | 'item' | 'folder' | 'space',
+    id?: BookmarkId
   ): void => {
     e.preventDefault()
     e.stopPropagation()
-    setMenu(next)
+    const el = e.currentTarget as HTMLElement
+    const anchor = el.getBoundingClientRect()
+    const openerId = el.id || ''
+    if (kind === 'space') {
+      setMenu({ kind: 'space', anchor, openerId })
+    } else {
+      if (!id) return
+      setMenu({ kind, id, anchor, openerId })
+    }
+  }
+
+  const openCtxFromKey = (
+    e: React.KeyboardEvent,
+    kind: 'favorite' | 'item' | 'folder' | 'space',
+    id?: BookmarkId
+  ): void => {
+    if (!isMenuKeyTrigger(e)) return
+    e.preventDefault()
+    e.stopPropagation()
+    const el = e.currentTarget as HTMLElement
+    const anchor = el.getBoundingClientRect()
+    const openerId = el.id || ''
+    if (kind === 'space') {
+      setMenu({ kind: 'space', anchor, openerId })
+    } else {
+      if (!id) return
+      setMenu({ kind, id, anchor, openerId })
+    }
   }
 
   const startRenameSpace = (): void => {
     setSpaceName(space.name)
     setEditingSpace(true)
-    setMenu(null)
+    closeMenu()
   }
 
   const commitSpaceName = (): void => {
+    if (cancelledRef.current) {
+      cancelledRef.current = false
+      setEditingSpace(false)
+      return
+    }
     renameSpace(spaceName)
     setEditingSpace(false)
+  }
+
+  const cancelSpaceRename = (): void => {
+    cancelledRef.current = true
+    setEditingSpace(false)
+    spaceNameBtnRef.current?.focus()
+  }
+
+  const onMenuKeyDown = (e: React.KeyboardEvent<HTMLDivElement>): void => {
+    const items = Array.from(
+      menuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? []
+    )
+    if (items.length === 0) return
+    const cur = items.findIndex((el) => el === document.activeElement)
+    const focusAt = (i: number): void => {
+      items[(i + items.length) % items.length]?.focus()
+    }
+
+    if (e.key === 'Tab') {
+      closeMenu()
+      return
+    }
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      focusAt(cur + 1)
+      return
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      focusAt(cur - 1)
+      return
+    }
+    if (e.key === 'Home') {
+      e.preventDefault()
+      focusAt(0)
+      return
+    }
+    if (e.key === 'End') {
+      e.preventDefault()
+      focusAt(items.length - 1)
+      return
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      closeAndRestoreOpener()
+      return
+    }
+  }
+
+  const menuPos = (() => {
+    if (!menu) return { left: 8, top: 48 }
+    const a = menu.anchor
+    return { left: Math.round(a.left), top: Math.round(a.bottom + 4) }
+  })()
+
+  const renderMenuItems = (): React.ReactNode => {
+    if (!menu) return null
+    if (menu.kind === 'favorite' || menu.kind === 'item') {
+      const item = items[menu.id]
+      return (
+        <>
+          <button
+            type="button"
+            role="menuitem"
+            tabIndex={-1}
+            onClick={() => {
+              if (item) onOpenUrl(item.url, true)
+              closeAndRestoreOpener()
+            }}
+          >
+            Open in New Tab
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            tabIndex={-1}
+            onClick={() => {
+              toggleFavorite(menu.id)
+              closeAndRestoreOpener()
+            }}
+          >
+            <Star size={13} strokeWidth={1.75} />
+            {isFavorite(menu.id) ? 'Remove from Favorites' : 'Add to Favorites'}
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            tabIndex={-1}
+            className="danger"
+            onClick={() => {
+              removeBookmark(menu.id)
+              closeAndRestoreOpener()
+            }}
+          >
+            <Trash2 size={13} strokeWidth={1.75} />
+            Delete
+          </button>
+        </>
+      )
+    }
+    if (menu.kind === 'folder') {
+      return (
+        <button
+          type="button"
+          role="menuitem"
+          tabIndex={-1}
+          className="danger"
+          onClick={() => {
+            removeFolder(menu.id)
+            closeAndRestoreOpener()
+          }}
+        >
+          <Trash2 size={13} strokeWidth={1.75} />
+          Delete Folder
+        </button>
+      )
+    }
+    return (
+      <>
+        <button
+          type="button"
+          role="menuitem"
+          tabIndex={-1}
+          onClick={startRenameSpace}
+        >
+          Rename Space
+        </button>
+        <button
+          type="button"
+          role="menuitem"
+          tabIndex={-1}
+          onClick={() => {
+            addFolder('New Folder')
+            closeAndRestoreOpener()
+          }}
+        >
+          <FolderPlus size={13} strokeWidth={1.75} />
+          New Folder
+        </button>
+      </>
+    )
   }
 
   return (
@@ -176,16 +398,16 @@ export function Sidebar({
         <span className="arc-sidebar-label">Library</span>
         <button
           type="button"
+          id="sidebar-space-options"
           className="arc-icon-btn"
+          aria-haspopup="menu"
+          {...(menu?.kind === 'space'
+            ? { 'aria-controls': menuListId, 'aria-expanded': true }
+            : { 'aria-expanded': false })}
           aria-label="Space options"
           title="Space options"
-          onClick={(e) =>
-            openCtx(e, {
-              kind: 'space',
-              x: e.clientX,
-              y: e.clientY
-            })
-          }
+          onClick={(e) => openCtxFromMouse(e, 'space')}
+          onKeyDown={(e) => openCtxFromKey(e, 'space')}
         >
           <MoreHorizontal size={16} strokeWidth={1.75} />
         </button>
@@ -197,13 +419,13 @@ export function Sidebar({
           <button
             key={fav.id}
             type="button"
+            id={`sidebar-favorite-${fav.id}`}
             className="arc-favorite-tile"
             title={fav.title}
             aria-label={fav.title || fav.url}
             onClick={() => onOpenUrl(fav.url)}
-            onContextMenu={(e) =>
-              openCtx(e, { kind: 'favorite', id: fav.id, x: e.clientX, y: e.clientY })
-            }
+            onContextMenu={(e) => openCtxFromMouse(e, 'favorite', fav.id)}
+            onKeyDown={(e) => openCtxFromKey(e, 'favorite', fav.id)}
           >
             <span className="arc-favorite-icon">
               <Favicon src={fav.favicon} title={fav.title} size={22} />
@@ -217,24 +439,29 @@ export function Sidebar({
         )}
       </div>
 
-      {/* Space header */}
       <div className="arc-space-header">
         <Orbit size={15} strokeWidth={1.75} className="arc-space-icon" />
         {editingSpace ? (
           <input
+            ref={spaceInputRef}
             className="arc-space-input"
             value={spaceName}
-            autoFocus
             onChange={(e) => setSpaceName(e.target.value)}
             onBlur={commitSpaceName}
             onKeyDown={(e) => {
-              if (e.key === 'Enter') commitSpaceName()
-              if (e.key === 'Escape') setEditingSpace(false)
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                ;(e.currentTarget as HTMLInputElement).blur()
+              } else if (e.key === 'Escape') {
+                e.preventDefault()
+                cancelSpaceRename()
+              }
             }}
             aria-label="Space name"
           />
         ) : (
           <button
+            ref={spaceNameBtnRef}
             type="button"
             className="arc-space-name"
             onClick={startRenameSpace}
@@ -258,11 +485,12 @@ export function Sidebar({
             <div key={folder.id} className="arc-folder">
               <button
                 type="button"
+                id={`sidebar-folder-${folder.id}`}
                 className="arc-row arc-folder-row"
+                aria-haspopup="menu"
                 onClick={() => toggleFolder(folder.id)}
-                onContextMenu={(e) =>
-                  openCtx(e, { kind: 'folder', id: folder.id, x: e.clientX, y: e.clientY })
-                }
+                onContextMenu={(e) => openCtxFromMouse(e, 'folder', folder.id)}
+                onKeyDown={(e) => openCtxFromKey(e, 'folder', folder.id)}
               >
                 <span className="arc-row-chevron" aria-hidden>
                   {collapsed ? (
@@ -279,15 +507,16 @@ export function Sidebar({
                   <button
                     key={item.id}
                     type="button"
+                    id={`sidebar-bookmark-${item.id}`}
                     className="arc-row arc-bookmark-row"
+                    aria-haspopup="menu"
                     onClick={() => onOpenUrl(item.url)}
-                    onContextMenu={(e) =>
-                      openCtx(e, { kind: 'item', id: item.id, x: e.clientX, y: e.clientY })
-                    }
+                    onContextMenu={(e) => openCtxFromMouse(e, 'item', item.id)}
+                    onKeyDown={(e) => openCtxFromKey(e, 'item', item.id)}
                     title={item.url}
                   >
                     <span className="arc-row-indent" />
-                    <Favicon src={item.favicon} title={item.title} size={14} />
+                    <Favicon src={item.favicon} title={item.title} size={14} small />
                     <span className="arc-row-title">{item.title}</span>
                   </button>
                 ))}
@@ -300,14 +529,15 @@ export function Sidebar({
           <button
             key={item.id}
             type="button"
+            id={`sidebar-bookmark-${item.id}`}
             className="arc-row arc-bookmark-row"
+            aria-haspopup="menu"
             onClick={() => onOpenUrl(item.url)}
-            onContextMenu={(e) =>
-              openCtx(e, { kind: 'item', id: item.id, x: e.clientX, y: e.clientY })
-            }
+            onContextMenu={(e) => openCtxFromMouse(e, 'item', item.id)}
+            onKeyDown={(e) => openCtxFromKey(e, 'item', item.id)}
             title={item.url}
           >
-            <Favicon src={item.favicon} title={item.title} size={14} />
+            <Favicon src={item.favicon} title={item.title} size={14} small />
             <span className="arc-row-title">{item.title}</span>
           </button>
         ))}
@@ -321,62 +551,51 @@ export function Sidebar({
         </button>
 
         {/* Open tabs (vertical, Arc-style) */}
-        <div className="arc-tabs" role="tablist" aria-label="Open tabs">
-          {tabs.map((tab) => (
-            <div
-              key={tab.id}
-              role="tab"
-              aria-selected={tab.isActive}
-              className={`arc-row arc-tab-row${tab.isActive ? ' active' : ''}`}
-              onClick={() => onActivateTab(tab.id)}
-              onAuxClick={(e) => {
-                if (e.button === 1) {
-                  e.preventDefault()
-                  onCloseTab(tab.id)
-                }
-              }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault()
-                  onActivateTab(tab.id)
-                }
-              }}
-              tabIndex={0}
-              title={tab.url}
-            >
-              {tab.favicon ? (
-                <img
-                  className="arc-favicon"
-                  src={tab.favicon}
-                  alt=""
-                  width={14}
-                  height={14}
-                  draggable={false}
-                  onError={(e) => {
-                    e.currentTarget.style.display = 'none'
-                  }}
-                />
-              ) : (
-                <span className="arc-favicon-fallback sm" aria-hidden>
-                  <Globe size={12} strokeWidth={1.75} />
-                </span>
-              )}
-              <span className="arc-row-title">{tab.title || 'New Tab'}</span>
-              {tab.owner === 'agent' && <span className="tab-owner">agent</span>}
-              {tab.isLoading && <span className="arc-tab-loading" aria-hidden />}
-              <button
-                type="button"
-                className="arc-tab-close"
-                aria-label={`Close ${tab.title || 'tab'}`}
-                onClick={(e) => {
-                  e.stopPropagation()
-                  onCloseTab(tab.id)
+        <div
+          className="arc-tabs"
+          role="tablist"
+          aria-label="Open tabs"
+          ref={sidebarTablistRef}
+        >
+          {tabs.map((tab, i) => {
+            const tp = tabRoving.tabPropsFor(tab, i)
+            return (
+              <div
+                key={tab.id}
+                role="tab"
+                aria-selected={tab.isActive}
+                className={`arc-row arc-tab-row${tab.isActive ? ' active' : ''}`}
+                tabIndex={tp.tabIndex}
+                onFocus={tp.onFocus}
+                onKeyDown={tp.onKeyDown}
+                onClick={tp.onClick}
+                onAuxClick={(e) => {
+                  if (e.button === 1) {
+                    e.preventDefault()
+                    onCloseTab(tab.id)
+                  }
                 }}
+                title={tab.url}
               >
-                <X size={12} strokeWidth={2} />
-              </button>
-            </div>
-          ))}
+                <Favicon src={tab.favicon} title={tab.title} size={14} small />
+                <span className="arc-row-title">{tab.title || 'New Tab'}</span>
+                {tab.owner === 'agent' && <span className="tab-owner">agent</span>}
+                {tab.isLoading && <span className="arc-tab-loading" aria-hidden />}
+                <button
+                  type="button"
+                  className="arc-tab-close"
+                  aria-label={`Close ${tab.title || 'tab'}`}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onCloseTab(tab.id)
+                  }}
+                  tabIndex={-1}
+                >
+                  <X size={12} strokeWidth={2} />
+                </button>
+              </div>
+            )
+          })}
         </div>
       </div>
 
@@ -385,83 +604,13 @@ export function Sidebar({
         <div
           ref={menuRef}
           className="arc-menu"
-          style={{
-            // Keep menu inside chrome (sidebar) — WebContentsView paints above HTML
-            left: Math.min(Math.max(8, menu.x), Math.min(window.innerWidth - 200, 236)),
-            top: Math.min(Math.max(48, menu.y), window.innerHeight - 160)
-          }}
+          id={menuListId}
+          style={{ left: menuPos.left, top: menuPos.top }}
           role="menu"
+          aria-label="Item actions"
+          onKeyDown={onMenuKeyDown}
         >
-          {(menu.kind === 'favorite' || menu.kind === 'item') && (
-            <>
-              <button
-                type="button"
-                role="menuitem"
-                onClick={() => {
-                  const item = items[menu.id]
-                  if (item) onOpenUrl(item.url, true)
-                  setMenu(null)
-                }}
-              >
-                Open in New Tab
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                onClick={() => {
-                  toggleFavorite(menu.id)
-                  setMenu(null)
-                }}
-              >
-                <Star size={13} strokeWidth={1.75} />
-                {isFavorite(menu.id) ? 'Remove from Favorites' : 'Add to Favorites'}
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                className="danger"
-                onClick={() => {
-                  removeBookmark(menu.id)
-                  setMenu(null)
-                }}
-              >
-                <Trash2 size={13} strokeWidth={1.75} />
-                Delete
-              </button>
-            </>
-          )}
-          {menu.kind === 'folder' && (
-            <button
-              type="button"
-              role="menuitem"
-              className="danger"
-              onClick={() => {
-                removeFolder(menu.id)
-                setMenu(null)
-              }}
-            >
-              <Trash2 size={13} strokeWidth={1.75} />
-              Delete Folder
-            </button>
-          )}
-          {menu.kind === 'space' && (
-            <>
-              <button type="button" role="menuitem" onClick={startRenameSpace}>
-                Rename Space
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                onClick={() => {
-                  addFolder('New Folder')
-                  setMenu(null)
-                }}
-              >
-                <FolderPlus size={13} strokeWidth={1.75} />
-                New Folder
-              </button>
-            </>
-          )}
+          {renderMenuItems()}
         </div>
       )}
     </aside>

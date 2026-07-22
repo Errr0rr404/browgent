@@ -42,9 +42,11 @@ export function faviconForUrl(url: string, size = 64): string {
   try {
     const normalized =
       url.startsWith('http://') || url.startsWith('https://') ? url : `https://${url}`
-    const host = new URL(normalized).hostname
+    const u = new URL(normalized)
+    const host = u.hostname
     if (!host || host === 'localhost') return ''
-    return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=${size}`
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return ''
+    return `${u.protocol}//${host}/favicon.ico`
   } catch {
     return ''
   }

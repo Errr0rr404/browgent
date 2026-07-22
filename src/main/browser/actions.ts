@@ -9,6 +9,11 @@ import {
 import type { ObserveSnapshot } from '../../shared/types'
 import type { ToolArgs } from '../../shared/tools'
 
+const EXTRACT_TEXT_MAX = 50000
+const EXTRACT_LINKS_MAX = 500
+const EXTRACT_TEXT_DEFAULT = 8000
+const EXTRACT_LINKS_DEFAULT = 40
+
 async function evalJson<T>(wc: WebContents, script: string): Promise<T> {
   if (wc.isDestroyed()) throw new Error('Page closed')
   const raw = await wc.executeJavaScript(script, true)
@@ -20,6 +25,13 @@ async function evalJson<T>(wc: WebContents, script: string): Promise<T> {
     }
   }
   return raw as T
+}
+
+function clampInt(value: number, fallback: number, max: number): number {
+  if (!Number.isFinite(value)) return fallback
+  const n = Math.floor(value)
+  if (n <= 0) return fallback
+  return Math.min(n, max)
 }
 
 export async function observePage(wc: WebContents): Promise<ObserveSnapshot> {
@@ -45,10 +57,12 @@ export async function runDomAction(
   return evalJson(wc, actionScript(kind, args))
 }
 
-export async function extractText(wc: WebContents, maxChars = 8000): Promise<unknown> {
-  return evalJson(wc, EXTRACT_TEXT_SCRIPT(maxChars))
+export async function extractText(wc: WebContents, maxChars = EXTRACT_TEXT_DEFAULT): Promise<unknown> {
+  const safe = clampInt(maxChars, EXTRACT_TEXT_DEFAULT, EXTRACT_TEXT_MAX)
+  return evalJson(wc, EXTRACT_TEXT_SCRIPT(safe))
 }
 
-export async function extractLinks(wc: WebContents, limit = 40): Promise<unknown> {
-  return evalJson(wc, EXTRACT_LINKS_SCRIPT(limit))
+export async function extractLinks(wc: WebContents, limit = EXTRACT_LINKS_DEFAULT): Promise<unknown> {
+  const safe = clampInt(limit, EXTRACT_LINKS_DEFAULT, EXTRACT_LINKS_MAX)
+  return evalJson(wc, EXTRACT_LINKS_SCRIPT(safe))
 }

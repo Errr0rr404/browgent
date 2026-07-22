@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type KeyboardEvent
+} from 'react'
 import {
   Bot,
   Check,
@@ -19,7 +27,9 @@ import {
   X
 } from 'lucide-react'
 import type { AgentAction, AgentSessionState, TrajectoryStep } from '@shared/types'
+import { DEFAULT_POLICY, type AgentPolicy } from '@shared/policies'
 import { useVoiceInput } from '../hooks/useVoiceInput'
+import { useRovingTablist } from '../hooks/useRovingTablist'
 
 interface Props {
   open: boolean
@@ -35,9 +45,16 @@ const SUGGESTIONS = [
   'click the first result'
 ]
 
+const TEXTAREA_MAX_LENGTH = 20000
+
+type AgentTab = 'chat' | 'trajectory' | 'policy'
+
 export function AgentPanel({ open, state, onClose }: Props): React.JSX.Element {
   const [draft, setDraft] = useState('')
-  const [tab, setTab] = useState<'chat' | 'trajectory' | 'policy'>('chat')
+  const draftRef = useRef('')
+  const [tab, setTab] = useState<AgentTab>('chat')
+  const [sendError, setSendError] = useState<string | null>(null)
+  const [sending, setSending] = useState(false)
   const listRef = useRef<HTMLDivElement>(null)
   const busy =
     state?.status === 'thinking' ||
@@ -53,21 +70,32 @@ export function AgentPanel({ open, state, onClose }: Props): React.JSX.Element {
   const provider = state?.provider ?? 'heuristic'
   const model = state?.model
 
+  const userTypingRef = useRef(false)
+  const panelTabsRef = useRef<HTMLDivElement>(null)
+  const confirmDialogRef = useRef<HTMLDivElement>(null)
+
+  const onDraftChange = (e: ChangeEvent<HTMLTextAreaElement>): void => {
+    userTypingRef.current = true
+    const v = e.target.value
+    draftRef.current = v
+    setDraft(v)
+    if (sendError) setSendError(null)
+  }
+
   const onVoiceFinal = useCallback((text: string) => {
     const t = text.trim()
-    if (t) setDraft(t)
+    if (!t) return
+    if (userTypingRef.current) return
+    draftRef.current = t
+    setDraft(t)
   }, [])
 
   const onVoiceInterim = useCallback((text: string) => {
     // Only live-update draft when the user is not mid-edit (empty or STT-owned)
     if (!text) return
-    setDraft((prev) => {
-      // Don't clobber user-typed content that differs from last STT stream
-      if (prev && !prev.startsWith(text.slice(0, Math.min(12, text.length))) && text.length < prev.length) {
-        return prev
-      }
-      return text
-    })
+    if (userTypingRef.current) return
+    draftRef.current = text
+    setDraft(text)
   }, [])
 
   const voice = useVoiceInput({
@@ -85,17 +113,82 @@ export function AgentPanel({ open, state, onClose }: Props): React.JSX.Element {
     }
   }, [state?.messages, state?.status, tab])
 
+  useEffect(() => {
+    if (voice.status === 'idle') userTypingRef.current = false
+  }, [voice.status])
+
+  const submitDraft = (value: string): Promise<void> => {
+    const isAnswer = Boolean(state?.waitingQuestion) && state?.status === 'waiting_human'
+    return isAnswer
+      ? window.browgent.answerHuman(value)
+      : window.browgent.sendAgentMessage(value, state?.activeTabId ?? undefined)
+  }
+
   const send = (text?: string): void => {
-    const value = (text ?? draft).trim()
-    if (!value) return
+    const submitted = text ?? draftRef.current
+    if (!submitted.trim()) return
+    if (sending) return
     // Allow replies to ask_human; block new goals while thinking/acting/confirm
     if (busy && !(state?.status === 'waiting_human' && state.waitingQuestion)) return
     if (voice.status === 'listening') voice.stop()
-    setDraft('')
-    if (state?.status === 'waiting_human' && state.waitingQuestion) {
-      void window.browgent.answerHuman(value)
+    setSending(true)
+    setSendError(null)
+    submitDraft(submitted)
+      .then(() => {
+        if (draftRef.current === submitted) {
+          draftRef.current = ''
+          setDraft('')
+        }
+        userTypingRef.current = false
+      })
+      .catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : 'Send failed'
+        setSendError(
+          state?.status === 'waiting_human' && state.waitingQuestion
+            ? `Answer rejected — ${msg}. Edit and retry.`
+            : `Send rejected — ${msg}. Edit and retry.`
+        )
+      })
+      .finally(() => {
+        setSending(false)
+      })
+  }
+
+  const retry = (): void => {
+    if (sendError) setSendError(null)
+    const value = draftRef.current
+    if (!value.trim()) return
+    if (sending) return
+    if (busy && !(state?.status === 'waiting_human' && state.waitingQuestion)) return
+    if (voice.status === 'listening') voice.stop()
+    setSending(true)
+    submitDraft(value)
+      .then(() => {
+        if (draftRef.current === value) {
+          draftRef.current = ''
+          setDraft('')
+        }
+        userTypingRef.current = false
+      })
+      .catch((err: unknown) => {
+        const m = err instanceof Error ? err.message : 'Send failed'
+        setSendError(
+          state?.status === 'waiting_human' && state.waitingQuestion
+            ? `Answer rejected — ${m}. Edit and retry.`
+            : `Send rejected — ${m}. Edit and retry.`
+        )
+      })
+      .finally(() => {
+        setSending(false)
+      })
+  }
+
+  const toggleMic = (): void => {
+    if (voice.status === 'listening') {
+      voice.stop()
     } else {
-      void window.browgent.sendAgentMessage(value, state?.activeTabId ?? undefined)
+      userTypingRef.current = false
+      voice.start()
     }
   }
 
@@ -120,8 +213,37 @@ export function AgentPanel({ open, state, onClose }: Props): React.JSX.Element {
 
   const mode = state?.mode ?? 'act'
 
+  const tabs: AgentTab[] = ['chat', 'trajectory', 'policy']
+  const tabIdBase = useId()
+  const chatPanelId = `${tabIdBase}-chat-panel`
+  const trajPanelId = `${tabIdBase}-trajectory-panel`
+  const policyPanelId = `${tabIdBase}-policy-panel`
+  const confirmTitleId = `${tabIdBase}-confirm-title`
+  const confirmDescId = `${tabIdBase}-confirm-desc`
+
+  const r = useRovingTablist<AgentTab>({
+    items: tabs,
+    activeIndex: tabs.indexOf(tab),
+    orientation: 'horizontal',
+    containerRef: panelTabsRef,
+    onActivate: (t) => setTab(t)
+  })
+
+  useEffect(() => {
+    if (!open) return
+    if (!state?.pendingConfirmation) return
+    const root = confirmDialogRef.current
+    if (!root) return
+    const first = root.querySelector<HTMLElement>('button')
+    first?.focus()
+  }, [open, state?.pendingConfirmation?.id])
+
   return (
-    <aside className={`agent-panel${open ? '' : ' closed'}`} aria-label="Agent panel" hidden={!open}>
+    <aside
+      className="agent-panel"
+      aria-label="Agent panel"
+      hidden={!open}
+    >
       <header className="agent-header">
         <div className="agent-identity">
           <div className={`agent-avatar${busy ? ' live' : ''}`} aria-hidden>
@@ -211,50 +333,61 @@ export function AgentPanel({ open, state, onClose }: Props): React.JSX.Element {
         )}
       </div>
 
-      <div className="panel-tabs" role="tablist" aria-label="Agent views">
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === 'chat'}
-          className={tab === 'chat' ? 'on' : ''}
-          onClick={() => setTab('chat')}
-        >
-          Chat
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === 'trajectory'}
-          className={tab === 'trajectory' ? 'on' : ''}
-          onClick={() => setTab('trajectory')}
-        >
-          Trajectory
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === 'policy'}
-          className={tab === 'policy' ? 'on' : ''}
-          onClick={() => setTab('policy')}
-        >
-          Policy
-        </button>
+      <div
+        className="panel-tabs"
+        role="tablist"
+        aria-label="Agent views"
+        ref={panelTabsRef}
+      >
+        {tabs.map((t, i) => {
+          const tp = r.tabPropsFor(t, i)
+          const id = `${tabIdBase}-${t}-tab`
+          const panelId =
+            t === 'chat' ? chatPanelId : t === 'trajectory' ? trajPanelId : policyPanelId
+          return (
+            <button
+              key={t}
+              type="button"
+              id={id}
+              role="tab"
+              aria-selected={tab === t}
+              aria-controls={panelId}
+              className={tab === t ? 'on' : ''}
+              tabIndex={tp.tabIndex}
+              onFocus={tp.onFocus}
+              onKeyDown={tp.onKeyDown}
+              onClick={() => tp.onClick()}
+            >
+              {t === 'chat' ? 'Chat' : t === 'trajectory' ? 'Trajectory' : 'Policy'}
+            </button>
+          )
+        })}
       </div>
 
       {state?.pendingConfirmation && (
-        <div className="confirm-banner" role="alert" aria-live="assertive">
-          <p>{state.pendingConfirmation.reason}</p>
+        <div
+          ref={confirmDialogRef}
+          className="confirm-banner"
+          role="alertdialog"
+          aria-modal="false"
+          aria-labelledby={confirmTitleId}
+          aria-describedby={confirmDescId}
+        >
+          <p id={confirmTitleId} className="confirm-title">
+            Allow this action?
+          </p>
+          <p id={confirmDescId}>{state.pendingConfirmation.reason}</p>
           <div className="confirm-actions">
             <button
               type="button"
-              className="send-btn"
+              className="ctrl-btn accent"
               onClick={() => void window.browgent.confirmAction(state.pendingConfirmation!.id)}
             >
               Allow
             </button>
             <button
               type="button"
-              className="stop-btn"
+              className="ctrl-btn danger"
               onClick={() => void window.browgent.rejectAction(state.pendingConfirmation!.id)}
             >
               Deny
@@ -264,106 +397,130 @@ export function AgentPanel({ open, state, onClose }: Props): React.JSX.Element {
       )}
 
       {state?.waitingQuestion && (
-        <div className="confirm-banner" role="alert" aria-live="assertive">
+        <div className="confirm-banner info" role="status" aria-live="polite">
           <p>
             <strong>Agent needs you:</strong> {state.waitingQuestion}
           </p>
         </div>
       )}
 
-      {tab === 'chat' && (
-        <>
-          <div className="agent-messages" ref={listRef} role="log" aria-live="polite">
-            {(state?.messages ?? []).map((msg) => (
-              <div key={msg.id} className={`msg ${msg.role}`}>
-                <div className="msg-meta">
-                  <span>{msg.role === 'assistant' ? 'agent' : msg.role}</span>
-                  <span>·</span>
-                  <span>
-                    {new Date(msg.timestamp).toLocaleTimeString([], {
-                      hour: '2-digit',
-                      minute: '2-digit'
-                    })}
-                  </span>
+      <div
+        id={chatPanelId}
+        role="tabpanel"
+        aria-labelledby={`${tabIdBase}-chat-tab`}
+        tabIndex={0}
+        hidden={tab !== 'chat'}
+        className="agent-tabpanel chat-panel"
+      >
+        <div className="agent-messages" ref={listRef} aria-live="polite">
+          {(state?.messages ?? []).map((msg) => (
+            <div key={msg.id} className={`msg ${msg.role}`}>
+              <div className="msg-meta">
+                <span>{msg.role === 'assistant' ? 'agent' : msg.role}</span>
+                <span>·</span>
+                <span>
+                  {new Date(msg.timestamp).toLocaleTimeString([], {
+                    hour: '2-digit',
+                    minute: '2-digit'
+                  })}
+                </span>
+              </div>
+              {msg.content && (
+                <div className="msg-bubble">{formatMessage(msg.content)}</div>
+              )}
+              {msg.actions && msg.actions.length > 0 && (
+                <div className="msg-actions">
+                  {msg.actions.map((action, i) => (
+                    <ActionChip key={`${msg.id}-${i}`} action={action} />
+                  ))}
                 </div>
-                {msg.content && (
-                  <div className="msg-bubble">{formatMessage(msg.content)}</div>
-                )}
-                {msg.actions && msg.actions.length > 0 && (
-                  <div className="msg-actions">
-                    {msg.actions.map((action, i) => (
-                      <ActionChip key={`${msg.id}-${i}`} action={action} />
-                    ))}
+              )}
+              {msg.role === 'assistant' &&
+                !msg.content &&
+                busy &&
+                msg.actions?.some((a) => a.status === 'running' || a.status === 'pending') && (
+                  <div className="msg-bubble thinking-bubble">
+                    <Loader2 size={13} className="spin" /> Working…
                   </div>
                 )}
-                {msg.role === 'assistant' &&
-                  !msg.content &&
-                  busy &&
-                  msg.actions?.some((a) => a.status === 'running' || a.status === 'pending') && (
-                    <div className="msg-bubble thinking-bubble">
-                      <Loader2 size={13} className="spin" /> Working…
-                    </div>
-                  )}
+            </div>
+          ))}
+          {busy && state?.status === 'thinking' && (
+            <div className="msg assistant">
+              <div className="msg-meta">
+                <span>agent</span>
               </div>
-            ))}
-            {busy && state?.status === 'thinking' && (
-              <div className="msg assistant">
-                <div className="msg-meta">
-                  <span>agent</span>
-                </div>
-                <div className="msg-bubble thinking-bubble">
-                  <Loader2 size={13} className="spin" />{' '}
-                  {provider !== 'heuristic'
-                    ? `${providerLabel(provider)} is planning…`
-                    : 'Planning steps…'}
-                </div>
+              <div className="msg-bubble thinking-bubble">
+                <Loader2 size={13} className="spin" />{' '}
+                {provider !== 'heuristic'
+                  ? `${providerLabel(provider)} is planning…`
+                  : 'Planning steps…'}
               </div>
-            )}
-          </div>
-
-          {showSuggestions && (
-            <div className="agent-suggestions">
-              {SUGGESTIONS.map((s) => (
-                <button key={s} type="button" className="suggestion-chip" onClick={() => send(s)}>
-                  {s}
-                </button>
-              ))}
             </div>
           )}
-        </>
-      )}
-
-      {tab === 'trajectory' && (
-        <div className="trajectory-list">
-          {(state?.trajectory ?? []).length === 0 && (
-            <p className="empty-hint">Tool calls and observations appear here — export anytime.</p>
-          )}
-          {[...(state?.trajectory ?? [])].reverse().map((step) => (
-            <TrajectoryRow key={step.id} step={step} />
-          ))}
         </div>
-      )}
 
-      {tab === 'policy' && <PolicyPane state={state} />}
+        {showSuggestions && (
+          <div className="agent-suggestions">
+            {SUGGESTIONS.map((s) => (
+              <button key={s} type="button" className="suggestion-chip" onClick={() => send(s)}>
+                {s}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div
+        id={trajPanelId}
+        role="tabpanel"
+        aria-labelledby={`${tabIdBase}-trajectory-tab`}
+        tabIndex={0}
+        hidden={tab !== 'trajectory'}
+        className="trajectory-list"
+      >
+        {(state?.trajectory ?? []).length === 0 && (
+          <p className="empty-hint">Tool calls and observations appear here — export anytime.</p>
+        )}
+        {[...(state?.trajectory ?? [])].reverse().map((step) => (
+          <TrajectoryRow key={step.id} step={step} />
+        ))}
+      </div>
+
+      <div
+        id={policyPanelId}
+        role="tabpanel"
+        aria-labelledby={`${tabIdBase}-policy-tab`}
+        tabIndex={0}
+        hidden={tab !== 'policy'}
+        className="policy-pane"
+      >
+        <PolicyPane state={state} />
+      </div>
 
       <div className="agent-composer">
         <textarea
           className="agent-input"
           value={draft}
-          onChange={(e) => setDraft(e.target.value)}
+          maxLength={TEXTAREA_MAX_LENGTH}
+          onChange={onDraftChange}
           aria-label={
             state?.waitingQuestion ? 'Answer for the agent' : 'Agent instruction'
           }
+          aria-invalid={Boolean(sendError)}
+          aria-describedby={sendError ? 'agent-send-error' : undefined}
           placeholder={
-            voice.status === 'listening'
-              ? 'Listening… speak a browser instruction'
-              : state?.waitingQuestion
-                ? 'Type or speak your answer…'
-                : mode === 'research'
-                  ? 'Research request (read-only tools)…'
-                  : mode === 'watch'
-                    ? 'Ask me what I see while you browse…'
-                    : 'Speak or type — e.g. “go to facebook and sign up”…'
+            !voice.supported
+              ? 'Speech recognition unavailable — type your instruction'
+              : voice.status === 'listening'
+                ? 'Listening… speak a browser instruction'
+                : state?.waitingQuestion
+                  ? 'Type or speak your answer…'
+                  : mode === 'research'
+                    ? 'Research request (read-only tools)…'
+                    : mode === 'watch'
+                      ? 'Ask me what I see while you browse…'
+                      : 'Speak or type — e.g. “go to facebook and sign up”…'
           }
           rows={3}
           onKeyDown={(e) => {
@@ -373,19 +530,45 @@ export function AgentPanel({ open, state, onClose }: Props): React.JSX.Element {
             }
           }}
         />
+        {sendError && (
+          <div
+            id="agent-send-error"
+            className="voice-error"
+            role="alert"
+          >
+            {sendError}
+            <button
+              type="button"
+              className="ctrl-btn"
+              onClick={retry}
+              style={{ marginLeft: 8 }}
+            >
+              Retry
+            </button>
+          </div>
+        )}
         <div className="composer-row">
           <div className="composer-left">
             <button
               type="button"
               className={`mic-btn${voice.status === 'listening' ? ' listening' : ''}`}
               title={
-                voice.status === 'listening'
-                  ? 'Stop listening'
-                  : 'Voice input — system speech recognition (fastest local path)'
+                !voice.supported
+                  ? 'Speech recognition unavailable in this Electron build — type instead'
+                  : voice.status === 'listening'
+                    ? 'Stop listening'
+                    : 'Voice input — system speech recognition (fastest local path)'
               }
-              aria-label={voice.status === 'listening' ? 'Stop voice input' : 'Start voice input'}
+              aria-label={
+                !voice.supported
+                  ? 'Voice input unavailable'
+                  : voice.status === 'listening'
+                    ? 'Stop voice input'
+                    : 'Start voice input'
+              }
               aria-pressed={voice.status === 'listening'}
-              onClick={() => voice.toggle()}
+              disabled={!voice.supported}
+              onClick={toggleMic}
             >
               {voice.status === 'listening' ? (
                 <MicOff size={15} strokeWidth={2} />
@@ -399,8 +582,11 @@ export function AgentPanel({ open, state, onClose }: Props): React.JSX.Element {
               </span>
             )}
             {voice.error && <span className="voice-error">{voice.error}</span>}
-            {!voice.error && voice.status === 'idle' && (
+            {!voice.error && voice.status === 'idle' && voice.supported && (
               <span className="composer-hint">Mic · Enter send · ⌘J · system STT</span>
+            )}
+            {!voice.supported && (
+              <span className="composer-hint">Mic unavailable in this build</span>
             )}
           </div>
           <button
@@ -408,12 +594,13 @@ export function AgentPanel({ open, state, onClose }: Props): React.JSX.Element {
             className="send-btn"
             onClick={() => send()}
             disabled={
+              sending ||
               !draft.trim() ||
               (busy && !(state?.status === 'waiting_human' && state.waitingQuestion))
             }
           >
             <Send size={13} strokeWidth={2.25} />
-            Send
+            {sending ? 'Sending…' : 'Send'}
           </button>
         </div>
       </div>
@@ -481,16 +668,26 @@ function TrajectoryRow({ step }: { step: TrajectoryStep }): React.JSX.Element {
 
 function PolicyPane({ state }: { state: AgentSessionState | null }): React.JSX.Element {
   const p = state?.policy
-  const [allowDraft, setAllowDraft] = useState((p?.allowHosts ?? []).join(', '))
-  const [blockDraft, setBlockDraft] = useState((p?.blockHosts ?? []).join(', '))
+  const policy: AgentPolicy = p ?? DEFAULT_POLICY
+  const [allowDraft, setAllowDraft] = useState((policy.allowHosts ?? []).join(', '))
+  const [blockDraft, setBlockDraft] = useState((policy.blockHosts ?? []).join(', '))
+  const [maxStepsDraft, setMaxStepsDraft] = useState(String(policy.maxSteps))
+  const [committedMaxSteps, setCommittedMaxSteps] = useState(policy.maxSteps)
   const [driverMode, setDriverMode] = useState<'dom' | 'cdp'>('dom')
   const [cdpNote, setCdpNote] = useState('')
 
   // Sync drafts when policy is replaced (e.g. clear session)
   useEffect(() => {
-    setAllowDraft((p?.allowHosts ?? []).join(', '))
-    setBlockDraft((p?.blockHosts ?? []).join(', '))
-  }, [p?.allowHosts, p?.blockHosts])
+    setAllowDraft((policy.allowHosts ?? []).join(', '))
+    setBlockDraft((policy.blockHosts ?? []).join(', '))
+  }, [policy.allowHosts, policy.blockHosts])
+
+  useEffect(() => {
+    if (policy.maxSteps !== committedMaxSteps) {
+      setCommittedMaxSteps(policy.maxSteps)
+      setMaxStepsDraft(String(policy.maxSteps))
+    }
+  }, [policy.maxSteps, committedMaxSteps])
 
   useEffect(() => {
     if (!window.browgent?.getDriverStatus) return
@@ -506,8 +703,35 @@ function PolicyPane({ state }: { state: AgentSessionState | null }): React.JSX.E
       .map((s) => s.trim().toLowerCase().replace(/^www\./, ''))
       .filter(Boolean)
 
+  const commitMaxSteps = (): void => {
+    let n = Number(maxStepsDraft)
+    if (!Number.isFinite(n)) n = committedMaxSteps
+    n = Math.min(100, Math.max(5, Math.round(n)))
+    if (n !== committedMaxSteps) {
+      setCommittedMaxSteps(n)
+      setMaxStepsDraft(String(n))
+      if (n !== policy.maxSteps) {
+        void window.browgent.setAgentPolicy({ maxSteps: n })
+      }
+    } else {
+      setMaxStepsDraft(String(n))
+    }
+  }
+
+  const onMaxStepsKey = (e: KeyboardEvent<HTMLInputElement>): void => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      commitMaxSteps()
+      e.currentTarget.blur()
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      setMaxStepsDraft(String(committedMaxSteps))
+      e.currentTarget.blur()
+    }
+  }
+
   return (
-    <div className="policy-pane">
+    <>
       <p className="empty-hint">
         Browser-native safety (differentiator vs pure cloud agents). Changes apply immediately to
         the next tool step.
@@ -536,17 +760,19 @@ function PolicyPane({ state }: { state: AgentSessionState | null }): React.JSX.E
           type="number"
           min={5}
           max={100}
-          value={p?.maxSteps ?? 40}
-          onChange={(e) => {
-            const n = Math.min(100, Math.max(5, Number(e.target.value) || 40))
-            void window.browgent.setAgentPolicy({ maxSteps: n })
-          }}
+          value={maxStepsDraft}
+          onChange={(e) => setMaxStepsDraft(e.target.value)}
+          onBlur={commitMaxSteps}
+          onKeyDown={onMaxStepsKey}
+          aria-valuemin={5}
+          aria-valuemax={100}
+          aria-valuenow={committedMaxSteps}
         />
       </label>
       <label className="policy-row check">
         <input
           type="checkbox"
-          checked={p?.confirmSensitiveClicks ?? true}
+          checked={policy.confirmSensitiveClicks}
           onChange={(e) =>
             void window.browgent.setAgentPolicy({ confirmSensitiveClicks: e.target.checked })
           }
@@ -556,7 +782,7 @@ function PolicyPane({ state }: { state: AgentSessionState | null }): React.JSX.E
       <label className="policy-row check">
         <input
           type="checkbox"
-          checked={p?.confirmCrossHost ?? false}
+          checked={policy.confirmCrossHost}
           onChange={(e) =>
             void window.browgent.setAgentPolicy({ confirmCrossHost: e.target.checked })
           }
@@ -566,7 +792,7 @@ function PolicyPane({ state }: { state: AgentSessionState | null }): React.JSX.E
       <label className="policy-row check">
         <input
           type="checkbox"
-          checked={p?.pauseOnAskHuman ?? true}
+          checked={policy.pauseOnAskHuman}
           onChange={(e) =>
             void window.browgent.setAgentPolicy({ pauseOnAskHuman: e.target.checked })
           }
@@ -620,7 +846,7 @@ function PolicyPane({ state }: { state: AgentSessionState | null }): React.JSX.E
         Desktop tools: navigate, click, type, observe, extract… Full STDIO MCP server is on the
         roadmap; Playwright attaches via CDP (status bar).
       </div>
-    </div>
+    </>
   )
 }
 
@@ -649,4 +875,3 @@ function formatMessage(text: string): React.ReactNode {
     return <span key={i}>{part}</span>
   })
 }
-

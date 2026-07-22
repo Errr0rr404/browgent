@@ -11,6 +11,20 @@ import type { ObserveSnapshot } from '../../shared/types'
 import type { DriverMode } from '../../shared/driver'
 import { getRuntimeFlags, setDriverMode as setRuntimeDriverMode } from './runtime-flags'
 import { detachDebugger, runPageAction, type DomActionKind } from './page-driver'
+import { isHttpOrHttpsOrAboutBlank, looksLikeForbiddenScheme } from '../../shared/policies'
+
+interface AgentGuardPolicy {
+  allowHosts: string[]
+  blockHosts: string[]
+  crossHostRequired: boolean
+}
+
+interface NavigationAttempt {
+  id: number
+  baseHost: string
+  approvedHost: string
+  ts: number
+}
 
 interface ManagedTab {
   id: TabId
@@ -22,11 +36,34 @@ interface ManagedTab {
   canGoBack: boolean
   canGoForward: boolean
   owner: 'human' | 'agent' | null
+  guardPolicy: AgentGuardPolicy | null
+  activeAttempt: NavigationAttempt | null
+  navFailedReason: string | null
 }
 
 const HOME_URL = 'https://www.google.com'
 const MAX_TABS = 24
 export const PAGE_PARTITION = 'persist:browgent-pages'
+const ATTEMPT_MAX_AGE_MS = 5000
+
+function resolveAndGate(rawInput: string): { ok: true; url: string } | { ok: false } {
+  if (typeof rawInput !== 'string') return { ok: false }
+  const trimmed = rawInput.trim()
+  if (!trimmed) return { ok: false }
+  if (looksLikeForbiddenScheme(trimmed)) return { ok: false }
+  const url = normalizeUrl(trimmed)
+  if (!isHttpOrHttpsOrAboutBlank(url)) return { ok: false }
+  return { ok: true, url }
+}
+
+function hostOf(u: string | null | undefined): string {
+  if (!u) return ''
+  try {
+    return new URL(u).hostname.toLowerCase()
+  } catch {
+    return ''
+  }
+}
 
 export class TabManager {
   private tabs = new Map<TabId, ManagedTab>()
@@ -36,13 +73,13 @@ export class TabManager {
     top: 124,
     right: 400,
     bottom: 30,
-    left: 0,
-    agentPanelOpen: true
+    left: 0
   }
   private destroyed = false
-  private lastPopupAt = 0
+  private lastPopupAt = new Map<TabId, number>()
   /** In-app agent actuation path (dom | cdp). External Playwright always uses CDP endpoint. */
   private driverMode: DriverMode = getRuntimeFlags().driverMode
+  private attemptCounter = 0
 
   constructor(
     private window: BrowserWindow,
@@ -66,6 +103,10 @@ export class TabManager {
     return this.activeTabId
   }
 
+  has(tabId: TabId): boolean {
+    return this.tabs.has(tabId)
+  }
+
   getWebContents(tabId?: TabId): WebContents | null {
     const id = tabId ?? this.activeTabId
     if (!id) return null
@@ -79,16 +120,137 @@ export class TabManager {
     if (!id) return
     const tab = this.tabs.get(id)
     if (!tab) return
+    if (tab.owner === owner) return
     tab.owner = owner
+    if (owner !== 'agent') {
+      tab.activeAttempt = null
+    }
+    if (owner === null) {
+      tab.guardPolicy = null
+      tab.activeAttempt = null
+    }
     this.emitState()
   }
 
-  createTab(url = HOME_URL, activate = true): TabId | null {
+  applyGuardPolicy(tabId: TabId, policy: AgentGuardPolicy | null): void {
+    const tab = this.tabs.get(tabId)
+    if (!tab) return
+    tab.guardPolicy = policy
+    if (!policy) tab.activeAttempt = null
+  }
+
+  releaseAgentTabs(): number {
+    let n = 0
+    for (const tab of this.tabs.values()) {
+      if (tab.owner === 'agent') {
+        tab.owner = null
+        tab.guardPolicy = null
+        tab.activeAttempt = null
+        n++
+      }
+    }
+    if (n > 0) this.emitState()
+    return n
+  }
+
+  transferAgentTabsToHuman(): number {
+    let n = 0
+    for (const tab of this.tabs.values()) {
+      if (tab.owner === 'agent') {
+        tab.owner = 'human'
+        tab.guardPolicy = null
+        tab.activeAttempt = null
+        n++
+      }
+    }
+    if (n > 0) this.emitState()
+    return n
+  }
+
+  getCommittedHost(tabId?: TabId): string {
+    const tab = this.tabs.get(tabId ?? this.activeTabId ?? '')
+    if (!tab || tab.view.webContents.isDestroyed()) return ''
+    return hostOf(tab.view.webContents.getURL())
+  }
+
+  getHistoryTargetUrl(tabId: TabId | undefined, offset: -1 | 1): string | null {
+    const tab = this.resolve(tabId)
+    if (!tab || tab.view.webContents.isDestroyed()) return null
+    try {
+      const history = tab.view.webContents.navigationHistory
+      const index = history.getActiveIndex() + offset
+      if (index < 0 || index >= history.length()) return null
+      return history.getEntryAtIndex(index)?.url ?? null
+    } catch {
+      return null
+    }
+  }
+
+  beginNavigationAttempt(tabId: TabId, approvedHost: string): number {
+    const tab = this.tabs.get(tabId)
+    if (!tab || tab.view.webContents.isDestroyed()) return -1
+    const baseHost = this.getCommittedHost(tabId)
+    const attempt: NavigationAttempt = {
+      id: ++this.attemptCounter,
+      baseHost,
+      approvedHost: approvedHost.toLowerCase(),
+      ts: Date.now()
+    }
+    tab.activeAttempt = attempt
+    tab.navFailedReason = null
+    return attempt.id
+  }
+
+  updateApprovedHost(tabId: TabId, approvedHost: string): number {
+    const tab = this.tabs.get(tabId)
+    if (!tab) return -1
+    const host = approvedHost.toLowerCase()
+    if (tab.activeAttempt) {
+      tab.activeAttempt = { ...tab.activeAttempt, approvedHost: host, ts: Date.now() }
+      return tab.activeAttempt.id
+    }
+    tab.activeAttempt = {
+      id: ++this.attemptCounter,
+      baseHost: this.getCommittedHost(tabId),
+      approvedHost: host,
+      ts: Date.now()
+    }
+    tab.navFailedReason = null
+    return tab.activeAttempt.id
+  }
+
+  clearNavigationAttempt(tabId: TabId, attemptId?: number): void {
+    const tab = this.tabs.get(tabId)
+    if (!tab) return
+    if (attemptId === undefined) {
+      tab.activeAttempt = null
+      return
+    }
+    if (tab.activeAttempt?.id === attemptId) tab.activeAttempt = null
+  }
+
+  grantOneTimeHost(tabId: TabId | null | undefined, host: string): number {
+    const id = tabId ?? this.activeTabId ?? ''
+    if (!id) return -1
+    return this.updateApprovedHost(id, host)
+  }
+
+  createAgentTab(
+    url: string,
+    activate: boolean,
+    guardPolicy: AgentGuardPolicy,
+    initialApprovedHost: string,
+    activateIfExists: boolean = true
+  ): TabId | null {
     if (this.destroyed) return null
     if (this.tabs.size >= MAX_TABS) {
       console.warn(`Tab limit reached (${MAX_TABS})`)
       return null
     }
+
+    const gate = resolveAndGate(url)
+    if (!gate.ok) return null
+    const safeUrl = gate.url
 
     const id = randomUUID()
     const view = new WebContentsView({
@@ -105,11 +267,19 @@ export class TabManager {
       id,
       view,
       title: 'New Tab',
-      url: normalizeUrl(url),
+      url: safeUrl,
       isLoading: true,
       canGoBack: false,
       canGoForward: false,
-      owner: null
+      owner: 'agent',
+      guardPolicy,
+      activeAttempt: {
+        id: ++this.attemptCounter,
+        baseHost: '',
+        approvedHost: initialApprovedHost.toLowerCase(),
+        ts: Date.now()
+      },
+      navFailedReason: null
     }
 
     this.wireViewEvents(tab)
@@ -121,25 +291,67 @@ export class TabManager {
 
     void view.webContents.loadURL(tab.url).catch((err) => {
       console.warn('loadURL failed', err)
+      tab.isLoading = false
+      tab.title = 'Failed to load'
+      tab.navFailedReason = 'Failed to load'
+      tab.activeAttempt = null
+      this.emitState()
     })
 
-    view.webContents.setWindowOpenHandler(({ url: target }) => {
-      const now = Date.now()
-      // Debounce popup storms (ads / multi-window openers)
-      if (now - this.lastPopupAt < 400) return { action: 'deny' }
-      this.lastPopupAt = now
-      if (!target) return { action: 'deny' }
-      if (target.startsWith('http://') || target.startsWith('https://')) {
-        this.createTab(target, true)
-      } else if (
-        target.startsWith('mailto:') ||
-        target.startsWith('tel:') ||
-        target.startsWith('sms:')
-      ) {
-        void shell.openExternal(target)
+    if (activate && activateIfExists) this.activateTab(id)
+    else this.emitState()
+
+    return id
+  }
+
+  createTab(url = HOME_URL, activate = true): TabId | null {
+    if (this.destroyed) return null
+    if (this.tabs.size >= MAX_TABS) {
+      console.warn(`Tab limit reached (${MAX_TABS})`)
+      return null
+    }
+
+    const gate = resolveAndGate(url)
+    if (!gate.ok) return null
+    const safeUrl = gate.url
+
+    const id = randomUUID()
+    const view = new WebContentsView({
+      webPreferences: {
+        sandbox: true,
+        contextIsolation: true,
+        nodeIntegration: false,
+        spellcheck: true,
+        partition: PAGE_PARTITION
       }
-      // Block file://, javascript:, data: popups from untrusted pages
-      return { action: 'deny' }
+    })
+
+    const tab: ManagedTab = {
+      id,
+      view,
+      title: 'New Tab',
+      url: safeUrl,
+      isLoading: true,
+      canGoBack: false,
+      canGoForward: false,
+      owner: null,
+      guardPolicy: null,
+      activeAttempt: null,
+      navFailedReason: null
+    }
+
+    this.wireViewEvents(tab)
+    this.tabs.set(id, tab)
+    this.order.push(id)
+    this.window.contentView.addChildView(view)
+    view.setBounds({ x: 0, y: 0, width: 0, height: 0 })
+    view.setVisible(false)
+
+    void view.webContents.loadURL(tab.url).catch((err) => {
+      console.warn('loadURL failed', err)
+      tab.isLoading = false
+      tab.title = 'Failed to load'
+      this.emitState()
     })
 
     if (activate) this.activateTab(id)
@@ -148,13 +360,14 @@ export class TabManager {
     return id
   }
 
-  closeTab(id: TabId): void {
-    if (this.destroyed) return
+  closeTab(id: TabId): boolean {
+    if (this.destroyed) return false
     const tab = this.tabs.get(id)
-    if (!tab) return
+    if (!tab) return false
 
     this.destroyTab(tab)
     this.tabs.delete(id)
+    this.lastPopupAt.delete(id)
     this.order = this.order.filter((t) => t !== id)
 
     if (this.activeTabId === id) {
@@ -167,10 +380,11 @@ export class TabManager {
     } else {
       this.emitState()
     }
+    return true
   }
 
-  activateTab(id: TabId): void {
-    if (this.destroyed || !this.tabs.has(id)) return
+  activateTab(id: TabId): boolean {
+    if (this.destroyed || !this.tabs.has(id)) return false
 
     for (const [tabId, tab] of this.tabs) {
       try {
@@ -183,53 +397,84 @@ export class TabManager {
     this.activeTabId = id
     this.layoutActiveView()
     this.emitState()
+    return true
   }
 
-  navigate(id: TabId | undefined, input: string): void {
+  navigate(id: TabId | undefined, input: string): boolean {
     const tabId = id ?? this.activeTabId
-    if (!tabId) return
+    if (!tabId) return false
     const tab = this.tabs.get(tabId)
-    if (!tab || tab.view.webContents.isDestroyed()) return
+    if (!tab || tab.view.webContents.isDestroyed()) return false
 
-    const trimmed = input.trim()
-    if (!trimmed) return
+    const gate = resolveAndGate(input)
+    if (!gate.ok) return false
+    const url = gate.url
 
-    const url = normalizeUrl(trimmed)
+    tab.navFailedReason = null
     tab.url = url
     tab.title = 'Loading…'
     tab.isLoading = true
+
+    if (tab.owner === 'agent' && tab.guardPolicy) {
+      const targetHost = hostOf(url) || ''
+      this.beginNavigationAttempt(tabId, targetHost)
+    }
+
     void tab.view.webContents.loadURL(url).catch((err) => {
       console.warn('navigate loadURL failed', err)
       tab.isLoading = false
       tab.title = 'Failed to load'
+      tab.navFailedReason = 'Failed to load'
+      tab.activeAttempt = null
       this.emitState()
     })
     this.emitState()
+    return true
   }
 
-  goBack(id?: TabId): void {
+  goBack(id?: TabId): boolean {
     const tab = this.resolve(id)
-    if (tab?.view.webContents.navigationHistory.canGoBack()) {
-      tab.view.webContents.navigationHistory.goBack()
+    if (!tab || tab.view.webContents.isDestroyed()) return false
+    if (!tab.view.webContents.navigationHistory.canGoBack()) return false
+    const targetUrl = this.getHistoryTargetUrl(tab.id, -1)
+    tab.isLoading = true
+    tab.navFailedReason = null
+    if (tab.owner === 'agent' && tab.guardPolicy) {
+      this.beginNavigationAttempt(tab.id, targetUrl ? hostOf(targetUrl) : '')
     }
+    tab.view.webContents.navigationHistory.goBack()
+    return true
   }
 
-  goForward(id?: TabId): void {
+  goForward(id?: TabId): boolean {
     const tab = this.resolve(id)
-    if (tab?.view.webContents.navigationHistory.canGoForward()) {
-      tab.view.webContents.navigationHistory.goForward()
+    if (!tab || tab.view.webContents.isDestroyed()) return false
+    if (!tab.view.webContents.navigationHistory.canGoForward()) return false
+    const targetUrl = this.getHistoryTargetUrl(tab.id, 1)
+    tab.isLoading = true
+    tab.navFailedReason = null
+    if (tab.owner === 'agent' && tab.guardPolicy) {
+      this.beginNavigationAttempt(tab.id, targetUrl ? hostOf(targetUrl) : '')
     }
+    tab.view.webContents.navigationHistory.goForward()
+    return true
   }
 
-  reload(id?: TabId): void {
+  reload(id?: TabId): boolean {
     const tab = this.resolve(id)
-    if (!tab) return
-    if (tab.isLoading) tab.view.webContents.stop()
-    else tab.view.webContents.reload()
+    if (!tab || tab.view.webContents.isDestroyed()) return false
+    tab.isLoading = true
+    tab.navFailedReason = null
+    tab.view.webContents.reload()
+    this.emitState()
+    return true
   }
 
-  stop(id?: TabId): void {
-    this.resolve(id)?.view.webContents.stop()
+  stop(id?: TabId): boolean {
+    const tab = this.resolve(id)
+    if (!tab || tab.view.webContents.isDestroyed()) return false
+    tab.view.webContents.stop()
+    return true
   }
 
   setChromeMetrics(metrics: BrowserChromeMetrics): void {
@@ -274,63 +519,105 @@ export class TabManager {
       }))
   }
 
-  async waitForLoad(tabId?: TabId, timeoutMs = 15000): Promise<void> {
-    const wc = this.getWebContents(tabId)
-    if (!wc || wc.isDestroyed()) return
+  async waitForLoad(tabId?: TabId, timeoutMs = 15000, signal?: AbortSignal): Promise<boolean> {
+    if (signal?.aborted) return false
+    const tab = this.tabs.get(tabId ?? this.activeTabId ?? '')
+    if (!tab || tab.view.webContents.isDestroyed()) return false
+    const wc = tab.view.webContents
 
-    // Attach listeners BEFORE the grace poll so a fast load cannot be missed
-    let settled = false
-    let removeListeners = (): void => {}
-    const finishGate = { resolve: null as null | (() => void) }
-    const waitEvent = new Promise<void>((resolve) => {
-      finishGate.resolve = resolve
-    })
-
-    const finish = (): void => {
-      if (settled) return
-      settled = true
-      removeListeners()
-      // small settle for post-load scripts / SPA routes
-      setTimeout(() => finishGate.resolve?.(), 250)
-    }
-
-    const t = setTimeout(finish, timeoutMs)
-    const onDone = (): void => finish()
-    removeListeners = (): void => {
-      clearTimeout(t)
-      try {
-        wc.removeListener('did-finish-load', onDone)
-        wc.removeListener('did-fail-load', onDone)
-        wc.removeListener('did-stop-loading', onDone)
-      } catch {
-        // ignore
+    return new Promise<boolean>((resolve) => {
+      if (signal?.aborted) {
+        resolve(false)
+        return
       }
-    }
+      let settled = false
+      let timer: ReturnType<typeof setTimeout> | null = null
+      let pollTimer: ReturnType<typeof setInterval> | null = null
+      let settleTimer: ReturnType<typeof setTimeout> | null = null
 
-    try {
-      wc.once('did-finish-load', onDone)
-      wc.once('did-fail-load', onDone)
-      wc.once('did-stop-loading', onDone)
-    } catch {
-      removeListeners()
-      return
-    }
-
-    // Navigation may not have flipped isLoading yet — brief grace period
-    if (!wc.isLoading()) {
-      await new Promise((r) => setTimeout(r, 120))
-    }
-    if (!wc.isLoading() && !wc.isDestroyed()) {
-      // Already settled — drop listeners and allow SPA paint
-      if (!settled) {
+      const onDone = (): void => {
+        if (settled) return
+        settleTimer = setTimeout(() => {
+          if (settled) return
+          settled = true
+          cleanup()
+          resolve(!signal?.aborted)
+        }, 250)
+      }
+      const onFail = (_e: unknown, errorCode?: number, _d?: unknown, _v?: unknown, isMainFrame?: boolean): void => {
+        if (isMainFrame === false) return
+        if (typeof errorCode === 'number' && errorCode === -3) return
+        if (settled) return
         settled = true
-        removeListeners()
+        cleanup()
+        resolve(false)
       }
-      await new Promise((r) => setTimeout(r, 200))
-      return
-    }
+      const onAbort = (): void => {
+        if (settled) return
+        settled = true
+        cleanup()
+        resolve(false)
+      }
+      const onTimeout = (): void => {
+        if (settled) return
+        settled = true
+        cleanup()
+        resolve(false)
+      }
 
-    await waitEvent
+      const cleanup = (): void => {
+        if (timer) {
+          clearTimeout(timer)
+          timer = null
+        }
+        if (pollTimer) {
+          clearInterval(pollTimer)
+          pollTimer = null
+        }
+        if (settleTimer) {
+          clearTimeout(settleTimer)
+          settleTimer = null
+        }
+        try { wc.removeListener('did-finish-load', onDone) } catch {}
+        try { wc.removeListener('did-fail-load', onFail) } catch {}
+        if (signal) signal.removeEventListener('abort', onAbort)
+      }
+
+      timer = setTimeout(onTimeout, Math.max(1, timeoutMs))
+      try {
+        wc.on('did-finish-load', onDone)
+        wc.on('did-fail-load', onFail)
+      } catch {
+        cleanup()
+        resolve(false)
+        return
+      }
+      if (signal) signal.addEventListener('abort', onAbort, { once: true })
+
+      pollTimer = setInterval(() => {
+        if (settled) return
+        if (tab.navFailedReason) {
+          settled = true
+          cleanup()
+          resolve(false)
+          return
+        }
+        if (wc.isDestroyed()) {
+          settled = true
+          cleanup()
+          resolve(false)
+        }
+      }, 100)
+
+      if (!tab.isLoading && !tab.navFailedReason) {
+        settleTimer = setTimeout(() => {
+          if (settled) return
+          settled = true
+          cleanup()
+          resolve(!signal?.aborted)
+        }, 200)
+      }
+    })
   }
 
   async observe(tabId?: TabId): Promise<ObserveSnapshot | null> {
@@ -366,12 +653,16 @@ export class TabManager {
   async domAction(
     kind: DomActionKind,
     args: Record<string, unknown>,
-    tabId?: TabId
+    tabId?: TabId,
+    signal?: AbortSignal
   ): Promise<{ ok: boolean; error?: string; name?: string; via?: 'dom' | 'cdp' }> {
+    if (signal?.aborted) return { ok: false, error: 'Aborted' }
     const wc = this.getWebContents(tabId)
     if (!wc) return { ok: false, error: 'No active page' }
     try {
-      return await runPageAction(wc, kind, args, this.driverMode)
+      const r = await runPageAction(wc, kind, args, this.driverMode, signal)
+      if (signal?.aborted) return { ok: false, error: 'Aborted' }
+      return r
     } catch (e) {
       return { ok: false, error: e instanceof Error ? e.message : 'Action failed' }
     }
@@ -420,11 +711,120 @@ export class TabManager {
     return this.tabs.get(tabId)
   }
 
+  private hostAllowedByPolicy(host: string, policy: AgentGuardPolicy): boolean {
+    const h = host.toLowerCase()
+    if (!h) return false
+    if (policy.blockHosts.some((b) => b && (h === b || h.endsWith(`.${b.toLowerCase()}`)))) {
+      return false
+    }
+    if (policy.allowHosts.length === 0) return true
+    return policy.allowHosts.some((a) => {
+      const entry = String(a).toLowerCase().trim()
+      if (!entry || entry.length < 2) return false
+      return h === entry || h.endsWith(`.${entry}`)
+    })
+  }
+
+  private isAttemptFresh(attempt: NavigationAttempt): boolean {
+    return Date.now() - attempt.ts <= ATTEMPT_MAX_AGE_MS
+  }
+
+  private guardAgentNavigation(
+    tab: ManagedTab,
+    targetUrl: string,
+    event: { preventDefault: () => void },
+    isMainFrame: boolean
+  ): boolean {
+    if (!isMainFrame) return true
+    if (tab.owner !== 'agent' || !tab.guardPolicy) return true
+
+    let parsed: URL
+    try {
+      parsed = new URL(targetUrl)
+    } catch {
+      event.preventDefault()
+      this.markNavBlocked(tab, targetUrl, 'Bad URL')
+      return false
+    }
+    const targetHost = parsed.hostname.toLowerCase()
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:' && targetUrl !== 'about:blank') {
+      event.preventDefault()
+      this.markNavBlocked(tab, targetUrl, 'Blocked URL scheme')
+      return false
+    }
+
+    if (!this.hostAllowedByPolicy(targetHost, tab.guardPolicy)) {
+      event.preventDefault()
+      this.markNavBlocked(tab, targetUrl, `Host blocked by policy: ${targetHost}`)
+      return false
+    }
+
+    if (!tab.guardPolicy.crossHostRequired) return true
+
+    const prevHost = this.getCommittedHost(tab.id)
+    if (prevHost && prevHost === targetHost) return true
+
+    const attempt = tab.activeAttempt
+    if (attempt && this.isAttemptFresh(attempt)) {
+      if (targetHost === attempt.approvedHost && attempt.approvedHost) {
+        attempt.baseHost = targetHost
+        return true
+      }
+      if (targetHost === attempt.baseHost && attempt.baseHost) return true
+    }
+
+    event.preventDefault()
+    this.markNavBlocked(tab, targetUrl, `Cross-host not approved: ${targetHost}`)
+    return false
+  }
+
+  private markNavBlocked(tab: ManagedTab, _targetUrl: string, reason: string): void {
+    tab.navFailedReason = reason
+    tab.isLoading = false
+    tab.title = 'Blocked by policy'
+    try {
+      const committed = tab.view.webContents.getURL() || 'about:blank'
+      tab.url = committed
+    } catch {
+      // ignore
+    }
+    this.emitState()
+  }
+
   private wireViewEvents(tab: ManagedTab): void {
     const { webContents } = tab.view
     const safeEmit = (): void => {
       if (!this.destroyed) this.emitState()
     }
+
+    webContents.setWindowOpenHandler(({ url: target }) => {
+      const now = Date.now()
+      // Debounce popup storms (ads / multi-window openers)
+      const lastPopupAt = this.lastPopupAt.get(tab.id) ?? 0
+      if (now - lastPopupAt < 400) return { action: 'deny' }
+      this.lastPopupAt.set(tab.id, now)
+      if (!target) return { action: 'deny' }
+
+      if (tab.owner === 'agent' && tab.guardPolicy) {
+        return this.handleAgentPopup(tab, target)
+      }
+
+      // Block file://, javascript:, data: popups from untrusted pages
+      if (target.startsWith('mailto:') || target.startsWith('tel:') || target.startsWith('sms:')) {
+        void shell.openExternal(target)
+      } else if (isHttpOrHttpsOrAboutBlank(target)) {
+        this.createTab(target, true)
+      }
+      return { action: 'deny' }
+    })
+
+    webContents.on('will-navigate', (event, url, isInMainFrame = true) => {
+      this.guardAgentNavigation(tab, url, event, isInMainFrame)
+    })
+
+    webContents.on('will-redirect', (event, url, isInMainFrame = true) => {
+      this.guardAgentNavigation(tab, url, event, isInMainFrame)
+    })
 
     webContents.on('page-title-updated', (_e, title) => {
       tab.title = title?.trim() || 'New Tab'
@@ -436,11 +836,17 @@ export class TabManager {
     })
     webContents.on('did-start-loading', () => {
       tab.isLoading = true
+      tab.navFailedReason = null
       safeEmit()
     })
     webContents.on('did-stop-loading', () => {
       tab.isLoading = false
       this.syncNavState(tab)
+      safeEmit()
+    })
+    webContents.on('did-finish-load', () => {
+      if (tab.activeAttempt) tab.activeAttempt = null
+      tab.navFailedReason = null
       safeEmit()
     })
     webContents.on('did-navigate', (_e, url) => {
@@ -454,12 +860,39 @@ export class TabManager {
       safeEmit()
     })
     webContents.on('did-fail-load', (_e, errorCode, _d, validatedURL, isMainFrame) => {
-      if (!isMainFrame || errorCode === -3) return
+      if (isMainFrame === false) {
+        safeEmit()
+        return
+      }
+      if (errorCode === -3) {
+        safeEmit()
+        return
+      }
       tab.isLoading = false
       tab.title = 'Failed to load'
       tab.url = validatedURL || tab.url
+      if (tab.activeAttempt) tab.activeAttempt = null
       safeEmit()
     })
+  }
+
+  private handleAgentPopup(tab: ManagedTab, target: string): { action: 'deny' } {
+    if (!isHttpOrHttpsOrAboutBlank(target)) return { action: 'deny' }
+    const targetHost = hostOf(target)
+    if (!targetHost) return { action: 'deny' }
+    const policy = tab.guardPolicy
+    if (!policy) return { action: 'deny' }
+    if (!this.hostAllowedByPolicy(targetHost, policy)) return { action: 'deny' }
+    const currentHost = this.getCommittedHost(tab.id)
+    const sameHost = !!(currentHost && currentHost === targetHost)
+    if (!sameHost) {
+      const attempt = tab.activeAttempt
+      if (!attempt) return { action: 'deny' }
+      if (!this.isAttemptFresh(attempt)) return { action: 'deny' }
+      if (targetHost !== attempt.approvedHost) return { action: 'deny' }
+    }
+    this.createAgentTab(target, true, policy, targetHost)
+    return { action: 'deny' }
   }
 
   private syncNavState(tab: ManagedTab): void {

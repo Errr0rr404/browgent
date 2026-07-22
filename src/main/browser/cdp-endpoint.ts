@@ -47,60 +47,109 @@ interface JsonVersion {
   Browser?: string
 }
 
+const CDP_PROBE_TIMEOUT_MS = 800
+const CDP_PROBE_MAX_BODY_BYTES = 64 * 1024
+
 /**
  * Probe /json/version on the local CDP port (best-effort after Chromium is up).
  */
 export async function discoverWebSocketDebuggerUrl(
-  timeoutMs = 800
+  timeoutMs = CDP_PROBE_TIMEOUT_MS
 ): Promise<string | null> {
   const base = getCdpBrowserURL()
   if (!base) return null
 
   return new Promise((resolve) => {
-    const timer = setTimeout(() => resolve(null), timeoutMs)
-    try {
-      const request = net.request({ url: `${base}/json/version`, method: 'GET' })
-      let body = ''
-      request.on('response', (response) => {
-        response.on('data', (chunk) => {
-          body += chunk.toString()
-        })
-        response.on('end', () => {
-          clearTimeout(timer)
-          try {
-            const json = JSON.parse(body) as JsonVersion
-            resolve(json.webSocketDebuggerUrl ?? null)
-          } catch {
-            resolve(null)
-          }
-        })
-      })
-      request.on('error', () => {
+    let settled = false
+    let timer: NodeJS.Timeout | null = null
+    let request: Electron.ClientRequest | null = null
+
+    const finish = (value: string | null, success: boolean): void => {
+      if (settled) return
+      settled = true
+      if (timer) {
         clearTimeout(timer)
-        resolve(null)
+        timer = null
+      }
+      if (!success) {
+        try {
+          request?.abort()
+        } catch {
+          // ignore
+        }
+      }
+      request = null
+      resolve(value)
+    }
+
+    timer = setTimeout(() => finish(null, false), timeoutMs)
+
+    try {
+      request = net.request({ url: `${base}/json/version`, method: 'GET' })
+    } catch {
+      finish(null, false)
+      return
+    }
+
+    let bytes = 0
+    let body = ''
+
+    request.on('response', (response) => {
+      const status = response.statusCode ?? 0
+      if (status < 200 || status >= 300) {
+        finish(null, false)
+        return
+      }
+      let responseDone = false
+      const onData = (chunk: Buffer | string): void => {
+        if (settled || responseDone) return
+        const size = typeof chunk === 'string' ? Buffer.byteLength(chunk) : chunk.length
+        bytes += size
+        if (bytes > CDP_PROBE_MAX_BODY_BYTES) {
+          responseDone = true
+          finish(null, false)
+          return
+        }
+        body += typeof chunk === 'string' ? chunk : chunk.toString()
+      }
+      const onEnd = (): void => {
+        if (settled || responseDone) return
+        responseDone = true
+        try {
+          const json = JSON.parse(body) as JsonVersion
+          finish(json.webSocketDebuggerUrl ?? null, true)
+        } catch {
+          finish(null, false)
+        }
+      }
+      response.on('data', onData)
+      response.on('end', onEnd)
+      response.on('error', () => {
+        if (settled || responseDone) return
+        responseDone = true
+        finish(null, false)
       })
+    })
+    request.on('error', () => finish(null, false))
+    request.on('abort', () => finish(null, false))
+    request.on('close', () => finish(null, false))
+
+    try {
       request.end()
     } catch {
-      clearTimeout(timer)
-      resolve(null)
+      finish(null, false)
     }
   })
 }
-
-let lastWs: string | null = null
 
 export async function getCdpStatus(driverMode?: DriverMode): Promise<CdpEndpointStatus> {
   const flags = getRuntimeFlags()
   const enabled = flags.cdpPort != null
   const browserURL = getCdpBrowserURL()
-  let webSocketDebuggerUrl: string | null = lastWs
+  let webSocketDebuggerUrl: string | null = null
 
   if (enabled) {
-    const ws = await discoverWebSocketDebuggerUrl()
-    if (ws) {
-      lastWs = ws
-      webSocketDebuggerUrl = ws
-    }
+    webSocketDebuggerUrl = await discoverWebSocketDebuggerUrl()
   }
 
   const mode = driverMode ?? flags.driverMode

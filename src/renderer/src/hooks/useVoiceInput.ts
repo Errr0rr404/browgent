@@ -23,33 +23,10 @@ export interface VoiceInputState {
   toggle: () => void
 }
 
-type SpeechRec = {
-  continuous: boolean
-  interimResults: boolean
-  lang: string
-  maxAlternatives: number
-  start: () => void
-  stop: () => void
-  abort: () => void
-  onresult: ((ev: SpeechRecognitionEventLike) => void) | null
-  onerror: ((ev: { error: string }) => void) | null
-  onend: (() => void) | null
-}
+type Ctor = new () => SpeechRecognition
 
-interface SpeechRecognitionEventLike {
-  resultIndex: number
-  results: ArrayLike<{
-    isFinal: boolean
-    0: { transcript: string }
-  }>
-}
-
-function getSpeechRecognitionCtor(): (new () => SpeechRec) | null {
-  const w = window as unknown as {
-    SpeechRecognition?: new () => SpeechRec
-    webkitSpeechRecognition?: new () => SpeechRec
-  }
-  return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null
+function getSpeechRecognitionCtor(): Ctor | null {
+  return window.SpeechRecognition ?? window.webkitSpeechRecognition ?? null
 }
 
 export function useVoiceInput(opts: {
@@ -57,12 +34,21 @@ export function useVoiceInput(opts: {
   onInterim?: (text: string) => void
   lang?: string
 }): VoiceInputState {
-  const [engine, setEngine] = useState<VoiceEngine>('none')
+  const initialSupported = (() => {
+    try {
+      return Boolean(getSpeechRecognitionCtor())
+    } catch {
+      return false
+    }
+  })()
+  const [engine, setEngine] = useState<VoiceEngine>(initialSupported ? 'webspeech' : 'none')
   const [status, setStatus] = useState<VoiceStatus>('idle')
   const [interim, setInterim] = useState('')
   const [error, setError] = useState<string | null>(null)
-  const recRef = useRef<SpeechRec | null>(null)
+  const [supported, setSupported] = useState(initialSupported)
+  const recRef = useRef<SpeechRecognition | null>(null)
   const wantListen = useRef(false)
+  const startingRef = useRef(false)
   const committedRef = useRef('')
   const onFinalRef = useRef(opts.onFinal)
   const onInterimRef = useRef(opts.onInterim)
@@ -70,13 +56,16 @@ export function useVoiceInput(opts: {
   onInterimRef.current = opts.onInterim
 
   useEffect(() => {
-    setEngine(getSpeechRecognitionCtor() ? 'webspeech' : 'none')
+    const ctor = getSpeechRecognitionCtor()
+    setSupported(Boolean(ctor))
+    setEngine(ctor ? 'webspeech' : 'none')
   }, [])
 
   const stop = useCallback(() => {
     wantListen.current = false
+    startingRef.current = false
     try {
-      recRef.current?.stop()
+      recRef.current?.abort()
     } catch {
       /* ignore */
     }
@@ -86,19 +75,22 @@ export function useVoiceInput(opts: {
   }, [])
 
   const start = useCallback(() => {
+    if (startingRef.current) return
     const Ctor = getSpeechRecognitionCtor()
     if (!Ctor) {
+      setSupported(false)
       setEngine('none')
-      setError('Speech recognition unavailable in this build of Electron')
+      setError('Speech recognition unavailable in this Electron build')
       setStatus('error')
       return
     }
-
+    startingRef.current = true
     wantListen.current = true
     committedRef.current = ''
     setError(null)
     setInterim('')
     setEngine('webspeech')
+    setSupported(true)
 
     try {
       recRef.current?.abort()
@@ -107,10 +99,6 @@ export function useVoiceInput(opts: {
     }
 
     const rec = new Ctor()
-    rec.continuous = true
-    rec.interimResults = true
-    rec.lang = opts.lang ?? 'en-US'
-    rec.maxAlternatives = 1
 
     rec.onresult = (ev) => {
       let interimText = ''
@@ -144,30 +132,44 @@ export function useVoiceInput(opts: {
       setError(msg)
       setStatus('error')
       wantListen.current = false
+      startingRef.current = false
     }
 
     rec.onend = () => {
-      // Chrome ends sessions after silence — restart while user still wants mic on
+      startingRef.current = false
+      recRef.current = null
       if (wantListen.current) {
         try {
           rec.start()
+          recRef.current = rec
+          startingRef.current = true
           return
         } catch {
-          /* fall through */
+          wantListen.current = false
+          setStatus('idle')
+          setInterim('')
         }
+      } else {
+        setStatus('idle')
+        setInterim('')
       }
-      setStatus('idle')
-      setInterim('')
     }
+
+    rec.continuous = true
+    rec.interimResults = true
+    rec.lang = opts.lang ?? 'en-US'
+    rec.maxAlternatives = 1
 
     recRef.current = rec
     try {
       rec.start()
       setStatus('listening')
     } catch (e) {
+      startingRef.current = false
       setError(e instanceof Error ? e.message : 'Could not start mic')
       setStatus('error')
       wantListen.current = false
+      recRef.current = null
     }
   }, [opts.lang])
 
@@ -179,6 +181,7 @@ export function useVoiceInput(opts: {
   useEffect(() => {
     return () => {
       wantListen.current = false
+      startingRef.current = false
       try {
         recRef.current?.abort()
       } catch {
@@ -188,7 +191,7 @@ export function useVoiceInput(opts: {
   }, [])
 
   return {
-    supported: engine !== 'none' || Boolean(getSpeechRecognitionCtor()),
+    supported,
     engine,
     status,
     interim,

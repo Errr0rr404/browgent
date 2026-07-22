@@ -661,6 +661,8 @@
   border-radius: 10px;
   text-align: left;
   color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
   transition: background 120ms var(--ease), color 120ms var(--ease);
 }
 
@@ -672,6 +674,10 @@
 .theme-option.on {
   background: var(--accent-dim);
   color: var(--text-primary);
+}
+
+.theme-menu-scroll:focus {
+  outline: none;
 }
 
 .theme-option-swatches {
@@ -742,10 +748,13 @@
   animation: micPulse 1.2s ease-in-out infinite;
 }
 
-.mic-btn.transcribing {
-  color: var(--accent);
-  border-color: rgba(62, 224, 197, 0.4);
-  background: var(--accent-dim);
+.mic-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+  color: var(--text-muted);
+  border-color: var(--border);
+  background: transparent;
+  animation: none;
 }
 
 @keyframes micPulse {

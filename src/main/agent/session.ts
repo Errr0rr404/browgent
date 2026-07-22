@@ -14,7 +14,14 @@ import {
   type LlmProvider,
   type LlmToolCall
 } from './llm'
-import { extractCredentials, parseBrowseIntent } from '../../shared/sites'
+import {
+  extractCredentials,
+  parseBrowseIntent,
+  redactSecrets,
+  resolveSecretPlaceholders,
+  safeUrlForLlm,
+  type SecretRedactionMap
+} from '../../shared/sites'
 import {
   DEFAULT_POLICY,
   type AgentMode,
@@ -54,6 +61,8 @@ export class AgentSession {
   /** Monotonic run id — invalidates in-flight loops after stop/clear/new send */
   private runGeneration = 0
   private taskInFlight = false
+  private mutationInFlight = false
+  private pendingOwnershipTransfer = false
 
   constructor(
     private tabs: TabManager,
@@ -98,7 +107,7 @@ export class AgentSession {
     this.mode = mode
     this.policy = {
       ...this.policy,
-      researchOnly: mode === 'research'
+      researchOnly: modeSetsResearchOnly(mode)
     }
     this.trace('system', `Mode → ${mode}`)
     this.pushSystem(`Mode set to **${mode}**.`)
@@ -106,23 +115,42 @@ export class AgentSession {
   }
 
   setPolicy(partial: Partial<AgentPolicy>): void {
-    const next = { ...this.policy, ...partial }
-    if (typeof next.maxSteps === 'number') {
+    const next: AgentPolicy = { ...this.policy, ...partial }
+    if (typeof next.maxSteps === 'number' && Number.isFinite(next.maxSteps)) {
       next.maxSteps = Math.min(100, Math.max(5, Math.round(next.maxSteps) || 40))
+    } else {
+      next.maxSteps = this.policy.maxSteps
     }
     if (Array.isArray(next.allowHosts)) {
-      next.allowHosts = next.allowHosts.map((h) => String(h).toLowerCase().trim()).filter(Boolean)
+      next.allowHosts = next.allowHosts
+        .map((h) => String(h).toLowerCase().trim())
+        .filter(Boolean)
+        .slice(0, 200)
     }
     if (Array.isArray(next.blockHosts)) {
-      next.blockHosts = next.blockHosts.map((h) => String(h).toLowerCase().trim()).filter(Boolean)
+      next.blockHosts = next.blockHosts
+        .map((h) => String(h).toLowerCase().trim())
+        .filter(Boolean)
+        .slice(0, 200)
     }
+    if (!Array.isArray(next.sensitiveClickPatterns)) {
+      next.sensitiveClickPatterns = this.policy.sensitiveClickPatterns
+    } else {
+      next.sensitiveClickPatterns = next.sensitiveClickPatterns
+        .map((p) => String(p).trim())
+        .filter(Boolean)
+        .slice(0, 100)
+    }
+    next.confirmCrossHost = !!next.confirmCrossHost
+    next.confirmSensitiveClicks = !!next.confirmSensitiveClicks
+    next.pauseOnAskHuman = !!next.pauseOnAskHuman
+    next.researchOnly = modeSetsResearchOnly(this.mode)
     this.policy = next
-    this.trace('system', 'Policy updated', JSON.stringify(partial))
+    this.trace('system', 'Policy updated', JSON.stringify(summarizePolicyDiff(this.policy, partial)))
     this.emit()
   }
 
   clear(): void {
-    // Bump generation so any in-flight run exits without writing more state
     this.invalidateRun()
     this.status = 'idle'
     this.paused = false
@@ -135,7 +163,9 @@ export class AgentSession {
     this.lastToolNotes = []
     this.currentGoal = ''
     this.taskInFlight = false
-    this.tabs.setOwner(null, null)
+    this.mutationInFlight = false
+    this.pendingOwnershipTransfer = false
+    this.tabs.releaseAgentTabs()
     this.refreshProvider()
     this.pushSystem('Session cleared. Shared browser tabs are unchanged.')
     this.trace('system', 'Session cleared')
@@ -149,7 +179,9 @@ export class AgentSession {
     this.pendingConfirmation = null
     this.paused = false
     this.taskInFlight = false
-    this.tabs.setOwner(null, 'human')
+    this.mutationInFlight = false
+    this.pendingOwnershipTransfer = false
+    this.tabs.releaseAgentTabs()
     this.pushAssistant('Stopped. You own the tabs again.')
     this.trace('system', 'Agent stopped')
     this.emit()
@@ -157,24 +189,40 @@ export class AgentSession {
 
   /** Abort in-flight LLM/tool work and mark cancelled for the active generation. */
   private invalidateRun(): void {
+    // Bump generation so any in-flight run exits without writing more state
     this.runGeneration++
     this.cancelled = true
-    this.abort?.abort()
-    this.abort = null
+    if (this.abort) {
+      this.abort.abort()
+      this.abort = null
+    }
     this.resolveConfirm(false)
   }
 
   pause(): void {
     this.paused = true
     this.status = 'paused'
-    this.tabs.setOwner(null, 'human')
-    this.trace('system', 'Paused — human takeover')
+    this.transferOwnershipToHumanIfSafe('Paused — human takeover')
     this.emit()
   }
 
   resume(): void {
+    this.pendingOwnershipTransfer = false
     this.paused = false
-    if (this.status === 'paused') this.status = 'idle'
+    if (this.status === 'paused') {
+      this.status = 'idle'
+      if (this.taskInFlight) {
+        const id = this.tabs.getActiveTabId() ?? ''
+        if (id && this.tabs.has(id)) {
+          this.tabs.setOwner(id, 'agent')
+          this.tabs.applyGuardPolicy(id, {
+            allowHosts: this.policy.allowHosts ?? [],
+            blockHosts: this.policy.blockHosts ?? [],
+            crossHostRequired: !!this.policy.confirmCrossHost
+          })
+        }
+      }
+    }
     this.trace('system', 'Resumed')
     this.emit()
   }
@@ -182,6 +230,18 @@ export class AgentSession {
   takeover(): void {
     this.pause()
     this.pushSystem('Takeover: you control the browser. Click Resume when the agent should continue.')
+    this.emit()
+  }
+
+  private transferOwnershipToHumanIfSafe(traceLabel: string): void {
+    this.pendingOwnershipTransfer = false
+    if (!this.mutationInFlight) {
+      const transferred = this.tabs.transferAgentTabsToHuman()
+      this.trace('system', `${traceLabel} (released ${transferred} agent tab(s))`)
+      return
+    }
+    this.trace('system', `${traceLabel} (deferred — mutation in flight)`)
+    this.pendingOwnershipTransfer = true
     this.emit()
   }
 
@@ -200,30 +260,22 @@ export class AgentSession {
     this.waitingQuestion = null
     this.pendingConfirmation = null
     this.push('user', answer)
-    this.trace('user', 'Human answer', answer)
     this.status = 'idle'
     this.emit()
-    void this.runTask(
-      `Continue. Human answered: ${answer}`,
-      this.tabs.getActiveTabId() ?? undefined,
-      { skipUserMessage: true }
-    )
+    void this.runTask(answer, this.tabs.getActiveTabId() ?? undefined, { skipUserMessage: true })
   }
 
   exportTrajectory(): string {
-    return JSON.stringify(
-      {
-        exportedAt: new Date().toISOString(),
-        mode: this.mode,
-        provider: this.provider,
-        model: this.model,
-        policy: this.policy,
-        steps: this.trajectory,
-        messages: this.messages
-      },
-      null,
-      2
-    )
+    const payload = {
+      exportedAt: new Date().toISOString(),
+      mode: this.mode,
+      provider: this.provider,
+      model: this.model,
+      policy: sanitizePolicyForExport(this.policy),
+      steps: this.trajectory.map(sanitizeTrajectoryStepForExport),
+      messages: this.messages.map(sanitizeMessageForExport)
+    }
+    return JSON.stringify(payload, null, 2)
   }
 
   async send(userText: string, tabId?: TabId): Promise<void> {
@@ -266,10 +318,19 @@ export class AgentSession {
 
     if (!opts.skipUserMessage) {
       this.push('user', text)
-      this.trace('user', text)
     }
+    const redactedUserText = redactSecrets(text).redacted
+    this.trace('user', redactedUserText, redactedUserText)
     this.status = 'thinking'
     this.tabs.setOwner(tabId ?? this.tabs.getActiveTabId(), 'agent')
+    this.tabs.applyGuardPolicy(
+      tabId ?? this.tabs.getActiveTabId() ?? '',
+      {
+        allowHosts: this.policy.allowHosts ?? [],
+        blockHosts: this.policy.blockHosts ?? [],
+        crossHostRequired: !!this.policy.confirmCrossHost
+      }
+    )
     this.emit()
 
     try {
@@ -296,7 +357,8 @@ export class AgentSession {
           this.pushAssistant(`Failed: ${err2}`)
           this.status = 'error'
           this.taskInFlight = false
-          this.tabs.setOwner(null, null)
+          this.pendingOwnershipTransfer = false
+          this.tabs.releaseAgentTabs()
           this.emit()
           return
         }
@@ -308,7 +370,8 @@ export class AgentSession {
         )
         this.status = 'error'
         this.taskInFlight = false
-        this.tabs.setOwner(null, null)
+        this.pendingOwnershipTransfer = false
+        this.tabs.releaseAgentTabs()
         this.emit()
         return
       }
@@ -324,7 +387,8 @@ export class AgentSession {
     }
     this.status = 'idle'
     this.taskInFlight = false
-    this.tabs.setOwner(null, null)
+    this.pendingOwnershipTransfer = false
+    this.tabs.releaseAgentTabs()
     this.emit()
   }
 
@@ -335,14 +399,17 @@ export class AgentSession {
   /** Multi-turn OpenAI-compatible tool-calling loop (Grok default, any provider) */
   private async runWithLlm(goal: string, gen: number): Promise<void> {
     const active = this.tabs.getState().find((t) => t.isActive)
+    const safeActiveUrl = active?.url ? safeUrlForLlm(active.url) : active?.url
     const intent = parseBrowseIntent(goal)
     const creds = extractCredentials(goal)
+    const { redacted: redactedGoal, map } = redactSecrets(goal)
+
     // Light hints only — the model owns planning for any goal (not a fixed auth script)
     let intentHint = ''
     if (intent.navigateUrl) {
       intentHint +=
         `\n\n(Hint) A site was recognized — navigate there and complete the user's full request:\n` +
-        `- Suggested start URL: ${intent.navigateUrl}\n` +
+        `- Suggested start URL: ${safeUrlForLlm(intent.navigateUrl)}\n` +
         (intent.task ? `- Remaining goal: ${intent.task}\n` : '')
     }
     // Point at values already in the user message — do NOT re-echo secrets into the prompt.
@@ -363,16 +430,16 @@ export class AgentSession {
     const llmMessages: ChatMessage[] = [
       {
         role: 'system',
-        content: buildSystemPrompt(this.mode, active?.url, active?.title)
+        content: buildSystemPrompt(this.mode, safeActiveUrl, active?.title)
       },
-      { role: 'user', content: goal + intentHint }
+      { role: 'user', content: redactedGoal + intentHint }
     ]
 
     // Seed with a light page orientation so the model doesn't guess
     if (active?.url && active.url !== 'about:blank') {
       llmMessages.push({
         role: 'user',
-        content: `(Context) Active tab: ${active.title || 'untitled'} — ${active.url}`
+        content: `(Context) Active tab: ${active.title || 'untitled'} — ${safeActiveUrl}`
       })
     }
 
@@ -393,6 +460,8 @@ export class AgentSession {
     let textOnlyNudges = 0
     const maxRounds = Math.min(this.policy.maxSteps, 24)
     const maxTextNudges = 2
+
+    const secretResolver = (text: string): string => resolveSecretPlaceholders(text, map)
 
     while (rounds < maxRounds && this.isActiveRun(gen)) {
       while (this.paused && this.isActiveRun(gen)) await sleep(150)
@@ -465,8 +534,17 @@ export class AgentSession {
         while (this.paused && this.isActiveRun(gen)) await sleep(150)
         if (!this.isActiveRun(gen)) break
 
-        const call = toolCallFromLlm(tc)
-        if (!call) {
+        if (this.abort?.signal.aborted) {
+          llmMessages.push({
+            role: 'tool',
+            tool_call_id: tc.id,
+            content: JSON.stringify({ ok: false, error: 'Aborted before execution' })
+          })
+          continue
+        }
+
+        const rawCall = toolCallFromLlm(tc)
+        if (!rawCall) {
           llmMessages.push({
             role: 'tool',
             tool_call_id: tc.id,
@@ -475,20 +553,25 @@ export class AgentSession {
           continue
         }
 
+        const redactedArgs = scrubCallArgsForTrajectory(rawCall)
+        const resolvedArgs = resolveCallPlaceholders(rawCall, map)
+        const redactedCall: ToolCall = { id: rawCall.id, name: rawCall.name, args: redactedArgs }
+        const resolvedCall: ToolCall = { id: rawCall.id, name: rawCall.name, args: resolvedArgs }
+
         const action: AgentAction = {
-          type: call.name,
-          label: call.name,
-          detail: summarizeArgs(call),
+          type: redactedCall.name,
+          label: redactedCall.name,
+          detail: summarizeArgs(redactedCall),
           status: 'running'
         }
         actions.push(action)
         this.emit()
 
-        if (call.name === 'ask_human') {
+        if (redactedCall.name === 'ask_human') {
           action.status = 'waiting'
-          this.waitingQuestion = String(call.args.question ?? 'Need your help')
+          this.waitingQuestion = String(redactedCall.args.question ?? 'Need your help')
           this.status = 'waiting_human'
-          this.tabs.setOwner(null, 'human')
+          this.transferOwnershipToHumanIfSafe('Waiting for human')
           if (this.policy.pauseOnAskHuman) this.paused = true
           this.trace('tool', 'ask_human', this.waitingQuestion, 'ask_human', true)
           llmMessages.push({
@@ -501,26 +584,42 @@ export class AgentSession {
           break
         }
 
-        const result = await this.executor.execute(call, {
-          policy: this.policy,
-          mode: this.mode,
-          requestConfirm: (reason, tool, args) => this.waitForConfirm(reason, tool, args)
-        })
+        this.mutationInFlight = isMutatingTool(redactedCall.name)
+        let result
+        try {
+          result = await this.executor.execute(resolvedCall, {
+            policy: this.policy,
+            mode: this.mode,
+            requestConfirm: (reason, tool, args) => this.waitForConfirm(reason, tool, args),
+            lastObservation: this.lastObservation,
+            signal: this.abort?.signal,
+            resolver: secretResolver
+          })
+        } finally {
+          this.mutationInFlight = false
+          if (this.pendingOwnershipTransfer && this.isActiveRun(gen)) {
+            this.pendingOwnershipTransfer = false
+            this.tabs.transferAgentTabsToHuman()
+          } else if (this.pendingOwnershipTransfer) {
+            this.pendingOwnershipTransfer = false
+          }
+        }
 
         if (!this.isActiveRun(gen)) return
 
         this.stepCount++
-        this.lastToolNotes.push(result.summary)
+        const summaryText = redactTextForTrajectory(result.summary ?? '')
+        this.lastToolNotes.push(summaryText)
         if (this.lastToolNotes.length > 40) this.lastToolNotes = this.lastToolNotes.slice(-30)
-        this.trace('tool', result.summary, undefined, call.name, result.ok, result.data)
+        this.trace('tool', summaryText, undefined, redactedCall.name, result.ok, scrubDataForTrajectory(result.data))
 
-        if (call.name === 'observe' && result.ok && result.data) {
+        if (redactedCall.name === 'observe' && result.ok && result.data) {
           const d = result.data as ObserveSnapshot & { compact?: string }
           this.lastObservation = {
-            url: d.url,
-            title: d.title,
+            url: safeUrlForLlm(d.url ?? '', 200),
+            title: d.title ?? '',
             elements: d.elements ?? [],
-            textPreview: d.textPreview ?? ''
+            textPreview: (d.textPreview ?? '').slice(0, 800)
           }
         }
 
@@ -528,18 +627,18 @@ export class AgentSession {
         if (!result.ok) action.detail = result.error
         this.emit()
 
-        const payload = result.ok
-          ? { ok: true, summary: result.summary, data: result.data }
-          : { ok: false, error: result.error, summary: result.summary }
+        const sanitizedPayload = result.ok
+          ? { ok: true, summary: summaryText, data: scrubDataForTrajectory(result.data) }
+          : { ok: false, error: result.error, summary: summaryText }
 
         llmMessages.push({
           role: 'tool',
           tool_call_id: tc.id,
-          content: slimToolResultForLlm(payload)
+          content: slimToolResultForLlm(scrubSensitiveUrlFields(sanitizedPayload))
         })
 
-        if (call.name === 'done') {
-          finalSummary = String(call.args.summary ?? result.summary)
+        if (redactedCall.name === 'done') {
+          finalSummary = String(redactedCall.args.summary ?? summaryText)
           hitDone = true
           break
         }
@@ -559,7 +658,7 @@ export class AgentSession {
     }
 
     await this.streamAssistant(assistantId, finalSummary, gen)
-    if (this.isActiveRun(gen)) this.trace('assistant', finalSummary.slice(0, 200))
+    if (this.isActiveRun(gen)) this.trace('assistant', redactTextForTrajectory(finalSummary).slice(0, 200))
   }
 
   /** Multi-step heuristic planner (no API key) */
@@ -625,33 +724,48 @@ export class AgentSession {
           action.status = 'waiting'
           this.waitingQuestion = String(call.args.question ?? 'Need your help')
           this.status = 'waiting_human'
-          this.tabs.setOwner(null, 'human')
+          this.transferOwnershipToHumanIfSafe('Waiting for human')
           if (this.policy.pauseOnAskHuman) this.paused = true
           this.trace('tool', 'ask_human', this.waitingQuestion)
           this.emit()
           return
         }
 
-        const result = await this.executor.execute(call, {
-          policy: this.policy,
-          mode: this.mode,
-          requestConfirm: (reason, tool, args) => this.waitForConfirm(reason, tool, args)
-        })
+        this.mutationInFlight = isMutatingTool(call.name)
+        let result
+        try {
+          result = await this.executor.execute(call, {
+            policy: this.policy,
+            mode: this.mode,
+            requestConfirm: (reason, tool, args) => this.waitForConfirm(reason, tool, args),
+            lastObservation: this.lastObservation,
+            signal: this.abort?.signal
+          })
+        } finally {
+          this.mutationInFlight = false
+          if (this.pendingOwnershipTransfer && this.isActiveRun(gen)) {
+            this.pendingOwnershipTransfer = false
+            this.tabs.transferAgentTabsToHuman()
+          } else if (this.pendingOwnershipTransfer) {
+            this.pendingOwnershipTransfer = false
+          }
+        }
 
         if (!this.isActiveRun(gen)) return
 
         this.stepCount++
-        this.lastToolNotes.push(result.summary)
+        const summaryText = redactTextForTrajectory(result.summary ?? '')
+        this.lastToolNotes.push(summaryText)
         if (this.lastToolNotes.length > 40) this.lastToolNotes = this.lastToolNotes.slice(-30)
-        this.trace('tool', result.summary, undefined, call.name, result.ok, result.data)
+        this.trace('tool', summaryText, undefined, call.name, result.ok, scrubDataForTrajectory(result.data))
 
         if (call.name === 'observe' && result.ok && result.data) {
           const d = result.data as ObserveSnapshot & { compact?: string }
           this.lastObservation = {
-            url: d.url,
-            title: d.title,
+            url: safeUrlForLlm(d.url ?? '', 200),
+            title: d.title ?? '',
             elements: d.elements ?? [],
-            textPreview: d.textPreview ?? ''
+            textPreview: (d.textPreview ?? '').slice(0, 800)
           }
           observationDump += `\n\n${formatObservationForUser(result.data)}`
         }
@@ -661,7 +775,7 @@ export class AgentSession {
         }
 
         if (call.name === 'done' && result.ok) {
-          finalSummary = String(call.args.summary ?? result.summary)
+          finalSummary = String(call.args.summary ?? summaryText)
           finished = true
           break
         }
@@ -685,7 +799,7 @@ export class AgentSession {
     }
 
     await this.streamAssistant(assistantId, reply, gen)
-    if (this.isActiveRun(gen)) this.trace('assistant', reply.slice(0, 200))
+    if (this.isActiveRun(gen)) this.trace('assistant', redactTextForTrajectory(reply).slice(0, 200))
   }
 
   private async streamAssistant(messageId: string, reply: string, gen?: number): Promise<void> {
@@ -722,14 +836,42 @@ export class AgentSession {
       const id = randomUUID()
       this.pendingConfirmation = { id, reason, tool, args }
       this.status = 'waiting_human'
-      this.tabs.setOwner(null, 'human')
+
+      const wasInFlight = this.mutationInFlight
+      const targetTabId =
+        typeof args.tabId === 'string' ? args.tabId : this.tabs.getActiveTabId()
+      this.mutationInFlight = false
+
       this.trace('policy', reason, tool)
       this.confirmResolver = (ok) => {
         this.pendingConfirmation = null
         this.confirmResolver = null
+
+        const takenOver =
+          this.paused || this.cancelled || !this.isActiveRun(this.runGeneration)
+
+        if (!ok || takenOver) {
+          this.pendingOwnershipTransfer = false
+          this.mutationInFlight = wasInFlight
+          if (this.status === 'waiting_human') this.status = 'acting'
+          this.emit()
+          resolve(false)
+          return
+        }
+
+        if (targetTabId && this.tabs.has(targetTabId)) {
+          this.tabs.setOwner(targetTabId, 'agent')
+          this.tabs.applyGuardPolicy(targetTabId, {
+            allowHosts: this.policy.allowHosts ?? [],
+            blockHosts: this.policy.blockHosts ?? [],
+            crossHostRequired: !!this.policy.confirmCrossHost
+          })
+        }
+        this.pendingOwnershipTransfer = false
+        this.mutationInFlight = wasInFlight
         if (this.status === 'waiting_human') this.status = 'acting'
         this.emit()
-        resolve(ok)
+        resolve(true)
       }
       this.emit()
     })
@@ -856,4 +998,191 @@ function chunkText(text: string, size: number): string[] {
   const chunks: string[] = []
   for (let i = 0; i < text.length; i += size) chunks.push(text.slice(i, i + size))
   return chunks
+}
+
+const SECRET_PLACEHOLDER_RE = /\[BROWGENT_SECRET_\d+\]/g
+const EMAIL_RE = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g
+const URL_VALUE_RE = /\b((?:https?|file|data|javascript|ftp):\/\/[^\s"'<>)]+)/g
+
+function redactTextForTrajectory(text: string): string {
+  if (!text) return text
+  let out = text.replace(SECRET_PLACEHOLDER_RE, '[REDACTED]')
+  out = out.replace(EMAIL_RE, '[REDACTED_EMAIL]')
+  out = out.replace(URL_VALUE_RE, (m) => safeUrlForLlm(m, 200))
+  return out
+}
+
+function scrubCallArgsForTrajectory(call: ToolCall): ToolArgs {
+  const args: ToolArgs = { ...call.args }
+  if (call.name === 'type') {
+    const raw = typeof args.text === 'string' ? args.text : ''
+    if (looksSecretText(raw) || SECRET_PLACEHOLDER_RE.test(raw)) args.text = '[REDACTED]'
+    SECRET_PLACEHOLDER_RE.lastIndex = 0
+  }
+  if (typeof args.url === 'string') args.url = safeUrlForLlm(args.url, 200)
+  if (typeof args.summary === 'string') args.summary = redactTextForTrajectory(args.summary)
+  if (typeof args.question === 'string') args.question = redactTextForTrajectory(args.question)
+  if (typeof args.thought === 'string') args.thought = redactTextForTrajectory(args.thought)
+  return args
+}
+
+function resolveCallPlaceholders(call: ToolCall, map: SecretRedactionMap): ToolArgs {
+  const args: ToolArgs = { ...call.args }
+  for (const key of Object.keys(args)) {
+    const v = args[key]
+    if (typeof v === 'string') args[key] = resolveSecretPlaceholders(v, map)
+  }
+  return args
+}
+
+function scrubDataForTrajectory(data: unknown): unknown {
+  if (data == null) return data
+  if (typeof data === 'string') return redactTextForTrajectory(data)
+  try {
+    const visited = new WeakSet<object>()
+    const walk = (v: unknown): unknown => {
+      if (v == null) return v
+      if (typeof v === 'string') return redactTextForTrajectory(v)
+      if (Array.isArray(v)) return v.map(walk)
+      if (typeof v === 'object') {
+        const obj = v as Record<string, unknown>
+        if (visited.has(obj)) return '[Circular]'
+        visited.add(obj)
+        const out: Record<string, unknown> = {}
+        for (const [k, val] of Object.entries(obj)) {
+          if (k === 'value' && typeof val === 'string' && val.length > 0) {
+            out[k] = '[REDACTED]'
+          } else if (k === 'url' || k === 'href' || k === 'finalUrl') {
+            out[k] = typeof val === 'string' ? safeUrlForLlm(val, 200) : walk(val)
+          } else if (k === 'password' || k === 'secret' || k === 'token' || k === 'otp' || k === 'code') {
+            out[k] = typeof val === 'string' ? '[REDACTED]' : walk(val)
+          } else {
+            out[k] = walk(val)
+          }
+        }
+        return out
+      }
+      return v
+    }
+    return walk(data)
+  } catch {
+    return undefined
+  }
+}
+
+function scrubSensitiveUrlFields(payload: unknown): unknown {
+  if (!payload || typeof payload !== 'object') return payload
+  const obj = { ...(payload as Record<string, unknown>) }
+  for (const key of ['url', 'finalUrl', 'href']) {
+    const v = obj[key]
+    if (typeof v === 'string') obj[key] = safeUrlForLlm(v, 200)
+  }
+  if (obj.data && typeof obj.data === 'object') obj.data = scrubDataForTrajectory(obj.data)
+  return obj
+}
+
+function sanitizePolicyForExport(policy: AgentPolicy): AgentPolicy {
+  return {
+    allowHosts: (policy.allowHosts ?? []).map((h) => String(h).toLowerCase().trim()).filter(Boolean),
+    blockHosts: (policy.blockHosts ?? []).map((h) => String(h).toLowerCase().trim()).filter(Boolean),
+    maxSteps: Math.min(100, Math.max(5, Math.round(policy.maxSteps) || 40)),
+    confirmCrossHost: !!policy.confirmCrossHost,
+    confirmSensitiveClicks: !!policy.confirmSensitiveClicks,
+    sensitiveClickPatterns: (policy.sensitiveClickPatterns ?? []).map((p) => String(p)).filter(Boolean),
+    pauseOnAskHuman: !!policy.pauseOnAskHuman,
+    researchOnly: !!policy.researchOnly
+  }
+}
+
+function sanitizeTrajectoryStepForExport(step: TrajectoryStep): TrajectoryStep {
+  const out: TrajectoryStep = {
+    id: step.id,
+    ts: step.ts,
+    kind: step.kind,
+    title: redactTextForTrajectory(step.title ?? ''),
+    tool: step.tool,
+    ok: step.ok
+  }
+  if (step.detail != null) out.detail = redactTextForTrajectory(step.detail)
+  if (step.data !== undefined) out.data = scrubDataForTrajectory(step.data)
+  return out
+}
+
+function sanitizeMessageForExport(msg: AgentMessage): AgentMessage {
+  const out: AgentMessage = {
+    id: msg.id,
+    role: msg.role,
+    content: redactTextForTrajectory(msg.content ?? ''),
+    timestamp: msg.timestamp
+  }
+  if (msg.actions) {
+    out.actions = msg.actions.map((a) => ({
+      ...a,
+      detail: a.detail ? redactTextForTrajectory(a.detail) : a.detail,
+      label: redactTextForTrajectory(a.label ?? '')
+    }))
+  }
+  if (msg.toolCall) out.toolCall = { id: msg.toolCall.id, name: msg.toolCall.name, args: scrubCallArgsForTrajectory(msg.toolCall) }
+  if (msg.toolResult) {
+    out.toolResult = {
+      ...msg.toolResult,
+      summary: redactTextForTrajectory(msg.toolResult.summary ?? ''),
+      error: msg.toolResult.error ? redactTextForTrajectory(msg.toolResult.error) : msg.toolResult.error,
+      data: msg.toolResult.data === undefined ? msg.toolResult.data : scrubDataForTrajectory(msg.toolResult.data)
+    }
+  }
+  return out
+}
+
+function summarizePolicyDiff(prev: AgentPolicy, partial: Partial<AgentPolicy>): string {
+  const keys: Array<keyof AgentPolicy> = [
+    'allowHosts',
+    'blockHosts',
+    'maxSteps',
+    'confirmCrossHost',
+    'confirmSensitiveClicks',
+    'sensitiveClickPatterns',
+    'pauseOnAskHuman',
+    'researchOnly'
+  ]
+  const prevR = prev as unknown as Record<string, unknown>
+  const partR = partial as unknown as Record<string, unknown>
+  const changed: string[] = []
+  for (const k of keys) {
+    if (Object.prototype.hasOwnProperty.call(partial, k)) {
+      const a = JSON.stringify(prevR[k])
+      const b = JSON.stringify(partR[k])
+      if (a !== b) changed.push(`${String(k)}=${truncate(b, 80)}`)
+    }
+  }
+  return changed.join(', ') || 'unchanged'
+}
+
+function truncate(s: string, n: number): string {
+  return s.length > n ? s.slice(0, n) + '…' : s
+}
+
+function modeSetsResearchOnly(mode: AgentMode): boolean {
+  return mode === 'research'
+}
+
+function isMutatingTool(name: ToolName): boolean {
+  switch (name) {
+    case 'navigate':
+    case 'back':
+    case 'forward':
+    case 'reload':
+    case 'click':
+    case 'type':
+    case 'press_key':
+    case 'hover':
+    case 'select_option':
+    case 'scroll':
+    case 'new_tab':
+    case 'close_tab':
+    case 'switch_tab':
+      return true
+    default:
+      return false
+  }
 }

@@ -28,26 +28,29 @@ Observe / extract / refs always use DOM scripts (Browgent-native). Click/type/ho
 
 ## Enable CDP
 
-Default: **port 9222** (localhost only).
+Default for `npm run dev`: **off**. CDP is localhost-only (`http://127.0.0.1:9222`) and only enabled when you ask for it.
 
 ```bash
-# default
+# default for normal dev — CDP off
 npm run dev
+
+# enable on the default port
+BROWGENT_CDP_PORT=9222 npm run dev
 
 # custom port
 BROWGENT_CDP_PORT=9333 npm run dev
 
-# off
+# off (when previously enabled)
 BROWGENT_CDP=0 npm run dev
 
-# lightweight automation shell (compact UI, CDP on, driver=cdp)
+# lightweight automation shell (compact UI; implies CDP unless disabled)
 BROWGENT_AGENT_ONLY=1 npm run dev
 
-# hidden window for CI-ish local runs (still Chromium + CDP)
+# hidden window for CI-ish local runs (implies CDP unless disabled)
 BROWGENT_HEADLESS=1 BROWGENT_AGENT_ONLY=1 npm run dev
 ```
 
-CLI equivalents: `--cdp-port=9222`, `--driver=cdp`, `--agent-only`, `--headless`.
+CLI equivalents mirror the env vars: `--cdp-port=9222`, `--cdp=1|0`, `--driver=cdp|dom`, `--agent-only`, `--headless`. Explicit `BROWGENT_CDP=0`/`off`/`false` (or port `0`) always wins, even when `AGENT_ONLY`/`HEADLESS` is set.
 
 ## Playwright attach
 
@@ -76,12 +79,12 @@ await page.goto('https://example.com')
 2. **Shared session** — Guest tabs use `persist:browgent-pages`. Playwright sees those cookies when attached to the right context.
 3. **Dual control** — Human + in-app agent + Playwright can all act; use takeover / pause when coordinating.
 4. **Debugger exclusivity** — A page target accepts one active debugger client. Keep the **in-app driver on `dom`** while Playwright is attached (default). Switching in-app driver to `cdp` uses `webContents.debugger` and can contend with remote CDP on that tab.
-5. **Security** — CDP defaults **on** (port 9222) for local Playwright attach. It is localhost-only; any local process can control the session. Disable with `BROWGENT_CDP=0` when you do not need external automation. Never tunnel CDP to the public internet without auth.
+5. **Security** — CDP is **off** by default for normal `npm run dev`. When you enable it, it listens on localhost only; any local process can control the session. Disable with `BROWGENT_CDP=0` when you do not need external automation. Never tunnel CDP to the public internet without auth.
 6. **No Playwright dependency in app** — keeps Browgent install lean; attach from outside.
 
 ## Toggle in-app driver
 
-- **Status bar** — click `drive dom · cdp:9222` to flip `dom` ↔ `cdp`
+- **Status bar** — click `drive dom · cdp:9222` to flip `dom` ↔ `cdp` (CDP port only shows when enabled)
 - **Policy tab** — “In-app driver” select
 - **Env** — `BROWGENT_DRIVER=dom|cdp` (restart for env; UI toggle is live)
 

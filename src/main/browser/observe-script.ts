@@ -31,36 +31,43 @@ export const OBSERVE_SCRIPT = `(() => {
         : el.tagName === 'TEXTAREA' ? 'textbox'
         : el.tagName.toLowerCase());
 
-    const name = (
-      el.getAttribute('aria-label')
-      || el.getAttribute('aria-labelledby') && (() => {
-        const id = el.getAttribute('aria-labelledby');
-        return id ? (document.getElementById(id)?.innerText || '') : '';
-      })()
-      || el.innerText
-      || el.getAttribute('placeholder')
-      || el.getAttribute('title')
-      || el.getAttribute('name')
-      || el.getAttribute('value')
-      || el.getAttribute('alt')
-      || ''
-    ).trim().replace(/\\s+/g, ' ').slice(0, 120);
+    const isFormControl = el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable;
 
+    const ariaLabel = el.getAttribute('aria-label') || '';
+    const ariaLabelledByText = el.getAttribute('aria-labelledby') && (() => {
+      const id = el.getAttribute('aria-labelledby');
+      return id ? (document.getElementById(id)?.innerText || '') : '';
+    })();
+    const innerText = el.innerText || '';
+    const placeholder = el.getAttribute('placeholder') || '';
+    const title = el.getAttribute('title') || '';
+    const nameAttr = el.getAttribute('name') || '';
+    const altAttr = el.getAttribute('alt') || '';
+
+    const rawValue = el.isContentEditable
+      ? (el.textContent || '')
+      : (typeof el.value === 'string' ? el.value : '');
     // Never leak live password field values into observe → LLM / trajectory / export
-    const isPassword = inputType === 'password' || role === 'password';
-    const rawValue = typeof el.value === 'string' ? el.value : '';
-    const value = isPassword
-      ? (rawValue.length > 0 ? '••••••' : undefined)
-      : (rawValue ? rawValue.slice(0, 80) : undefined);
+    const value = isFormControl && rawValue.length > 0 ? '••••' : undefined;
+
+    const rawHref = typeof el.href === 'string' ? el.href : '';
+    const safeHref = rawHref && !rawHref.toLowerCase().startsWith('javascript:') ? rawHref : undefined;
+
+    let name;
+    if (isFormControl) {
+      name = (ariaLabel || ariaLabelledByText || innerText || placeholder || title || 'field')
+        .trim().replace(/\\s+/g, ' ').slice(0, 120);
+    } else {
+      name = (ariaLabel || ariaLabelledByText || innerText || placeholder || title || nameAttr || altAttr || '')
+        .trim().replace(/\\s+/g, ' ').slice(0, 120);
+    }
 
     elements.push({
       ref,
       role,
-      name: isPassword && !el.getAttribute('aria-label') && !el.getAttribute('placeholder')
-        ? (name && !rawValue ? name : 'password')
-        : name,
+      name,
       tag: el.tagName.toLowerCase(),
-      href: el.href || undefined,
+      href: safeHref,
       placeholder: el.getAttribute('placeholder') || undefined,
       value,
       bbox: { x: Math.round(rect.x), y: Math.round(rect.y), w: Math.round(rect.width), h: Math.round(rect.height) }
@@ -130,15 +137,16 @@ export function actionScript(
     const args = ${payload};
     const find = () => {
       if (args.ref) {
-        try {
-          const el = document.querySelector('[data-browgent-ref="' + CSS.escape(String(args.ref)) + '"]');
-          if (el) return el;
-        } catch (_) { /* invalid ref */ }
+        const el = document.querySelector('[data-browgent-ref="' + CSS.escape(String(args.ref)) + '"]');
+        if (!el) return { staleRef: true, el: null };
+        return { staleRef: false, el };
       }
       if (args.selector) {
-        try { return document.querySelector(String(args.selector)); } catch (_) { return null; }
+        let el = null;
+        try { el = document.querySelector(String(args.selector)); } catch (_) { el = null; }
+        return { staleRef: false, el };
       }
-      return null;
+      return { staleRef: false, el: null };
     };
 
     const kind = ${JSON.stringify(kind)};
@@ -165,19 +173,25 @@ export function actionScript(
     if (kind === 'scroll') {
       const amount = Number(args.amount || 500);
       const dir = String(args.direction || 'down');
-      const el = find() || window;
+      const found = find();
+      if (found.staleRef) return JSON.stringify({ ok: false, error: 'ref not found / stale' });
+      const el = found.el || window;
       const dx = dir === 'left' ? -amount : dir === 'right' ? amount : 0;
-      const dy = dir === 'up' ? -amount : dir === 'down' ? amount : amount;
+      const dy = dir === 'up' ? -amount : dir === 'down' ? amount : 0;
       if (el === window) window.scrollBy({ left: dx, top: dy, behavior: 'instant' });
       else el.scrollBy({ left: dx, top: dy, behavior: 'instant' });
       return JSON.stringify({ ok: true });
     }
 
     if (kind === 'wait_for') {
-      return JSON.stringify({ ok: !!find() });
+      const found = find();
+      if (found.staleRef) return JSON.stringify({ ok: false, error: 'ref not found / stale' });
+      return JSON.stringify({ ok: !!found.el });
     }
 
-    const el = find();
+    const found = find();
+    if (found.staleRef) return JSON.stringify({ ok: false, error: 'ref not found / stale' });
+    const el = found.el;
     if (!el) return JSON.stringify({ ok: false, error: 'Element not found' });
 
     el.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
@@ -246,18 +260,20 @@ export function actionScript(
 
 export const EXTRACT_TEXT_SCRIPT = (maxChars: number): string => `
 (() => {
+  const max = Math.max(1, Math.min(50000, Math.floor(Number(${maxChars}) || 0) || 2500));
   const title = document.title || '';
-  const text = (document.body && document.body.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, ${maxChars});
+  const text = (document.body && document.body.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, max);
   return JSON.stringify({ title, url: location.href, text });
 })()
 `
 
 export const EXTRACT_LINKS_SCRIPT = (limit: number): string => `
 (() => {
+  const max = Math.max(1, Math.min(500, Math.floor(Number(${limit}) || 0) || 40));
   const links = Array.from(document.querySelectorAll('a[href]'))
-    .slice(0, ${limit})
+    .slice(0, max)
     .map(a => ({ text: (a.innerText || '').trim().slice(0, 100), href: a.href }))
-    .filter(l => l.href && !l.href.startsWith('javascript:'));
+    .filter(l => l.href && !l.href.toLowerCase().startsWith('javascript:'));
   return JSON.stringify({ url: location.href, links });
 })()
 `

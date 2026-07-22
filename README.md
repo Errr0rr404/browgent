@@ -1,6 +1,6 @@
 # Browgent
 
-**Local-first browser for AI agents** — humans and agents share the same Chromium tabs.
+**Local-first browser for AI agents** — humans and agents share the same Chromium tabs. **Version 0.2.0.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-teal.svg)](./LICENSE)
 [![Release](https://img.shields.io/github/v/release/Errr0rr404/browgent?include_prereleases&label=release)](https://github.com/Errr0rr404/browgent/releases/latest)
@@ -80,12 +80,13 @@ Optional: copy `.env.example` → `.env` and set `XAI_API_KEY` for [Grok](https:
 | **CDP** (in-app optional) | Real `Input` events via DevTools protocol |
 | **CDP endpoint** | Playwright / external tools: `connectOverCDP` |
 
-CDP listens on `http://127.0.0.1:9222` by default (localhost only).
+CDP is off for normal `npm run dev`; enable it explicitly with `BROWGENT_CDP_PORT=9222` (or `BROWGENT_CDP=1`/`on`). A custom positive port is also supported. `BROWGENT_CDP=0`/`off`/`false` or port `0` always disables it. `BROWGENT_AGENT_ONLY` and `BROWGENT_HEADLESS` imply CDP unless explicitly disabled. CDP is localhost-only, but any local process can control or read the session; never expose it publicly.
 
 ```bash
-npm run dev                 # normal UI + CDP on :9222 (localhost)
-npm run dev:agent           # compact automation shell
-npm run dev:headless        # hidden window + agent-only + CDP
+npm run dev                                      # normal UI; CDP off
+BROWGENT_CDP_PORT=9222 npm run dev              # normal UI + localhost CDP
+npm run dev:agent                                # compact automation shell + CDP
+npm run dev:headless                             # hidden window + agent-only + CDP
 npm i -D playwright && npm run playwright:example
 ```
 

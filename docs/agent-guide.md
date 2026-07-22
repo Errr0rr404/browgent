@@ -35,7 +35,7 @@ Defined in `src/shared/tools.ts`, executed in `src/main/agent/executor.ts`:
 | `scroll` / `wait` | Viewport timing |
 | `observe` | Interactive elements + text preview |
 | `extract_text` / `extract_links` | Page content |
-| `screenshot` | Viewport size metadata only (not stored in trajectory) |
+| `screenshot` | Viewport screenshot — returns size metadata only in the trajectory (image bytes are not stored) |
 | `get_url` / `list_tabs` / `new_tab` / `close_tab` / `switch_tab` | Tab control |
 | `ask_human` | Pause for credentials / CAPTCHA / choice |
 | `think` / `done` | Reasoning + completion |
@@ -89,7 +89,7 @@ Configurable in the **Policy** tab (and via IPC):
 
 ## Trajectory
 
-Every tool step is logged. **Export** downloads JSON (`exportedAt`, `mode`, `provider`, `model`, `policy`, `steps`, `messages`). Useful for debugging and later skill replay. Password field values are masked in observe snapshots.
+Every tool step is logged. **Export** downloads JSON (`exportedAt`, `mode`, `provider`, `model`, `policy`, `steps`, `messages`). Useful for debugging and later skill replay. Password field values are masked in observe snapshots, prompts sent to remote LLMs are redacted, and exported trajectories scrub credentials and sensitive URLs — but you should still avoid sending secrets unnecessarily and review what you export.
 
 ## Voice
 
@@ -97,4 +97,8 @@ Mic uses Chromium **Web Speech API** (system STT on many macOS setups). Guest pa
 
 ## MCP
 
-`getMcpStatus` returns the **tool catalog** (same names as the desktop agent). There is **no** live STDIO MCP server yet — that is on the roadmap. External automation today uses **Playwright over CDP** ([playwright.md](./playwright.md)).
+`getMcpStatus` returns the **tool catalog stub** (same names as the desktop agent) with a note that the live STDIO MCP server is on the roadmap. External automation today uses **Playwright over CDP** ([playwright.md](./playwright.md)).
+
+## Navigation policy
+
+The agent and app only navigate `http://`, `https://`, or `about:blank`. `file:`, `data:`, and `javascript:` URLs are rejected by the navigation gate and `new_tab` flow.

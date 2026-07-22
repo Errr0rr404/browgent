@@ -28,7 +28,7 @@ export default function App(): React.JSX.Element {
   const toggleFavorite = useBookmarks((s) => s.toggleFavorite)
   const isFavorite = useBookmarks((s) => s.isFavorite)
 
-  useChromeMetrics(contentRef, agentOpen, `${sidebarOpen}:${agentOpen}`)
+  useChromeMetrics(contentRef, `${sidebarOpen}:${agentOpen}`)
 
   useEffect(() => {
     if (!window.browgent) return

@@ -78,12 +78,40 @@ export const WATCH_TOOLS = new Set([
 
 /** Schemes the agent may open via navigate / new_tab (blocks file:/data: exfil). */
 export function isAgentNavigableUrl(url: string): boolean {
+  if (url === 'about:blank') return true
   try {
     const u = new URL(url)
-    return u.protocol === 'http:' || u.protocol === 'https:' || u.protocol === 'about:'
+    if (u.protocol === 'http:' || u.protocol === 'https:') return true
+    if (u.protocol === 'about:' && u.pathname === 'blank') return true
+    return false
   } catch {
     return false
   }
+}
+
+/** Central gate for any code path that opens a top-level navigation.
+ *  http / https / exact about:blank only; everything else (file:, data:, javascript:, …) is rejected. */
+export function isHttpOrHttpsOrAboutBlank(url: string): boolean {
+  if (typeof url !== 'string') return false
+  const trimmed = url.trim()
+  if (!trimmed) return false
+  if (trimmed === 'about:blank') return true
+  try {
+    const u = new URL(trimmed)
+    return u.protocol === 'http:' || u.protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
+/** Detect explicit forbidden schemes so we can reject (and never search-for) the raw input.
+ *  `about:blank` is the only `about:` value allowed. */
+export function looksLikeForbiddenScheme(input: string): boolean {
+  if (typeof input !== 'string') return false
+  const s = input.trim().toLowerCase()
+  if (!s) return false
+  if (s === 'about:blank') return false
+  return /^(?:file|data|javascript|vbscript|jar|chrome|devtools|view-source|blob|ftp|ws|wss|about):/i.test(s)
 }
 
 export function hostFromUrl(url: string): string | null {

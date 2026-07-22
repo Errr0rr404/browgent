@@ -27,7 +27,7 @@ Research synthesized from Browserbase/Stagehand, browser-use, Skyvern, MultiOn, 
 | Live narration of steps | ChatGPT agent UX | ✅ Action chips + activity feed |
 | Research vs act modes | Comet vs Operator | ✅ research / act / watch |
 | Domain policy / safety | Claude allowlists | ✅ Policy engine (differentiator) |
-| MCP server same session | Browserbase MCP (cloud) | ⚠️ Tool catalog ready; STDIO MCP roadmap |
+| MCP server same session | Browserbase MCP (cloud) | ⚠️ Tool catalog status stub; live STDIO MCP roadmap |
 | Playwright connectOverCDP | Browserbase / raw Chromium | ✅ Dual mode (CDP endpoint + DOM driver) |
 | Shared tool/type surface | All infra | ✅ `src/shared` tools + policies + driver types |
 | CAPTCHA solve / residential proxy | Cloud BaaS | ⏳ Optional later (cloud runner) |
@@ -40,7 +40,7 @@ Research synthesized from Browserbase/Stagehand, browser-use, Skyvern, MultiOn, 
 2. **Local-first identity** — real cookies/SSO without shipping session to multi-tenant cloud
 3. **Shared tool surface** (`src/shared`) — STDIO MCP + published SDK planned
 4. **Browser-native policy engine** (allowlist, max steps, confirm submits/payments)
-5. **Dual observation timeline** (compact refs + optional screenshots) in one UI
+5. **Dual observation timeline** (compact refs; screenshot bytes are not persisted) in one UI
 6. **Tab locks / ownership** primitives for multi-agent (foundation)
 7. **Handoff**: agent stuck → human acts → agent resumes same tab
 8. **Dual driver** — DOM inject (fast in-app) + CDP endpoint (Playwright/Stagehand attach) without shipping Playwright inside the app
