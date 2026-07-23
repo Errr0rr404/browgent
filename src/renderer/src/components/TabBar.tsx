@@ -1,8 +1,13 @@
 import { useMemo, useRef } from 'react'
 import { Plus, X } from 'lucide-react'
 import type { TabState } from '@shared/types'
+import { isBlankUrl, tabDisplayTitle } from '../lib/urls'
 import { useRovingTablist } from '../hooks/useRovingTablist'
 import { Favicon } from './Favicon'
+
+function tabLabel(tab: TabState): string {
+  return tabDisplayTitle(tab.title, tab.url)
+}
 
 interface Props {
   tabs: TabState[]
@@ -49,15 +54,20 @@ export function TabBar({ tabs, onActivate, onClose, onNew }: Props): React.JSX.E
                   onClose(tab.id)
                 }
               }}
-              title={tab.url}
+              title={isBlankUrl(tab.url) ? 'New Tab' : tab.url}
             >
-              <Favicon src={tab.favicon} title={tab.title} size={11} className="tab-favicon" />
-              <span className="tab-title">{tab.title || 'New Tab'}</span>
+              <Favicon
+                src={isBlankUrl(tab.url) ? undefined : tab.favicon}
+                title={tabLabel(tab)}
+                size={11}
+                className="tab-favicon"
+              />
+              <span className="tab-title">{tabLabel(tab)}</span>
               {tab.owner === 'agent' && <span className="tab-owner">agent</span>}
               <button
                 type="button"
                 className="tab-close"
-                aria-label={`Close ${tab.title || 'tab'}`}
+                aria-label={`Close ${tabLabel(tab)}`}
                 onClick={(e) => {
                   e.stopPropagation()
                   onClose(tab.id)

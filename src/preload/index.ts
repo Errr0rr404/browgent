@@ -29,6 +29,8 @@ const api = {
 
   setChromeMetrics: (metrics: BrowserChromeMetrics): Promise<void> =>
     ipcRenderer.invoke(IPC.CHROME_METRICS, metrics),
+  setGuestVisible: (visible: boolean): Promise<void> =>
+    ipcRenderer.invoke(IPC.GUEST_VISIBLE, visible),
   appVersion: (): Promise<string> => ipcRenderer.invoke(IPC.APP_VERSION),
   minimize: (): Promise<void> => ipcRenderer.invoke(IPC.WINDOW_MINIMIZE),
   maximize: (): Promise<void> => ipcRenderer.invoke(IPC.WINDOW_MAXIMIZE),

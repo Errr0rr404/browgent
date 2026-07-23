@@ -178,9 +178,10 @@ function createWindow(): void {
     minHeight: compact ? 560 : 680,
     show: false,
     title: 'Browgent',
-    backgroundColor: '#090a0d',
+    backgroundColor: '#f4f3ee',
     titleBarStyle: 'hiddenInset',
-    trafficLightPosition: { x: 18, y: 18 },
+    // First chrome row is tabbar (~38px) or toolbar when sidebar is open (~50px)
+    trafficLightPosition: { x: 16, y: 14 },
     roundedCorners: true,
     ...(process.platform === 'darwin' ? {} : { frame: false }),
     webPreferences: {
@@ -339,6 +340,12 @@ function registerIpcOnce(): void {
   ipcMain.handle(IPC.CHROME_METRICS, (e, metrics: unknown) => {
     assertChromeSender(e)
     return tabs?.setChromeMetrics(ensureChromeMetrics(metrics))
+  })
+
+  ipcMain.handle(IPC.GUEST_VISIBLE, (e, visible: unknown) => {
+    assertChromeSender(e)
+    if (typeof visible !== 'boolean') throw new Error('guestVisible must be boolean')
+    tabs?.setGuestVisible(visible)
   })
 
   ipcMain.handle(IPC.APP_VERSION, (e) => {

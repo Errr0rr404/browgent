@@ -1,19 +1,29 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { AgentSessionState, TabState } from '@shared/types'
 import type { CdpEndpointStatus, DriverMode } from '@shared/driver'
+import { providerLabel } from '../lib/providers'
 
 interface Props {
   activeTab: TabState | undefined
   agent: AgentSessionState | null
   tabCount: number
+  /** Override status host label (e.g. browgent://settings) */
+  statusLabel?: string
 }
 
 const APP_VERSION_FALLBACK = 'dev'
 const APP_VERSION_LOADING = '…'
 
-export function StatusBar({ activeTab, agent, tabCount }: Props): React.JSX.Element {
-  const host = safeHost(activeTab?.url)
-  const live = agent?.status && agent.status !== 'idle'
+export function StatusBar({
+  activeTab,
+  agent,
+  tabCount,
+  statusLabel
+}: Props): React.JSX.Element {
+  const host = statusLabel ?? safeHost(activeTab?.url)
+  const status = agent?.status ?? 'idle'
+  const live = status !== 'idle'
+  const mode = agent?.mode ?? 'act'
   const [driver, setDriver] = useState<CdpEndpointStatus | null>(null)
   const [appVersion, setAppVersion] = useState<string>(APP_VERSION_LOADING)
 
@@ -57,34 +67,36 @@ export function StatusBar({ activeTab, agent, tabCount }: Props): React.JSX.Elem
       })
   }, [driver?.driverMode, refreshDriver])
 
+  const brain =
+    agent?.provider && agent.provider !== 'heuristic'
+      ? agent.model || providerLabel(agent.provider)
+      : 'heuristic'
+
   return (
     <footer className="statusbar" aria-label="Browser status">
       <span aria-label={`${tabCount} open tabs`}>
-        tabs <strong>{tabCount}</strong>
+        {tabCount} tab{tabCount === 1 ? '' : 's'}
       </span>
       <span className="statusbar-sep" />
       <span
         className={live ? 'live' : undefined}
         aria-live="polite"
-        aria-label={`Agent status: ${agent?.status ?? 'idle'}`}
+        aria-label={`Agent ${status}, mode ${mode}`}
       >
-        agent <strong>{agent?.status ?? 'idle'}</strong>
+        agent <strong>{status}</strong>
+        <span className="statusbar-muted"> · {mode}</span>
       </span>
       <span className="statusbar-sep" />
       <span
         className={agent?.provider && agent.provider !== 'heuristic' ? 'live' : undefined}
-        aria-label={`Brain provider: ${agent?.provider ?? 'heuristic'}`}
+        aria-label={`Brain: ${brain}`}
+        title={
+          agent?.provider && agent.provider !== 'heuristic'
+            ? `${providerLabel(agent.provider)}${agent.model ? ` · ${agent.model}` : ''}`
+            : 'Heuristic planner (no API key)'
+        }
       >
-        brain{' '}
-        <strong>
-          {agent?.provider && agent.provider !== 'heuristic'
-            ? agent.model || agent.provider
-            : 'heuristic'}
-        </strong>
-      </span>
-      <span className="statusbar-sep" />
-      <span aria-label={`Agent mode: ${agent?.mode ?? 'act'}`}>
-        mode <strong>{agent?.mode ?? 'act'}</strong>
+        {brain}
       </span>
       {driver && (
         <>
@@ -100,11 +112,11 @@ export function StatusBar({ activeTab, agent, tabCount }: Props): React.JSX.Elem
             aria-label={`Driver ${driver.driverMode}, ${driver.enabled ? `CDP on port ${driver.port}` : 'CDP off'}. Click to toggle.`}
             onClick={cycleDriver}
           >
-            drive <strong>{driver.driverMode}</strong>
+            {driver.driverMode}
             {driver.enabled ? (
-              <span className="live"> · cdp:{driver.port}</span>
+              <span className="live"> · :{driver.port}</span>
             ) : (
-              <span> · cdp:off</span>
+              <span className="statusbar-muted"> · cdp off</span>
             )}
           </button>
         </>
@@ -114,27 +126,28 @@ export function StatusBar({ activeTab, agent, tabCount }: Props): React.JSX.Elem
           <span className="statusbar-sep" />
           <span
             className={activeTab.owner === 'agent' ? 'live' : undefined}
-            aria-label={`Active tab owner: ${activeTab.owner}`}
+            aria-label={`Tab owner: ${activeTab.owner}`}
           >
-            owner <strong>{activeTab.owner}</strong>
+            {activeTab.owner}
           </span>
         </>
       )}
-      {host && (
+      {host ? (
         <>
           <span className="statusbar-sep" />
           <span
-            style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}
-            title={activeTab?.url}
+            className="statusbar-host"
+            title={statusLabel ?? activeTab?.url}
             aria-label={`Active host: ${host}`}
           >
             {host}
           </span>
         </>
+      ) : (
+        <span style={{ flex: 1 }} aria-hidden />
       )}
-      {!host && <span style={{ flex: 1 }} aria-hidden />}
-      <span aria-label={`Browgent version ${appVersion}`}>
-        browgent {appVersion}
+      <span className="statusbar-version" aria-label={`Browgent version ${appVersion}`}>
+        v{appVersion}
       </span>
     </footer>
   )

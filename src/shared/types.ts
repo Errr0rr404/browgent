@@ -139,6 +139,8 @@ export const IPC = {
   TABS_GET: 'tabs:get',
 
   CHROME_METRICS: 'chrome:metrics',
+  /** Hide guest WebContentsView so chrome can paint New Tab / Settings in the content hole */
+  GUEST_VISIBLE: 'chrome:guestVisible',
   APP_VERSION: 'app:version',
   WINDOW_MINIMIZE: 'window:minimize',
   WINDOW_MAXIMIZE: 'window:maximize',

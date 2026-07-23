@@ -7,12 +7,16 @@ import {
   PanelLeft,
   RefreshCw,
   Search,
+  Settings2,
   ShieldAlert,
   Star,
   X
 } from 'lucide-react'
 import type { TabState } from '@shared/types'
 import type { ThemeId } from '../themes/themes'
+import { isBlankUrl, omniboxDisplayUrl } from '../lib/urls'
+import { resolveOmniboxInput, useChromePrefs } from '../stores/chromePrefs'
+import { BrandMark } from './BrandMark'
 import { ThemePicker } from './ThemePicker'
 
 interface Props {
@@ -20,6 +24,9 @@ interface Props {
   agentOpen: boolean
   agentBusy: boolean
   sidebarOpen: boolean
+  settingsOpen: boolean
+  /** Guest WebContentsView is not covering the content hole (settings / new tab). */
+  themeOverlaySafe?: boolean
   isBookmarked: boolean
   isFavorited: boolean
   theme: ThemeId
@@ -27,6 +34,7 @@ interface Props {
   onToggleAgent: () => void
   onToggleSidebar: () => void
   onToggleBookmark: () => void
+  onOpenSettings: () => void
 }
 
 export function Toolbar({
@@ -34,44 +42,64 @@ export function Toolbar({
   agentOpen,
   agentBusy,
   sidebarOpen,
+  settingsOpen,
+  themeOverlaySafe = true,
   isBookmarked,
   isFavorited,
   theme,
   onThemeChange,
   onToggleAgent,
   onToggleSidebar,
-  onToggleBookmark
+  onToggleBookmark,
+  onOpenSettings
 }: Props): React.JSX.Element {
-  const [value, setValue] = useState(activeTab?.url ?? '')
+  const searchEngine = useChromePrefs((s) => s.searchEngine)
+  const display = omniboxDisplayUrl(activeTab?.url, { settingsOpen })
+  const [value, setValue] = useState(display)
   const [focused, setFocused] = useState(false)
 
   useEffect(() => {
     if (!focused) {
-      setValue(activeTab?.url ?? '')
+      setValue(omniboxDisplayUrl(activeTab?.url, { settingsOpen }))
     }
-  }, [activeTab?.id, activeTab?.url, focused])
+  }, [activeTab?.id, activeTab?.url, focused, settingsOpen])
 
   const submit = (): void => {
     const input = value.trim()
     if (!input) return
-    // If no active tab yet, create one with this URL
+    if (
+      input === 'browgent://settings' ||
+      input === 'settings' ||
+      input === 'about:settings'
+    ) {
+      onOpenSettings()
+      ;(document.activeElement as HTMLElement | null)?.blur?.()
+      return
+    }
+    // Match New Tab: multi-word / no-dot → preferred search engine
+    const target = resolveOmniboxInput(input, searchEngine)
     if (!activeTab?.id) {
-      void window.browgent.createTab(input)
+      void window.browgent.createTab(target)
     } else {
-      void window.browgent.navigate({ tabId: activeTab.id, input })
+      void window.browgent.navigate({ tabId: activeTab.id, input: target })
     }
     ;(document.activeElement as HTMLElement | null)?.blur?.()
   }
 
-  const isSecure = (activeTab?.url ?? '').startsWith('https://')
-  const isLoading = activeTab?.isLoading ?? false
+  const isSecure = display.startsWith('https://')
+  const isLoading = !settingsOpen && (activeTab?.isLoading ?? false)
   const canBookmark =
+    !settingsOpen &&
     Boolean(activeTab?.url) &&
-    activeTab!.url !== 'about:blank' &&
+    !isBlankUrl(activeTab?.url) &&
     !activeTab!.url.startsWith('data:')
 
   return (
     <div className="toolbar">
+      <div className="toolbar-brand" aria-label="browgent">
+        <BrandMark size={16} className="brand-mark-svg" strokeWidth={2} />
+        <span className="brand-name">browgent</span>
+      </div>
       <div className="nav-group">
         {!sidebarOpen && (
           <button
@@ -88,7 +116,7 @@ export function Toolbar({
           type="button"
           className="icon-btn"
           aria-label="Back"
-          disabled={!activeTab?.canGoBack}
+          disabled={settingsOpen || !activeTab?.canGoBack}
           onClick={() => void window.browgent.goBack(activeTab?.id)}
         >
           <ArrowLeft size={16} strokeWidth={1.75} />
@@ -97,7 +125,7 @@ export function Toolbar({
           type="button"
           className="icon-btn"
           aria-label="Forward"
-          disabled={!activeTab?.canGoForward}
+          disabled={settingsOpen || !activeTab?.canGoForward}
           onClick={() => void window.browgent.goForward(activeTab?.id)}
         >
           <ArrowRight size={16} strokeWidth={1.75} />
@@ -106,6 +134,7 @@ export function Toolbar({
           type="button"
           className="icon-btn"
           aria-label={isLoading ? 'Stop' : 'Reload'}
+          disabled={settingsOpen || isBlankUrl(activeTab?.url)}
           onClick={() =>
             isLoading
               ? void window.browgent.stop(activeTab?.id)
@@ -130,7 +159,7 @@ export function Toolbar({
         <span className="omnibox-icon" aria-hidden>
           {isSecure ? (
             <Lock size={13} strokeWidth={1.75} />
-          ) : activeTab?.url.startsWith('http://') ? (
+          ) : display.startsWith('http://') ? (
             <ShieldAlert size={13} strokeWidth={1.75} />
           ) : (
             <Search size={13} strokeWidth={1.75} />
@@ -174,13 +203,29 @@ export function Toolbar({
       </form>
 
       <div className="toolbar-actions">
-        <ThemePicker theme={theme} onChange={onThemeChange} />
+        <ThemePicker
+          theme={theme}
+          onChange={onThemeChange}
+          onOpenGallery={onOpenSettings}
+          overlaySafe={themeOverlaySafe}
+        />
+        <button
+          type="button"
+          className={`icon-btn${settingsOpen ? ' active' : ''}`}
+          aria-label="Settings"
+          title="Settings (⌘,)"
+          aria-pressed={settingsOpen}
+          onClick={onOpenSettings}
+        >
+          <Settings2 size={16} strokeWidth={1.75} />
+        </button>
         <button
           type="button"
           className={`agent-toggle${agentOpen ? ' open' : ''}${agentBusy ? ' busy' : ''}`}
           onClick={onToggleAgent}
           aria-pressed={agentOpen}
           aria-label="Toggle agent panel"
+          title="Toggle agent panel (⌘J)"
         >
           <span className="agent-dot" aria-hidden />
           <Bot size={14} strokeWidth={1.75} />

@@ -41,7 +41,8 @@ interface ManagedTab {
   navFailedReason: string | null
 }
 
-const HOME_URL = 'https://www.google.com'
+/** Default new-tab target — chrome renders the New Tab page over about:blank */
+const HOME_URL = 'about:blank'
 const MAX_TABS = 24
 export const PAGE_PARTITION = 'persist:browgent-pages'
 const ATTEMPT_MAX_AGE_MS = 5000
@@ -80,6 +81,11 @@ export class TabManager {
   /** In-app agent actuation path (dom | cdp). External Playwright always uses CDP endpoint. */
   private driverMode: DriverMode = getRuntimeFlags().driverMode
   private attemptCounter = 0
+  /**
+   * Chrome-overlay override (Settings). New Tab (`about:blank`) is always hidden
+   * via URL check — only Settings needs an explicit hide while a real page sits under it.
+   */
+  private guestForcedHidden = false
 
   constructor(
     private window: BrowserWindow,
@@ -428,6 +434,8 @@ export class TabManager {
       tab.activeAttempt = null
       this.emitState()
     })
+    // Leaving about:blank → show guest immediately (don't wait for renderer effect)
+    this.layoutActiveView()
     this.emitState()
     return true
   }
@@ -482,10 +490,37 @@ export class TabManager {
     this.layoutActiveView()
   }
 
+  /**
+   * Force-hide the guest view for chrome overlays (Settings).
+   * Pass true to hide; false restores normal blank-URL / metrics layout.
+   */
+  setGuestVisible(visible: boolean): void {
+    this.guestForcedHidden = !visible
+    this.layoutActiveView()
+  }
+
+  private isBlankTabUrl(url: string): boolean {
+    const u = (url || '').trim().toLowerCase()
+    return !u || u === 'about:blank' || u === 'about:blank/' || u === 'about:newtab'
+  }
+
   layoutActiveView(): void {
     if (this.destroyed || !this.activeTabId) return
     const tab = this.tabs.get(this.activeTabId)
     if (!tab || this.window.isDestroyed()) return
+
+    const isBlank = this.isBlankTabUrl(tab.url)
+    const show = !this.guestForcedHidden && !isBlank
+
+    if (!show) {
+      try {
+        tab.view.setVisible(false)
+        tab.view.setBounds({ x: 0, y: 0, width: 0, height: 0 })
+      } catch {
+        // ignore
+      }
+      return
+    }
 
     const [width, height] = this.window.getContentSize()
     const { top, right, bottom, left } = this.metrics
@@ -827,7 +862,12 @@ export class TabManager {
     })
 
     webContents.on('page-title-updated', (_e, title) => {
-      tab.title = title?.trim() || 'New Tab'
+      const trimmed = title?.trim()
+      if (this.isBlankTabUrl(tab.url) || !trimmed || trimmed === 'about:blank') {
+        tab.title = 'New Tab'
+      } else {
+        tab.title = trimmed
+      }
       safeEmit()
     })
     webContents.on('page-favicon-updated', (_e, favicons) => {
@@ -852,11 +892,13 @@ export class TabManager {
     webContents.on('did-navigate', (_e, url) => {
       tab.url = url
       this.syncNavState(tab)
+      if (tab.id === this.activeTabId) this.layoutActiveView()
       safeEmit()
     })
     webContents.on('did-navigate-in-page', (_e, url) => {
       tab.url = url
       this.syncNavState(tab)
+      if (tab.id === this.activeTabId) this.layoutActiveView()
       safeEmit()
     })
     webContents.on('did-fail-load', (_e, errorCode, _d, validatedURL, isMainFrame) => {

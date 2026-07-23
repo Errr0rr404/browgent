@@ -8,6 +8,7 @@ import {
   useState
 } from 'react'
 import {
+  BookOpen,
   ChevronDown,
   ChevronRight,
   Folder,
@@ -22,18 +23,25 @@ import {
 } from 'lucide-react'
 import type { TabState } from '@shared/types'
 import type { BookmarkFolder, BookmarkId, BookmarkItem } from '@shared/bookmarks'
+import { isBlankUrl, tabDisplayTitle } from '../lib/urls'
 import { useBookmarks } from '../stores/bookmarks'
 import { useRovingTablist } from '../hooks/useRovingTablist'
 import { Favicon } from './Favicon'
 
+function tabLabel(tab: TabState): string {
+  return tabDisplayTitle(tab.title, tab.url)
+}
+
 interface Props {
   tabs: TabState[]
   open: boolean
+  libraryOpen?: boolean
   onClose: () => void
   onNewTab: () => void
   onActivateTab: (id: string) => void
   onCloseTab: (id: string) => void
   onOpenUrl: (url: string, newTab?: boolean) => void
+  onToggleLibrary?: () => void
 }
 
 type MenuKind = 'favorite' | 'item' | 'folder' | 'space'
@@ -57,11 +65,13 @@ const isMenuKeyTrigger = (e: React.KeyboardEvent): boolean =>
 export function Sidebar({
   tabs,
   open,
+  libraryOpen = false,
   onClose,
   onNewTab,
   onActivateTab,
   onCloseTab,
-  onOpenUrl
+  onOpenUrl,
+  onToggleLibrary
 }: Props): React.JSX.Element | null {
   const {
     items,
@@ -390,12 +400,24 @@ export function Sidebar({
           type="button"
           className="arc-icon-btn"
           aria-label="Hide sidebar"
-          title="Hide sidebar"
+          title="Hide sidebar (⌘⇧S)"
           onClick={onClose}
         >
           <PanelLeftClose size={16} strokeWidth={1.75} />
         </button>
         <span className="arc-sidebar-label">Library</span>
+        {onToggleLibrary && (
+          <button
+            type="button"
+            className={`arc-icon-btn${libraryOpen ? ' on' : ''}`}
+            aria-label={libraryOpen ? 'Close Library manager' : 'Open Library manager'}
+            title="Open Library manager"
+            aria-pressed={libraryOpen}
+            onClick={onToggleLibrary}
+          >
+            <BookOpen size={15} strokeWidth={1.75} />
+          </button>
+        )}
         <button
           type="button"
           id="sidebar-space-options"
@@ -575,16 +597,21 @@ export function Sidebar({
                     onCloseTab(tab.id)
                   }
                 }}
-                title={tab.url}
+                title={isBlankUrl(tab.url) ? 'New Tab' : tab.url}
               >
-                <Favicon src={tab.favicon} title={tab.title} size={14} small />
-                <span className="arc-row-title">{tab.title || 'New Tab'}</span>
+                <Favicon
+                  src={isBlankUrl(tab.url) ? undefined : tab.favicon}
+                  title={tabLabel(tab)}
+                  size={14}
+                  small
+                />
+                <span className="arc-row-title">{tabLabel(tab)}</span>
                 {tab.owner === 'agent' && <span className="tab-owner">agent</span>}
                 {tab.isLoading && <span className="arc-tab-loading" aria-hidden />}
                 <button
                   type="button"
                   className="arc-tab-close"
-                  aria-label={`Close ${tab.title || 'tab'}`}
+                  aria-label={`Close ${tabLabel(tab)}`}
                   onClick={(e) => {
                     e.stopPropagation()
                     onCloseTab(tab.id)

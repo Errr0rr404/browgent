@@ -6,23 +6,36 @@ import { THEMES, type ThemeId } from '../themes/themes'
 interface Props {
   theme: ThemeId
   onChange: (id: ThemeId) => void
+  onOpenGallery?: () => void
+  /**
+   * When true (settings / new tab), guest WebContentsView is not covering the
+   * content hole — render a normal absolute popup under the Theme button.
+   * When false, portal an in-flow flyout into `.chrome-top` so Electron cannot
+   * paint the native page over the menu.
+   */
+  overlaySafe?: boolean
 }
 
 const CATEGORY_LABEL: Record<string, string> = {
-  modern: 'Modern',
-  classic: 'Classic',
-  vintage: 'Vintage',
-  paper: 'Paper',
-  surprise: 'Surprise'
+  signature: 'Signature',
+  dev: 'Dev',
+  calm: 'Calm',
+  loud: 'Loud'
 }
 
+const CATEGORY_ORDER = ['signature', 'dev', 'calm', 'loud'] as const
+
 /**
- * Theme menu cannot use a normal absolute dropdown over the page —
- * Electron WebContentsView paints above HTML in the content hole and clips it.
- * We portal an in-flow flyout into `.chrome-top` so the page view is pushed down
- * and the full theme list is visible.
+ * Theme menu: compact popup under the trigger.
+ * On real guest pages WebContentsView paints above HTML, so we fall back to an
+ * in-flow chrome-top flyout that pushes the page bounds down.
  */
-export function ThemePicker({ theme, onChange }: Props): React.JSX.Element {
+export function ThemePicker({
+  theme,
+  onChange,
+  onOpenGallery,
+  overlaySafe = true
+}: Props): React.JSX.Element {
   const [open, setOpen] = useState(false)
   const [chromeHost, setChromeHost] = useState<HTMLElement | null>(null)
   const rootRef = useRef<HTMLDivElement>(null)
@@ -32,9 +45,11 @@ export function ThemePicker({ theme, onChange }: Props): React.JSX.Element {
   const listId = useId()
   const labelId = useId()
 
+  const useChromeFlyout = open && !overlaySafe
+
   const groups = useMemo(
     () =>
-      (['modern', 'classic', 'vintage', 'paper', 'surprise'] as const).map((cat) => ({
+      CATEGORY_ORDER.map((cat) => ({
         cat,
         items: THEMES.filter((t) => t.category === cat)
       })),
@@ -83,16 +98,15 @@ export function ThemePicker({ theme, onChange }: Props): React.JSX.Element {
     const listbox = listboxRef.current
     if (!listbox) return
     listbox.focus()
+    // Chrome metrics need a layout pass when the flyout expands top chrome
     window.dispatchEvent(new Event('resize'))
-  }, [open])
+  }, [open, useChromeFlyout])
 
   useEffect(() => {
     if (!open) return
     const root = menuRef.current
     if (!root) return
-    const opt = root.querySelector<HTMLElement>(
-      `[role="option"][aria-selected="true"]`
-    )
+    const opt = root.querySelector<HTMLElement>(`[role="option"][aria-selected="true"]`)
     opt?.scrollIntoView({ block: 'nearest' })
   }, [open, theme])
 
@@ -135,76 +149,90 @@ export function ThemePicker({ theme, onChange }: Props): React.JSX.Element {
   const current = THEMES.find((t) => t.id === theme)
   const activeId = `${listId}-opt-${theme}`
 
-  const flyout =
-    open ? (
-      <div className="theme-menu-flyout" ref={menuRef}>
-        <div className="theme-menu" role="dialog" aria-labelledby={labelId}>
-          <div className="theme-menu-head">
-            <div className="theme-menu-head-row">
-              <div>
-                <strong id={labelId}>Chrome themes</strong>
-                <span>Pick a vibe for the browser UI</span>
-              </div>
-              <button
-                type="button"
-                className="theme-menu-close"
-                aria-label="Close themes"
-                onClick={closeAndRestore}
-              >
-                <X size={14} strokeWidth={2} />
-              </button>
+  const menu = open ? (
+    <div
+      className={`theme-menu-flyout${useChromeFlyout ? ' theme-menu-flyout--chrome' : ' theme-menu-flyout--popup'}`}
+      ref={menuRef}
+    >
+      <div className="theme-menu" role="dialog" aria-labelledby={labelId}>
+        <div className="theme-menu-head">
+          <div className="theme-menu-head-row">
+            <div>
+              <strong id={labelId}>Chrome themes</strong>
+              <span>Pick a vibe for the browser UI</span>
             </div>
-          </div>
-          <div
-            ref={listboxRef}
-            className="theme-menu-scroll"
-            role="listbox"
-            id={listId}
-            aria-labelledby={labelId}
-            aria-activedescendant={activeId}
-            tabIndex={0}
-            onKeyDown={onListKeyDown}
-          >
-            {groups.map(
-              (g) =>
-                g.items.length > 0 && (
-                  <div key={g.cat} className="theme-group">
-                    <div className="theme-group-label">{CATEGORY_LABEL[g.cat]}</div>
-                    {g.items.map((t) => {
-                      const active = t.id === theme
-                      return (
-                        <div
-                          key={t.id}
-                          id={`${listId}-opt-${t.id}`}
-                          role="option"
-                          aria-selected={active}
-                          className={`theme-option${active ? ' on' : ''}`}
-                          onMouseDown={(e) => {
-                            e.preventDefault()
-                            onChange(t.id)
-                            closeAndRestore()
-                          }}
-                        >
-                          <span className="theme-option-swatches" aria-hidden>
-                            {t.swatches.map((c) => (
-                              <span key={c} style={{ background: c }} />
-                            ))}
-                          </span>
-                          <span className="theme-option-text">
-                            <span className="theme-option-name">{t.name}</span>
-                            <span className="theme-option-tag">{t.tagline}</span>
-                          </span>
-                          {active && <Check size={14} className="theme-option-check" />}
-                        </div>
-                      )
-                    })}
-                  </div>
-                )
-            )}
+            <button
+              type="button"
+              className="theme-menu-close"
+              aria-label="Close themes"
+              onClick={closeAndRestore}
+            >
+              <X size={14} strokeWidth={2} />
+            </button>
           </div>
         </div>
+        <div
+          ref={listboxRef}
+          className="theme-menu-scroll"
+          role="listbox"
+          id={listId}
+          aria-labelledby={labelId}
+          aria-activedescendant={activeId}
+          tabIndex={0}
+          onKeyDown={onListKeyDown}
+        >
+          {groups.map(
+            (g) =>
+              g.items.length > 0 && (
+                <div key={g.cat} className="theme-group">
+                  <div className="theme-group-label">{CATEGORY_LABEL[g.cat]}</div>
+                  {g.items.map((t) => {
+                    const active = t.id === theme
+                    return (
+                      <div
+                        key={t.id}
+                        id={`${listId}-opt-${t.id}`}
+                        role="option"
+                        aria-selected={active}
+                        className={`theme-option${active ? ' on' : ''}`}
+                        onMouseDown={(e) => {
+                          e.preventDefault()
+                          onChange(t.id)
+                          closeAndRestore()
+                        }}
+                      >
+                        <span className="theme-option-swatches" aria-hidden>
+                          {t.swatches.map((c) => (
+                            <span key={c} style={{ background: c }} />
+                          ))}
+                        </span>
+                        <span className="theme-option-text">
+                          <span className="theme-option-name">{t.name}</span>
+                          <span className="theme-option-tag">{t.tagline}</span>
+                        </span>
+                        {active && <Check size={14} className="theme-option-check" />}
+                      </div>
+                    )
+                  })}
+                </div>
+              )
+          )}
+        </div>
+        {onOpenGallery && (
+          <button
+            type="button"
+            className="theme-gallery-link"
+            onClick={() => {
+              closeAndRestore()
+              onOpenGallery()
+            }}
+          >
+            Open theme gallery →
+          </button>
+        )}
       </div>
-    ) : null
+    </div>
+  ) : null
 
   return (
     <div className="theme-picker" ref={rootRef}>
@@ -227,7 +255,10 @@ export function ThemePicker({ theme, onChange }: Props): React.JSX.Element {
         </span>
       </button>
 
-      {flyout && chromeHost ? createPortal(flyout, chromeHost) : flyout}
+      {menu &&
+        (useChromeFlyout && chromeHost
+          ? createPortal(menu, chromeHost)
+          : menu)}
     </div>
   )
 }

@@ -593,11 +593,21 @@ export function formatObservationForUser(data: unknown): string {
     compact?: string
     textPreview?: string
     text?: string
+    elements?: unknown[]
   }
   const lines: string[] = []
   if (d.title || d.url) lines.push(`**${d.title || 'Page'}**\n${d.url || ''}`)
-  if (d.compact) lines.push(`Interactive elements:\n${d.compact.slice(0, 1500)}`)
-  if (d.textPreview) lines.push(`Preview:\n${d.textPreview.slice(0, 600)}`)
-  if (d.text) lines.push(`Text:\n${d.text.slice(0, 1200)}`)
-  return lines.join('\n\n')
+  const elCount = Array.isArray(d.elements) ? d.elements.length : 0
+  if (elCount > 0) {
+    lines.push(`Observed ${elCount} interactive element${elCount === 1 ? '' : 's'}.`)
+  }
+  // Keep chat short — full dumps live on the Trajectory tab
+  if (d.textPreview) {
+    const preview = d.textPreview.replace(/\s+/g, ' ').trim().slice(0, 180)
+    if (preview) lines.push(`Preview: ${preview}${d.textPreview.length > 180 ? '…' : ''}`)
+  } else if (d.text) {
+    const preview = d.text.replace(/\s+/g, ' ').trim().slice(0, 180)
+    if (preview) lines.push(preview + (d.text.length > 180 ? '…' : ''))
+  }
+  return lines.join('\n')
 }

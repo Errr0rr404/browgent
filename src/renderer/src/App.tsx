@@ -6,29 +6,40 @@ import { Toolbar } from './components/Toolbar'
 import { AgentPanel } from './components/AgentPanel'
 import { StatusBar } from './components/StatusBar'
 import { Sidebar } from './components/Sidebar'
+import { NewTabPage } from './components/NewTabPage'
+import { SettingsPage } from './components/SettingsPage'
+import type { SettingsSection } from './lib/settings'
+import { LibraryManager } from './components/LibraryManager'
 import { useChromeMetrics } from './hooks/useChromeMetrics'
+import { useAppShortcuts } from './hooks/useAppShortcuts'
 import { useTheme } from './hooks/useTheme'
 import { useBookmarks } from './stores/bookmarks'
+import { exportTrajectoryFile } from './lib/download'
+import { platformCssToken } from './lib/platform'
+import { isBlankUrl } from './lib/urls'
 import './styles/app.css'
 
 export default function App(): React.JSX.Element {
   const [tabs, setTabs] = useState<TabState[]>([])
   const [agentOpen, setAgentOpen] = useState(true)
   const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [libraryOpen, setLibraryOpen] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [settingsSection, setSettingsSection] = useState<SettingsSection>('appearance')
   const [agent, setAgent] = useState<AgentSessionState | null>(null)
   const { theme, setTheme } = useTheme()
-  const platformRaw = window.browgent?.platform ?? 'darwin'
-  /** CSS class token: win32 → win (matches app.css .platform-win) */
-  const platform =
-    platformRaw === 'win32' ? 'win' : platformRaw === 'darwin' ? 'darwin' : 'linux'
+  const platform = platformCssToken(window.browgent?.platform)
   const contentRef = useRef<HTMLDivElement>(null)
   const creatingRef = useRef(false)
   const pinCurrentAsFavorite = useBookmarks((s) => s.pinCurrentAsFavorite)
   const isBookmarkedUrl = useBookmarks((s) => s.isBookmarkedUrl)
   const toggleFavorite = useBookmarks((s) => s.toggleFavorite)
   const isFavorite = useBookmarks((s) => s.isFavorite)
+  const bookmarkItems = useBookmarks((s) => s.items)
+  const bookmarkSpaces = useBookmarks((s) => s.spaces)
+  const activeSpaceId = useBookmarks((s) => s.activeSpaceId)
 
-  useChromeMetrics(contentRef, `${sidebarOpen}:${agentOpen}`)
+  useChromeMetrics(contentRef, `${sidebarOpen}:${agentOpen}:${libraryOpen}:${settingsOpen}`)
 
   useEffect(() => {
     if (!window.browgent) return
@@ -49,6 +60,7 @@ export default function App(): React.JSX.Element {
     creatingRef.current = true
     try {
       await window.browgent.createTab(url)
+      setSettingsOpen(false)
     } finally {
       window.setTimeout(() => {
         creatingRef.current = false
@@ -58,6 +70,7 @@ export default function App(): React.JSX.Element {
 
   const openUrl = useCallback(
     (url: string, newTab = false) => {
+      setSettingsOpen(false)
       if (newTab) {
         void createTabOnce(url)
         return
@@ -72,93 +85,43 @@ export default function App(): React.JSX.Element {
     [tabs, createTabOnce]
   )
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      const mod = e.metaKey || e.ctrlKey
-      const target = e.target as HTMLElement | null
-      const typing =
-        target &&
-        (target.tagName === 'INPUT' ||
-          target.tagName === 'TEXTAREA' ||
-          target.isContentEditable)
+  const openSettings = useCallback((section: SettingsSection = 'appearance') => {
+    setSettingsSection(section)
+    setSettingsOpen(true)
+    setLibraryOpen(false)
+  }, [])
 
-      // Escape: blur address bar / stop agent when not typing in agent composer
-      if (e.key === 'Escape') {
-        if (target?.classList.contains('omnibox')) {
-          e.preventDefault()
-          target.blur()
-          return
-        }
-        if (
-          !typing &&
-          (agent?.status === 'thinking' ||
-            agent?.status === 'acting' ||
-            agent?.status === 'paused' ||
-            agent?.status === 'waiting_human')
-        ) {
-          e.preventDefault()
-          void window.browgent.stopAgent()
-          return
-        }
-      }
+  const closeSettings = useCallback(() => {
+    setSettingsOpen(false)
+  }, [])
 
-      if (!mod) return
+  const askAgent = useCallback(
+    (text: string) => {
+      const t = text.trim()
+      if (!t) return
+      setAgentOpen(true)
+      setSettingsOpen(false)
+      void window.browgent.sendAgentMessage(t, tabs.find((x) => x.isActive)?.id)
+    },
+    [tabs]
+  )
 
-      if (e.key === 't') {
-        e.preventDefault()
-        void createTabOnce()
-      }
-      if (e.key === 'w') {
-        e.preventDefault()
-        const active = tabs.find((t) => t.isActive)
-        if (active) void window.browgent.closeTab(active.id)
-      }
-      if (e.key === 'l') {
-        e.preventDefault()
-        const input = document.querySelector<HTMLInputElement>('.omnibox')
-        input?.focus()
-        input?.select()
-      }
-      if (e.key === 'j') {
-        e.preventDefault()
-        setAgentOpen((v) => !v)
-      }
-      if (e.key === 's' && e.shiftKey) {
-        e.preventDefault()
-        setSidebarOpen((v) => !v)
-      }
-      if (e.key === 'd' && !e.shiftKey) {
-        // Arc / browser classic: pin current page to favorites
-        e.preventDefault()
-        const active = tabs.find((t) => t.isActive)
-        if (!active?.url || active.url === 'about:blank') return
-        const existing = isBookmarkedUrl(active.url)
-        if (existing) toggleFavorite(existing)
-        else pinCurrentAsFavorite(active.title, active.url, active.favicon)
-      }
-      if (e.key === 'r' && !e.shiftKey) {
-        e.preventDefault()
-        const active = tabs.find((t) => t.isActive)
-        void window.browgent.reload(active?.id)
-      }
-      // ⌘1–⌘9 switch tabs (⌘9 = last tab)
-      if (e.key >= '1' && e.key <= '9') {
-        e.preventDefault()
-        const idx = e.key === '9' ? tabs.length - 1 : Number(e.key) - 1
-        const tab = tabs[idx]
-        if (tab) void window.browgent.activateTab(tab.id)
-      }
-      // ⌘[ / ⌘] history navigation (skip when editing text — preserve line navigation)
-      if (!typing && (e.key === '[' || e.key === ']')) {
-        e.preventDefault()
-        const active = tabs.find((t) => t.isActive)
-        if (e.key === '[') void window.browgent.goBack(active?.id)
-        else void window.browgent.goForward(active?.id)
-      }
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [tabs, createTabOnce, isBookmarkedUrl, toggleFavorite, pinCurrentAsFavorite, agent?.status])
+  useAppShortcuts({
+    tabs,
+    agentStatus: agent?.status,
+    settingsOpen,
+    libraryOpen,
+    createTabOnce,
+    openSettings,
+    closeSettings,
+    setAgentOpen,
+    setSidebarOpen,
+    setLibraryOpen,
+    setSettingsOpen,
+    isBookmarkedUrl,
+    toggleFavorite,
+    pinCurrentAsFavorite
+  })
 
   const activeTab = useMemo(() => tabs.find((t) => t.isActive), [tabs])
   const agentBusy =
@@ -169,10 +132,31 @@ export default function App(): React.JSX.Element {
 
   const bookmarkedId = activeTab?.url ? isBookmarkedUrl(activeTab.url) : null
   const favorited = bookmarkedId ? isFavorite(bookmarkedId) : false
+  const showNewTab = !settingsOpen && isBlankUrl(activeTab?.url)
+
+  // Settings sits over a live page — force-hide guest. New Tab uses about:blank (main-process).
+  useEffect(() => {
+    if (!window.browgent?.setGuestVisible) return
+    void window.browgent.setGuestVisible(!settingsOpen)
+  }, [settingsOpen])
+
+  const favorites = useMemo(() => {
+    const space =
+      bookmarkSpaces.find((s) => s.id === activeSpaceId) ?? bookmarkSpaces[0]
+    if (!space) return []
+    return (space.favoriteIds ?? [])
+      .map((id) => bookmarkItems[id])
+      .filter(Boolean)
+      .map((item) => ({
+        id: item.id,
+        title: item.title,
+        url: item.url,
+        favicon: item.favicon
+      }))
+  }, [bookmarkItems, bookmarkSpaces, activeSpaceId])
 
   const onToggleBookmark = useCallback(() => {
-    if (!activeTab?.url || activeTab.url === 'about:blank') return
-    // Star = Arc favorites pin
+    if (!activeTab?.url || isBlankUrl(activeTab.url)) return
     if (bookmarkedId) {
       toggleFavorite(bookmarkedId)
       return
@@ -182,16 +166,18 @@ export default function App(): React.JSX.Element {
 
   return (
     <div
-      className={`app-shell platform-${platform}`}
+      className={`app-shell platform-${platform}${sidebarOpen ? ' sidebar-open' : ''}`}
     >
       <div className="ambient" aria-hidden />
       <div className="chrome-top">
         <TitleBar platform={platform} />
-        {/* When Arc sidebar is open, tabs live there — hide the horizontal strip */}
         {!sidebarOpen && (
           <TabBar
             tabs={tabs}
-            onActivate={(id) => void window.browgent.activateTab(id)}
+            onActivate={(id) => {
+              setSettingsOpen(false)
+              void window.browgent.activateTab(id)
+            }}
             onClose={(id) => void window.browgent.closeTab(id)}
             onNew={() => void createTabOnce()}
           />
@@ -201,6 +187,8 @@ export default function App(): React.JSX.Element {
           agentOpen={agentOpen}
           agentBusy={agentBusy}
           sidebarOpen={sidebarOpen}
+          settingsOpen={settingsOpen}
+          themeOverlaySafe={settingsOpen || showNewTab}
           isBookmarked={Boolean(bookmarkedId)}
           isFavorited={favorited}
           theme={theme}
@@ -208,6 +196,7 @@ export default function App(): React.JSX.Element {
           onToggleAgent={() => setAgentOpen((v) => !v)}
           onToggleSidebar={() => setSidebarOpen((v) => !v)}
           onToggleBookmark={onToggleBookmark}
+          onOpenSettings={() => openSettings('appearance')}
         />
       </div>
 
@@ -215,22 +204,66 @@ export default function App(): React.JSX.Element {
         <Sidebar
           tabs={tabs}
           open={sidebarOpen}
+          libraryOpen={libraryOpen}
           onClose={() => setSidebarOpen(false)}
           onNewTab={() => void createTabOnce()}
-          onActivateTab={(id) => void window.browgent.activateTab(id)}
+          onActivateTab={(id) => {
+            setSettingsOpen(false)
+            void window.browgent.activateTab(id)
+          }}
           onCloseTab={(id) => void window.browgent.closeTab(id)}
           onOpenUrl={openUrl}
+          onToggleLibrary={() => setLibraryOpen((v) => !v)}
         />
-        <div className="content-hole" ref={contentRef} aria-hidden>
-          <div className="content-placeholder">
-            <div className="content-placeholder-orb" />
-            <p>Loading page…</p>
-          </div>
+        <LibraryManager
+          open={libraryOpen && sidebarOpen}
+          onClose={() => setLibraryOpen(false)}
+          onOpenUrl={openUrl}
+        />
+        <div
+          className="content-hole"
+          ref={contentRef}
+          aria-hidden={!settingsOpen && !showNewTab}
+        >
+          {settingsOpen ? (
+            <SettingsPage
+              theme={theme}
+              onThemeChange={setTheme}
+              section={settingsSection}
+              onSectionChange={setSettingsSection}
+              agent={agent}
+              onClose={closeSettings}
+              onExportTrajectory={() =>
+                void exportTrajectoryFile().catch((e) => console.error('Export failed', e))
+              }
+            />
+          ) : showNewTab ? (
+            <NewTabPage
+              onNavigate={(url) => openUrl(url)}
+              onAskAgent={askAgent}
+              favorites={favorites}
+            />
+          ) : (
+            <div className="content-placeholder">
+              <div className="content-placeholder-orb" />
+              <p>Loading page…</p>
+            </div>
+          )}
         </div>
-        <AgentPanel open={agentOpen} state={agent} onClose={() => setAgentOpen(false)} />
+        <AgentPanel
+          open={agentOpen}
+          state={agent}
+          onClose={() => setAgentOpen(false)}
+          onOpenSettings={() => openSettings('agent')}
+        />
       </div>
 
-      <StatusBar activeTab={activeTab} agent={agent} tabCount={tabs.length} />
+      <StatusBar
+        activeTab={activeTab}
+        agent={agent}
+        tabCount={tabs.length}
+        statusLabel={settingsOpen ? 'browgent://settings' : undefined}
+      />
     </div>
   )
 }

@@ -1,108 +1,119 @@
 export type ThemeId =
   | 'midnight'
-  | 'classic'
-  | 'paper'
-  | 'vintage'
-  | 'aurora'
-  | 'noir'
-  | 'sakura'
-  | 'neon-tokyo'
-  | 'art-deco'
-  | 'deep-ocean'
+  | 'terminal'
+  | 'matrix'
+  | 'nord'
+  | 'solarized'
+  | 'eink'
+  | 'synthwave'
+  | 'brutalist'
+
+export type ThemeCategory = 'signature' | 'dev' | 'calm' | 'loud'
 
 export interface ThemeDef {
   id: ThemeId
   name: string
   tagline: string
-  category: 'modern' | 'classic' | 'vintage' | 'paper' | 'surprise'
-  /** Swatch colors for the picker */
+  category: ThemeCategory
+  /** Swatch colors for the picker / settings cards */
   swatches: [string, string, string]
 }
 
 export const THEMES: ThemeDef[] = [
   {
+    id: 'eink',
+    name: 'E-Ink',
+    tagline: 'Paper white, serif ink — the Browgent default',
+    category: 'signature',
+    swatches: ['#f4f3ee', '#191813', '#8b887c']
+  },
+  {
     id: 'midnight',
     name: 'Midnight',
-    tagline: 'Arc-inspired dark teal — the Browgent default',
-    category: 'modern',
+    tagline: 'Arc-teal dark chrome',
+    category: 'signature',
     swatches: ['#090a0d', '#3ee0c5', '#5b8cff']
   },
   {
-    id: 'classic',
-    name: 'Classic Chrome',
-    tagline: 'Early-2010s browser chrome: cool gray & blue',
-    category: 'classic',
-    swatches: ['#e8eaed', '#1a73e8', '#5f6368']
+    id: 'terminal',
+    name: 'Terminal',
+    tagline: 'Editor greens, mono everything',
+    category: 'dev',
+    swatches: ['#0d1117', '#3fb950', '#58a6ff']
   },
   {
-    id: 'paper',
-    name: 'Paper Desk',
-    tagline: 'Warm parchment, ink, and soft desk light',
-    category: 'paper',
-    swatches: ['#f4efe4', '#2c2416', '#c4a574']
+    id: 'matrix',
+    name: 'Matrix',
+    tagline: 'Phosphor rain on CRT black',
+    category: 'dev',
+    swatches: ['#000401', '#00ff41', '#2e7a4c']
   },
   {
-    id: 'vintage',
-    name: 'Vintage Amber',
-    tagline: 'Sepia terminal glow from a late-night lab',
-    category: 'vintage',
-    swatches: ['#1a1410', '#e8a54b', '#8b6914']
+    id: 'nord',
+    name: 'Nord',
+    tagline: 'Arctic blues, quiet aurora',
+    category: 'calm',
+    swatches: ['#2e3440', '#88c0d0', '#b48ead']
   },
   {
-    id: 'aurora',
-    name: 'Aurora',
-    tagline: 'Northern-lights gradients on deep polar night',
-    category: 'modern',
-    swatches: ['#0a0f1a', '#5eead4', '#c084fc']
+    id: 'solarized',
+    name: 'Solarized',
+    tagline: 'Lab-calibrated cyan on deep sea',
+    category: 'calm',
+    swatches: ['#002b36', '#2aa198', '#b58900']
   },
   {
-    id: 'noir',
-    name: 'Film Noir',
-    tagline: 'High-contrast black & white with a blood accent',
-    category: 'classic',
-    swatches: ['#0a0a0a', '#f5f5f5', '#c41e3a']
+    id: 'synthwave',
+    name: 'Synthwave',
+    tagline: 'Sunset grid, chrome and neon',
+    category: 'loud',
+    swatches: ['#0d0722', '#ff6ec7', '#00e5ff']
   },
   {
-    id: 'sakura',
-    name: 'Sakura Dusk',
-    tagline: 'Petal pink on indigo — spring night surprise',
-    category: 'surprise',
-    swatches: ['#1a1020', '#f9a8d4', '#818cf8']
-  },
-  {
-    id: 'neon-tokyo',
-    name: 'Neon Tokyo',
-    tagline: 'Rain-soaked alley: magenta, cyan, wet asphalt',
-    category: 'surprise',
-    swatches: ['#0c0614', '#ff2bd6', '#00f0ff']
-  },
-  {
-    id: 'art-deco',
-    name: 'Art Deco',
-    tagline: 'Gatsby gold on midnight navy',
-    category: 'vintage',
-    swatches: ['#0c1222', '#d4af37', '#1e3a5f']
-  },
-  {
-    id: 'deep-ocean',
-    name: 'Deep Ocean',
-    tagline: 'Abyssal blue with bioluminescent mint',
-    category: 'surprise',
-    swatches: ['#020b14', '#2dd4bf', '#0369a1']
+    id: 'brutalist',
+    name: 'Brutalist',
+    tagline: 'Stark mono, hard black lines',
+    category: 'loud',
+    swatches: ['#ececec', '#000000', '#d00000']
   }
 ]
 
-export const DEFAULT_THEME: ThemeId = 'midnight'
+export const DEFAULT_THEME: ThemeId = 'eink'
 export const THEME_STORAGE_KEY = 'browgent.theme'
+
+/** Legacy theme ids → design-system replacements */
+const LEGACY_THEME_MAP: Record<string, ThemeId> = {
+  classic: 'eink',
+  paper: 'eink',
+  vintage: 'solarized',
+  aurora: 'nord',
+  noir: 'brutalist',
+  sakura: 'synthwave',
+  'neon-tokyo': 'synthwave',
+  'art-deco': 'midnight',
+  'deep-ocean': 'solarized'
+}
 
 export function isThemeId(v: string): v is ThemeId {
   return THEMES.some((t) => t.id === v)
 }
 
+export function resolveThemeId(v: string): ThemeId | null {
+  if (isThemeId(v)) return v
+  const migrated = LEGACY_THEME_MAP[v]
+  return migrated ?? null
+}
+
 export function loadStoredTheme(): ThemeId {
   try {
     const v = localStorage.getItem(THEME_STORAGE_KEY)
-    if (v && isThemeId(v)) return v
+    if (!v) return DEFAULT_THEME
+    const resolved = resolveThemeId(v)
+    if (resolved) {
+      // Persist migration away from legacy ids
+      if (v !== resolved) saveTheme(resolved)
+      return resolved
+    }
   } catch {
     /* ignore */
   }
@@ -119,7 +130,7 @@ export function saveTheme(id: ThemeId): void {
 
 export function applyTheme(id: ThemeId): void {
   document.documentElement.setAttribute('data-theme', id)
-  // Classic/paper need light color-scheme for native controls
-  const light = id === 'classic' || id === 'paper'
+  // E-Ink / Brutalist need light color-scheme for native controls
+  const light = id === 'eink' || id === 'brutalist'
   document.documentElement.style.colorScheme = light ? 'light' : 'dark'
 }

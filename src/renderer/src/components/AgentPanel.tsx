@@ -4,13 +4,10 @@ import {
   useId,
   useRef,
   useState,
-  type ChangeEvent,
-  type KeyboardEvent
+  type ChangeEvent
 } from 'react'
 import {
   Bot,
-  Check,
-  Circle,
   Download,
   Eraser,
   Eye,
@@ -22,23 +19,28 @@ import {
   Play,
   Search,
   Send,
+  Settings2,
   Square,
   Zap,
   X
 } from 'lucide-react'
-import type { AgentAction, AgentSessionState, TrajectoryStep } from '@shared/types'
-import { DEFAULT_POLICY, type AgentPolicy } from '@shared/policies'
+import type { AgentSessionState } from '@shared/types'
 import { useVoiceInput } from '../hooks/useVoiceInput'
 import { useRovingTablist } from '../hooks/useRovingTablist'
+import { useChromePrefs } from '../stores/chromePrefs'
+import { exportTrajectoryFile } from '../lib/download'
+import { providerLabel } from '../lib/providers'
+import { ActionChip, MessageBubble, TrajectoryRow } from './agent/ChatParts'
+import { PolicyPane } from './agent/PolicyPane'
 
 interface Props {
   open: boolean
   state: AgentSessionState | null
   onClose: () => void
+  onOpenSettings?: () => void
 }
 
 const SUGGESTIONS = [
-  'go to facebook and sign up',
   'go to github.com',
   'search playwright docs',
   'summarize this page',
@@ -49,13 +51,15 @@ const TEXTAREA_MAX_LENGTH = 20000
 
 type AgentTab = 'chat' | 'trajectory' | 'policy'
 
-export function AgentPanel({ open, state, onClose }: Props): React.JSX.Element {
+export function AgentPanel({ open, state, onClose, onOpenSettings }: Props): React.JSX.Element {
   const [draft, setDraft] = useState('')
   const draftRef = useRef('')
   const [tab, setTab] = useState<AgentTab>('chat')
   const [sendError, setSendError] = useState<string | null>(null)
   const [sending, setSending] = useState(false)
   const listRef = useRef<HTMLDivElement>(null)
+  const prefs = useChromePrefs()
+  const density = prefs.agentDensity
   const busy =
     state?.status === 'thinking' ||
     state?.status === 'acting' ||
@@ -91,7 +95,6 @@ export function AgentPanel({ open, state, onClose }: Props): React.JSX.Element {
   }, [])
 
   const onVoiceInterim = useCallback((text: string) => {
-    // Only live-update draft when the user is not mid-edit (empty or STT-owned)
     if (!text) return
     if (userTypingRef.current) return
     draftRef.current = text
@@ -106,7 +109,6 @@ export function AgentPanel({ open, state, onClose }: Props): React.JSX.Element {
   useEffect(() => {
     const el = listRef.current
     if (!el || tab !== 'chat') return
-    // Keep stick-to-bottom unless user scrolled up substantially
     const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
     if (distanceFromBottom < 120) {
       el.scrollTop = el.scrollHeight
@@ -128,7 +130,6 @@ export function AgentPanel({ open, state, onClose }: Props): React.JSX.Element {
     const submitted = text ?? draftRef.current
     if (!submitted.trim()) return
     if (sending) return
-    // Allow replies to ask_human; block new goals while thinking/acting/confirm
     if (busy && !(state?.status === 'waiting_human' && state.waitingQuestion)) return
     if (voice.status === 'listening') voice.stop()
     setSending(true)
@@ -192,27 +193,7 @@ export function AgentPanel({ open, state, onClose }: Props): React.JSX.Element {
     }
   }
 
-  const exportJson = async (): Promise<void> => {
-    try {
-      const json = await window.browgent.exportTrajectory()
-      const blob = new Blob([json], { type: 'application/json' })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `browgent-trajectory-${Date.now()}.json`
-      a.rel = 'noopener'
-      document.body.appendChild(a)
-      a.click()
-      a.remove()
-      // Delay revoke so the browser can start the download
-      window.setTimeout(() => URL.revokeObjectURL(url), 1500)
-    } catch (e) {
-      console.error('Export failed', e)
-    }
-  }
-
   const mode = state?.mode ?? 'act'
-
   const tabs: AgentTab[] = ['chat', 'trajectory', 'policy']
   const tabIdBase = useId()
   const chatPanelId = `${tabIdBase}-chat-panel`
@@ -238,9 +219,12 @@ export function AgentPanel({ open, state, onClose }: Props): React.JSX.Element {
     first?.focus()
   }, [open, state?.pendingConfirmation?.id])
 
+  const showModeBar = prefs.agentShowModeBar
+  const showControls = canStop || state?.status === 'paused' || busy
+
   return (
     <aside
-      className="agent-panel"
+      className={`agent-panel density-${density}`}
       aria-label="Agent panel"
       hidden={!open}
     >
@@ -273,12 +257,23 @@ export function AgentPanel({ open, state, onClose }: Props): React.JSX.Element {
           {provider !== 'heuristic' ? providerLabel(provider) : 'Heuristic'}
         </span>
         <div className="agent-header-actions">
+          {onOpenSettings && (
+            <button
+              type="button"
+              className="icon-btn"
+              title="Agent settings"
+              aria-label="Open agent settings"
+              onClick={onOpenSettings}
+            >
+              <Settings2 size={15} strokeWidth={1.75} />
+            </button>
+          )}
           <button
             type="button"
             className="icon-btn"
             title="Export trajectory"
             aria-label="Export trajectory"
-            onClick={() => void exportJson()}
+            onClick={() => void exportTrajectoryFile().catch((e) => console.error('Export failed', e))}
           >
             <Download size={15} strokeWidth={1.75} />
           </button>
@@ -297,41 +292,69 @@ export function AgentPanel({ open, state, onClose }: Props): React.JSX.Element {
         </div>
       </header>
 
-      <div className="mode-bar">
-        <ModeBtn active={mode === 'act'} icon={<Zap size={12} />} label="Act" onClick={() => void window.browgent.setAgentMode('act')} />
-        <ModeBtn
-          active={mode === 'research'}
-          icon={<Search size={12} />}
-          label="Research"
-          onClick={() => void window.browgent.setAgentMode('research')}
-        />
-        <ModeBtn
-          active={mode === 'watch'}
-          icon={<Eye size={12} />}
-          label="Watch"
-          onClick={() => void window.browgent.setAgentMode('watch')}
-        />
-      </div>
-
-      <div className="control-bar">
-        <button type="button" className="ctrl-btn" onClick={() => void window.browgent.takeover()} title="Human takeover">
-          <Hand size={13} /> Takeover
-        </button>
-        {state?.status === 'paused' ? (
-          <button type="button" className="ctrl-btn accent" onClick={() => void window.browgent.resumeAgent()}>
-            <Play size={13} /> Resume
-          </button>
-        ) : (
-          <button type="button" className="ctrl-btn" onClick={() => void window.browgent.pauseAgent()}>
-            <Pause size={13} /> Pause
-          </button>
-        )}
-        {canStop && (
-          <button type="button" className="ctrl-btn danger" onClick={() => void window.browgent.stopAgent()}>
-            <Square size={11} fill="currentColor" /> Stop
-          </button>
-        )}
-      </div>
+      {(showModeBar || showControls) && (
+        <div className="agent-toolbar">
+          {showModeBar && (
+            <div className="mode-bar" role="group" aria-label="Agent mode">
+              <ModeBtn
+                active={mode === 'act'}
+                icon={<Zap size={12} />}
+                label="Act"
+                onClick={() => void window.browgent.setAgentMode('act')}
+              />
+              <ModeBtn
+                active={mode === 'research'}
+                icon={<Search size={12} />}
+                label="Research"
+                onClick={() => void window.browgent.setAgentMode('research')}
+              />
+              <ModeBtn
+                active={mode === 'watch'}
+                icon={<Eye size={12} />}
+                label="Watch"
+                onClick={() => void window.browgent.setAgentMode('watch')}
+              />
+            </div>
+          )}
+          <div className="control-bar">
+            <button
+              type="button"
+              className="ctrl-btn"
+              onClick={() => void window.browgent.takeover()}
+              title="Human takeover"
+            >
+              <Hand size={13} /> Takeover
+            </button>
+            {state?.status === 'paused' ? (
+              <button
+                type="button"
+                className="ctrl-btn accent"
+                onClick={() => void window.browgent.resumeAgent()}
+              >
+                <Play size={13} /> Resume
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="ctrl-btn"
+                onClick={() => void window.browgent.pauseAgent()}
+                disabled={!busy && !canStop}
+              >
+                <Pause size={13} /> Pause
+              </button>
+            )}
+            {canStop && (
+              <button
+                type="button"
+                className="ctrl-btn danger"
+                onClick={() => void window.browgent.stopAgent()}
+              >
+                <Square size={11} fill="currentColor" /> Stop
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       <div
         className="panel-tabs"
@@ -415,20 +438,29 @@ export function AgentPanel({ open, state, onClose }: Props): React.JSX.Element {
         <div className="agent-messages" ref={listRef} aria-live="polite">
           {(state?.messages ?? []).map((msg) => (
             <div key={msg.id} className={`msg ${msg.role}`}>
-              <div className="msg-meta">
-                <span>{msg.role === 'assistant' ? 'agent' : msg.role}</span>
-                <span>·</span>
-                <span>
-                  {new Date(msg.timestamp).toLocaleTimeString([], {
-                    hour: '2-digit',
-                    minute: '2-digit'
-                  })}
-                </span>
-              </div>
-              {msg.content && (
-                <div className="msg-bubble">{formatMessage(msg.content)}</div>
+              {(prefs.agentShowTimestamps || msg.role === 'user') && (
+                <div className="msg-meta">
+                  <span>{msg.role === 'assistant' ? 'agent' : msg.role}</span>
+                  {prefs.agentShowTimestamps && (
+                    <>
+                      <span>·</span>
+                      <span>
+                        {new Date(msg.timestamp).toLocaleTimeString([], {
+                          hour: '2-digit',
+                          minute: '2-digit'
+                        })}
+                      </span>
+                    </>
+                  )}
+                </div>
               )}
-              {msg.actions && msg.actions.length > 0 && (
+              {msg.content && (
+                <MessageBubble
+                  content={msg.content}
+                  collapse={prefs.agentCollapseLong && msg.role !== 'user'}
+                />
+              )}
+              {prefs.agentShowActionsInChat && msg.actions && msg.actions.length > 0 && (
                 <div className="msg-actions">
                   {msg.actions.map((action, i) => (
                     <ActionChip key={`${msg.id}-${i}`} action={action} />
@@ -447,9 +479,6 @@ export function AgentPanel({ open, state, onClose }: Props): React.JSX.Element {
           ))}
           {busy && state?.status === 'thinking' && (
             <div className="msg assistant">
-              <div className="msg-meta">
-                <span>agent</span>
-              </div>
               <div className="msg-bubble thinking-bubble">
                 <Loader2 size={13} className="spin" />{' '}
                 {provider !== 'heuristic'
@@ -477,13 +506,13 @@ export function AgentPanel({ open, state, onClose }: Props): React.JSX.Element {
         aria-labelledby={`${tabIdBase}-trajectory-tab`}
         tabIndex={0}
         hidden={tab !== 'trajectory'}
-        className="trajectory-list"
+        className="agent-tabpanel trajectory-list"
       >
         {(state?.trajectory ?? []).length === 0 && (
           <p className="empty-hint">Tool calls and observations appear here — export anytime.</p>
         )}
         {[...(state?.trajectory ?? [])].reverse().map((step) => (
-          <TrajectoryRow key={step.id} step={step} />
+          <TrajectoryRow key={step.id} step={step} collapseLong={prefs.agentCollapseLong} />
         ))}
       </div>
 
@@ -493,9 +522,9 @@ export function AgentPanel({ open, state, onClose }: Props): React.JSX.Element {
         aria-labelledby={`${tabIdBase}-policy-tab`}
         tabIndex={0}
         hidden={tab !== 'policy'}
-        className="policy-pane"
+        className="agent-tabpanel policy-pane"
       >
-        <PolicyPane state={state} />
+        <PolicyPane state={state} onOpenSettings={onOpenSettings} />
       </div>
 
       <div className="agent-composer">
@@ -511,18 +540,18 @@ export function AgentPanel({ open, state, onClose }: Props): React.JSX.Element {
           aria-describedby={sendError ? 'agent-send-error' : undefined}
           placeholder={
             !voice.supported
-              ? 'Speech recognition unavailable — type your instruction'
+              ? 'Type your instruction…'
               : voice.status === 'listening'
-                ? 'Listening… speak a browser instruction'
+                ? 'Listening…'
                 : state?.waitingQuestion
                   ? 'Type or speak your answer…'
                   : mode === 'research'
-                    ? 'Research request (read-only tools)…'
+                    ? 'Research request (read-only)…'
                     : mode === 'watch'
-                      ? 'Ask me what I see while you browse…'
-                      : 'Speak or type — e.g. “go to facebook and sign up”…'
+                      ? 'Ask what I see while you browse…'
+                      : 'Speak or type a browser instruction…'
           }
-          rows={3}
+          rows={density === 'compact' ? 2 : 3}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
               e.preventDefault()
@@ -531,18 +560,9 @@ export function AgentPanel({ open, state, onClose }: Props): React.JSX.Element {
           }}
         />
         {sendError && (
-          <div
-            id="agent-send-error"
-            className="voice-error"
-            role="alert"
-          >
+          <div id="agent-send-error" className="voice-error" role="alert">
             {sendError}
-            <button
-              type="button"
-              className="ctrl-btn"
-              onClick={retry}
-              style={{ marginLeft: 8 }}
-            >
+            <button type="button" className="ctrl-btn" onClick={retry} style={{ marginLeft: 8 }}>
               Retry
             </button>
           </div>
@@ -554,10 +574,10 @@ export function AgentPanel({ open, state, onClose }: Props): React.JSX.Element {
               className={`mic-btn${voice.status === 'listening' ? ' listening' : ''}`}
               title={
                 !voice.supported
-                  ? 'Speech recognition unavailable in this Electron build — type instead'
+                  ? 'Speech recognition unavailable — type instead'
                   : voice.status === 'listening'
                     ? 'Stop listening'
-                    : 'Voice input — system speech recognition (fastest local path)'
+                    : 'Voice input'
               }
               aria-label={
                 !voice.supported
@@ -582,12 +602,13 @@ export function AgentPanel({ open, state, onClose }: Props): React.JSX.Element {
               </span>
             )}
             {voice.error && <span className="voice-error">{voice.error}</span>}
-            {!voice.error && voice.status === 'idle' && voice.supported && (
-              <span className="composer-hint">Mic · Enter send · ⌘J · system STT</span>
-            )}
-            {!voice.supported && (
-              <span className="composer-hint">Mic unavailable in this build</span>
-            )}
+            {prefs.agentShowComposerHints &&
+              !voice.error &&
+              voice.status === 'idle' &&
+              voice.supported && (
+                <span className="composer-hint">Enter to send · Shift+Enter newline</span>
+              )}
+            {!voice.supported && <span className="composer-hint">Mic unavailable</span>}
           </div>
           <button
             type="button"
@@ -600,7 +621,7 @@ export function AgentPanel({ open, state, onClose }: Props): React.JSX.Element {
             }
           >
             <Send size={13} strokeWidth={2.25} />
-            {sending ? 'Sending…' : 'Send'}
+            {sending ? '…' : 'Send'}
           </button>
         </div>
       </div>
@@ -630,248 +651,4 @@ function ModeBtn({
       {label}
     </button>
   )
-}
-
-function ActionChip({ action }: { action: AgentAction }): React.JSX.Element {
-  return (
-    <div className={`action-chip ${action.status}`}>
-      <ActionIcon status={action.status} />
-      <span>
-        {action.label}
-        {action.detail ? ` · ${action.detail}` : ''}
-      </span>
-    </div>
-  )
-}
-
-function ActionIcon({ status }: { status: AgentAction['status'] }): React.JSX.Element {
-  if (status === 'running' || status === 'waiting') return <Loader2 size={12} className="spin" />
-  if (status === 'done') return <Check size={12} />
-  if (status === 'error' || status === 'blocked') return <X size={12} />
-  return <Circle size={10} />
-}
-
-function TrajectoryRow({ step }: { step: TrajectoryStep }): React.JSX.Element {
-  return (
-    <div className={`traj-row ${step.kind}${step.ok === false ? ' bad' : ''}`}>
-      <div className="traj-meta">
-        <span className="traj-kind">{step.tool || step.kind}</span>
-        <span>
-          {new Date(step.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-        </span>
-      </div>
-      <div className="traj-title">{step.title}</div>
-      {step.detail && <div className="traj-detail">{step.detail}</div>}
-    </div>
-  )
-}
-
-function PolicyPane({ state }: { state: AgentSessionState | null }): React.JSX.Element {
-  const p = state?.policy
-  const policy: AgentPolicy = p ?? DEFAULT_POLICY
-  const [allowDraft, setAllowDraft] = useState((policy.allowHosts ?? []).join(', '))
-  const [blockDraft, setBlockDraft] = useState((policy.blockHosts ?? []).join(', '))
-  const [maxStepsDraft, setMaxStepsDraft] = useState(String(policy.maxSteps))
-  const [committedMaxSteps, setCommittedMaxSteps] = useState(policy.maxSteps)
-  const [driverMode, setDriverMode] = useState<'dom' | 'cdp'>('dom')
-  const [cdpNote, setCdpNote] = useState('')
-
-  // Sync drafts when policy is replaced (e.g. clear session)
-  useEffect(() => {
-    setAllowDraft((policy.allowHosts ?? []).join(', '))
-    setBlockDraft((policy.blockHosts ?? []).join(', '))
-  }, [policy.allowHosts, policy.blockHosts])
-
-  useEffect(() => {
-    if (policy.maxSteps !== committedMaxSteps) {
-      setCommittedMaxSteps(policy.maxSteps)
-      setMaxStepsDraft(String(policy.maxSteps))
-    }
-  }, [policy.maxSteps, committedMaxSteps])
-
-  useEffect(() => {
-    if (!window.browgent?.getDriverStatus) return
-    void window.browgent.getDriverStatus().then((s) => {
-      setDriverMode(s.driverMode)
-      setCdpNote(s.note)
-    })
-  }, [])
-
-  const parseHosts = (raw: string): string[] =>
-    raw
-      .split(',')
-      .map((s) => s.trim().toLowerCase().replace(/^www\./, ''))
-      .filter(Boolean)
-
-  const commitMaxSteps = (): void => {
-    let n = Number(maxStepsDraft)
-    if (!Number.isFinite(n)) n = committedMaxSteps
-    n = Math.min(100, Math.max(5, Math.round(n)))
-    if (n !== committedMaxSteps) {
-      setCommittedMaxSteps(n)
-      setMaxStepsDraft(String(n))
-      if (n !== policy.maxSteps) {
-        void window.browgent.setAgentPolicy({ maxSteps: n })
-      }
-    } else {
-      setMaxStepsDraft(String(n))
-    }
-  }
-
-  const onMaxStepsKey = (e: KeyboardEvent<HTMLInputElement>): void => {
-    if (e.key === 'Enter') {
-      e.preventDefault()
-      commitMaxSteps()
-      e.currentTarget.blur()
-    } else if (e.key === 'Escape') {
-      e.preventDefault()
-      setMaxStepsDraft(String(committedMaxSteps))
-      e.currentTarget.blur()
-    }
-  }
-
-  return (
-    <>
-      <p className="empty-hint">
-        Browser-native safety (differentiator vs pure cloud agents). Changes apply immediately to
-        the next tool step.
-      </p>
-      <label className="policy-row">
-        <span>In-app driver</span>
-        <select
-          value={driverMode}
-          onChange={(e) => {
-            const mode = e.target.value === 'cdp' ? 'cdp' : 'dom'
-            void window.browgent.setDriverMode(mode).then((m) => {
-              setDriverMode(m)
-              void window.browgent.getDriverStatus().then((s) => setCdpNote(s.note))
-            })
-          }}
-          title={cdpNote}
-        >
-          <option value="dom">DOM (fast inject)</option>
-          <option value="cdp">CDP (Playwright-parity events)</option>
-        </select>
-      </label>
-      {cdpNote && <p className="empty-hint" style={{ marginTop: -4 }}>{cdpNote}</p>}
-      <label className="policy-row">
-        <span>Max steps</span>
-        <input
-          type="number"
-          min={5}
-          max={100}
-          value={maxStepsDraft}
-          onChange={(e) => setMaxStepsDraft(e.target.value)}
-          onBlur={commitMaxSteps}
-          onKeyDown={onMaxStepsKey}
-          aria-valuemin={5}
-          aria-valuemax={100}
-          aria-valuenow={committedMaxSteps}
-        />
-      </label>
-      <label className="policy-row check">
-        <input
-          type="checkbox"
-          checked={policy.confirmSensitiveClicks}
-          onChange={(e) =>
-            void window.browgent.setAgentPolicy({ confirmSensitiveClicks: e.target.checked })
-          }
-        />
-        <span>Confirm sensitive clicks (pay, submit, delete…)</span>
-      </label>
-      <label className="policy-row check">
-        <input
-          type="checkbox"
-          checked={policy.confirmCrossHost}
-          onChange={(e) =>
-            void window.browgent.setAgentPolicy({ confirmCrossHost: e.target.checked })
-          }
-        />
-        <span>Confirm navigation to a new host</span>
-      </label>
-      <label className="policy-row check">
-        <input
-          type="checkbox"
-          checked={policy.pauseOnAskHuman}
-          onChange={(e) =>
-            void window.browgent.setAgentPolicy({ pauseOnAskHuman: e.target.checked })
-          }
-        />
-        <span>Pause when agent asks for human help</span>
-      </label>
-      <label className="policy-row">
-        <span>Allow hosts (comma, empty = all)</span>
-        <input
-          type="text"
-          placeholder="github.com, google.com"
-          value={allowDraft}
-          onChange={(e) => setAllowDraft(e.target.value)}
-          onBlur={() => {
-            void window.browgent.setAgentPolicy({ allowHosts: parseHosts(allowDraft) })
-          }}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-              e.preventDefault()
-              void window.browgent.setAgentPolicy({ allowHosts: parseHosts(allowDraft) })
-              ;(e.target as HTMLInputElement).blur()
-            }
-          }}
-        />
-      </label>
-      <label className="policy-row">
-        <span>Block hosts (comma)</span>
-        <input
-          type="text"
-          placeholder="ads.example.com, tracker.io"
-          value={blockDraft}
-          onChange={(e) => setBlockDraft(e.target.value)}
-          onBlur={() => {
-            void window.browgent.setAgentPolicy({ blockHosts: parseHosts(blockDraft) })
-          }}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-              e.preventDefault()
-              void window.browgent.setAgentPolicy({ blockHosts: parseHosts(blockDraft) })
-              ;(e.target as HTMLInputElement).blur()
-            }
-          }}
-        />
-      </label>
-      <div className="policy-note">
-        <strong>Brain:</strong>{' '}
-        {state?.provider && state.provider !== 'heuristic'
-          ? `${providerLabel(state.provider)} (${state.model ?? 'model'}) — OpenAI-compatible tools`
-          : 'Heuristic fallback — set XAI_API_KEY (Grok default) or BROWGENT_PROVIDER + API key'}
-        <br />
-        Desktop tools: navigate, click, type, observe, extract… Full STDIO MCP server is on the
-        roadmap; Playwright attaches via CDP (status bar).
-      </div>
-    </>
-  )
-}
-
-const PROVIDER_LABELS: Record<string, string> = {
-  grok: 'Grok',
-  openai: 'OpenAI',
-  openrouter: 'OpenRouter',
-  groq: 'Groq',
-  deepseek: 'DeepSeek',
-  ollama: 'Ollama',
-  custom: 'Custom',
-  heuristic: 'Heuristic'
-}
-
-function providerLabel(id: string): string {
-  return PROVIDER_LABELS[id] ?? id
-}
-
-/** Lightweight **bold** + keep whitespace */
-function formatMessage(text: string): React.ReactNode {
-  const parts = text.split(/(\*\*[^*]+\*\*)/g)
-  return parts.map((part, i) => {
-    if (part.startsWith('**') && part.endsWith('**')) {
-      return <strong key={i}>{part.slice(2, -2)}</strong>
-    }
-    return <span key={i}>{part}</span>
-  })
 }

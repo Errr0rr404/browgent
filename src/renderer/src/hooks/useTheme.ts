@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
+  DEFAULT_THEME,
   type ThemeId,
   applyTheme,
   loadStoredTheme,
@@ -11,7 +12,7 @@ export function useTheme(): {
   setTheme: (id: ThemeId) => void
 } {
   const [theme, setThemeState] = useState<ThemeId>(() => {
-    if (typeof document === 'undefined') return 'midnight'
+    if (typeof document === 'undefined') return DEFAULT_THEME
     const id = loadStoredTheme()
     applyTheme(id)
     return id
