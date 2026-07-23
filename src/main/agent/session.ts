@@ -8,6 +8,8 @@ import {
   getProviderDisplayName,
   getProviderLabel,
   isLlmConfigured,
+  isVisionEnabled,
+  pngDataUrl,
   buildSystemPrompt,
   slimToolResultForLlm,
   type ChatMessage,
@@ -63,6 +65,17 @@ export class AgentSession {
   private taskInFlight = false
   private mutationInFlight = false
   private pendingOwnershipTransfer = false
+  /**
+   * Snapshot so ask_human can resume the same LLM thread (goal + messages + secrets)
+   * instead of starting a brand-new task from only the human's short answer.
+   */
+  private humanHandoff: {
+    kind: 'llm' | 'heuristic'
+    goal: string
+    llmMessages?: ChatMessage[]
+    map?: SecretRedactionMap
+    visionEnabled?: boolean
+  } | null = null
 
   constructor(
     private tabs: TabManager,
@@ -162,6 +175,7 @@ export class AgentSession {
     this.lastObservation = null
     this.lastToolNotes = []
     this.currentGoal = ''
+    this.humanHandoff = null
     this.taskInFlight = false
     this.mutationInFlight = false
     this.pendingOwnershipTransfer = false
@@ -177,6 +191,7 @@ export class AgentSession {
     this.status = 'idle'
     this.waitingQuestion = null
     this.pendingConfirmation = null
+    this.humanHandoff = null
     this.paused = false
     this.taskInFlight = false
     this.mutationInFlight = false
@@ -210,7 +225,13 @@ export class AgentSession {
     this.pendingOwnershipTransfer = false
     this.paused = false
     if (this.status === 'paused') {
-      this.status = 'idle'
+      // Keep a stoppable busy status while work is still in flight — idle would
+      // hide Stop / Escape-to-stop in the UI even though the loop continues.
+      this.status = this.taskInFlight
+        ? this.waitingQuestion || this.pendingConfirmation
+          ? 'waiting_human'
+          : 'acting'
+        : 'idle'
       if (this.taskInFlight) {
         const id = this.tabs.getActiveTabId() ?? ''
         if (id && this.tabs.has(id)) {
@@ -254,15 +275,31 @@ export class AgentSession {
   }
 
   answerHuman(text: string): void {
-    if (this.status !== 'waiting_human') return
+    // Only for ask_human handoffs — policy confirm uses confirm()/reject().
+    if (this.status !== 'waiting_human' || !this.waitingQuestion) return
+    if (this.pendingConfirmation) return
     const answer = text.trim()
     if (!answer) return
     this.waitingQuestion = null
-    this.pendingConfirmation = null
+    this.paused = false
     this.push('user', answer)
     this.status = 'idle'
     this.emit()
-    void this.runTask(answer, this.tabs.getActiveTabId() ?? undefined, { skipUserMessage: true })
+
+    const handoff = this.humanHandoff
+    this.humanHandoff = null
+
+    if (handoff?.kind === 'llm' && handoff.llmMessages && handoff.map) {
+      void this.resumeLlmAfterHuman(answer, handoff)
+      return
+    }
+
+    // Heuristic (or missing handoff): keep original goal so the model/planner
+    // does not treat a short 2FA code as a brand-new task.
+    const goal = handoff?.goal
+      ? `Human answered your question with: ${answer}\n\nContinue the original task from where you left off:\n${handoff.goal}`
+      : `Continue the previous task. Human answered: ${answer}`
+    void this.runTask(goal, this.tabs.getActiveTabId() ?? undefined, { skipUserMessage: true })
   }
 
   exportTrajectory(): string {
@@ -398,6 +435,7 @@ export class AgentSession {
 
   /** Multi-turn OpenAI-compatible tool-calling loop (Grok default, any provider) */
   private async runWithLlm(goal: string, gen: number): Promise<void> {
+    const visionEnabled = isVisionEnabled()
     const active = this.tabs.getState().find((t) => t.isActive)
     const safeActiveUrl = active?.url ? safeUrlForLlm(active.url) : active?.url
     const intent = parseBrowseIntent(goal)
@@ -430,7 +468,7 @@ export class AgentSession {
     const llmMessages: ChatMessage[] = [
       {
         role: 'system',
-        content: buildSystemPrompt(this.mode, safeActiveUrl, active?.title)
+        content: buildSystemPrompt(this.mode, safeActiveUrl, active?.title, visionEnabled)
       },
       { role: 'user', content: redactedGoal + intentHint }
     ]
@@ -443,222 +481,7 @@ export class AgentSession {
       })
     }
 
-    const assistantId = randomUUID()
-    const actions: AgentAction[] = []
-    this.messages.push({
-      id: assistantId,
-      role: 'assistant',
-      content: '',
-      timestamp: Date.now(),
-      actions
-    })
-    this.trimMessages()
-    this.emit()
-
-    let finalSummary = ''
-    let rounds = 0
-    let textOnlyNudges = 0
-    const maxRounds = Math.min(this.policy.maxSteps, 24)
-    const maxTextNudges = 2
-
-    const secretResolver = (text: string): string => resolveSecretPlaceholders(text, map)
-
-    while (rounds < maxRounds && this.isActiveRun(gen)) {
-      while (this.paused && this.isActiveRun(gen)) await sleep(150)
-      if (!this.isActiveRun(gen)) break
-      if (this.stepCount >= this.policy.maxSteps) {
-        finalSummary = 'Stopped: max steps reached (policy).'
-        break
-      }
-
-      this.status = 'thinking'
-      this.emit()
-
-      let turn
-      try {
-        turn = await completeWithTools(llmMessages, this.mode, this.abort?.signal)
-      } catch (e) {
-        if (!this.isActiveRun(gen) || (e instanceof Error && e.name === 'AbortError')) return
-        throw e
-      }
-
-      if (!this.isActiveRun(gen)) return
-
-      const toolCalls = turn.toolCalls ?? []
-
-      if (toolCalls.length === 0) {
-        const text = (turn.content || '').trim()
-        // Model often "helpfully" describes the page instead of controlling it.
-        // Nudge it back into tool-calling unless it clearly finished after real work.
-        const shouldNudge =
-          this.mode === 'act' &&
-          textOnlyNudges < maxTextNudges &&
-          (this.stepCount === 0 || looksLikePassiveDescription(text))
-
-        if (shouldNudge) {
-          textOnlyNudges++
-          if (text) {
-            llmMessages.push({ role: 'assistant', content: text })
-          }
-          llmMessages.push({
-            role: 'user',
-            content:
-              'Stop describing. Call browser tools now (navigate / observe / type / click / wait). ' +
-              'If the user already gave email/password in their message, type them into the form. ' +
-              'Only call done when the task is finished or blocked on CAPTCHA/2FA/human verification.'
-          })
-          this.trace('system', 'Nudged model to use tools (text-only reply)')
-          rounds++
-          continue
-        }
-
-        finalSummary = text || 'Done.'
-        break
-      }
-
-      // Record assistant tool-call turn for the API
-      llmMessages.push({
-        role: 'assistant',
-        content: turn.content,
-        tool_calls: toolCalls
-      })
-
-      this.status = 'acting'
-      this.emit()
-
-      let hitDone = false
-      let hitAskHuman = false
-
-      for (const tc of toolCalls) {
-        if (!this.isActiveRun(gen)) break
-        while (this.paused && this.isActiveRun(gen)) await sleep(150)
-        if (!this.isActiveRun(gen)) break
-
-        if (this.abort?.signal.aborted) {
-          llmMessages.push({
-            role: 'tool',
-            tool_call_id: tc.id,
-            content: JSON.stringify({ ok: false, error: 'Aborted before execution' })
-          })
-          continue
-        }
-
-        const rawCall = toolCallFromLlm(tc)
-        if (!rawCall) {
-          llmMessages.push({
-            role: 'tool',
-            tool_call_id: tc.id,
-            content: JSON.stringify({ ok: false, error: `Unknown tool: ${tc.function.name}` })
-          })
-          continue
-        }
-
-        const redactedArgs = scrubCallArgsForTrajectory(rawCall)
-        const resolvedArgs = resolveCallPlaceholders(rawCall, map)
-        const redactedCall: ToolCall = { id: rawCall.id, name: rawCall.name, args: redactedArgs }
-        const resolvedCall: ToolCall = { id: rawCall.id, name: rawCall.name, args: resolvedArgs }
-
-        const action: AgentAction = {
-          type: redactedCall.name,
-          label: redactedCall.name,
-          detail: summarizeArgs(redactedCall),
-          status: 'running'
-        }
-        actions.push(action)
-        this.emit()
-
-        if (redactedCall.name === 'ask_human') {
-          action.status = 'waiting'
-          this.waitingQuestion = String(redactedCall.args.question ?? 'Need your help')
-          this.status = 'waiting_human'
-          this.transferOwnershipToHumanIfSafe('Waiting for human')
-          if (this.policy.pauseOnAskHuman) this.paused = true
-          this.trace('tool', 'ask_human', this.waitingQuestion, 'ask_human', true)
-          llmMessages.push({
-            role: 'tool',
-            tool_call_id: tc.id,
-            content: JSON.stringify({ ok: true, note: 'Waiting for human reply' })
-          })
-          this.emit()
-          hitAskHuman = true
-          break
-        }
-
-        this.mutationInFlight = isMutatingTool(redactedCall.name)
-        let result
-        try {
-          result = await this.executor.execute(resolvedCall, {
-            policy: this.policy,
-            mode: this.mode,
-            requestConfirm: (reason, tool, args) => this.waitForConfirm(reason, tool, args),
-            lastObservation: this.lastObservation,
-            signal: this.abort?.signal,
-            resolver: secretResolver
-          })
-        } finally {
-          this.mutationInFlight = false
-          if (this.pendingOwnershipTransfer && this.isActiveRun(gen)) {
-            this.pendingOwnershipTransfer = false
-            this.tabs.transferAgentTabsToHuman()
-          } else if (this.pendingOwnershipTransfer) {
-            this.pendingOwnershipTransfer = false
-          }
-        }
-
-        if (!this.isActiveRun(gen)) return
-
-        this.stepCount++
-        const summaryText = redactTextForTrajectory(result.summary ?? '')
-        this.lastToolNotes.push(summaryText)
-        if (this.lastToolNotes.length > 40) this.lastToolNotes = this.lastToolNotes.slice(-30)
-        this.trace('tool', summaryText, undefined, redactedCall.name, result.ok, scrubDataForTrajectory(result.data))
-
-        if (redactedCall.name === 'observe' && result.ok && result.data) {
-          const d = result.data as ObserveSnapshot & { compact?: string }
-          this.lastObservation = {
-            url: safeUrlForLlm(d.url ?? '', 200),
-            title: d.title ?? '',
-            elements: d.elements ?? [],
-            textPreview: (d.textPreview ?? '').slice(0, 800)
-          }
-        }
-
-        action.status = result.ok ? 'done' : 'error'
-        if (!result.ok) action.detail = result.error
-        this.emit()
-
-        const sanitizedPayload = result.ok
-          ? { ok: true, summary: summaryText, data: scrubDataForTrajectory(result.data) }
-          : { ok: false, error: result.error, summary: summaryText }
-
-        llmMessages.push({
-          role: 'tool',
-          tool_call_id: tc.id,
-          content: slimToolResultForLlm(scrubSensitiveUrlFields(sanitizedPayload))
-        })
-
-        if (redactedCall.name === 'done') {
-          finalSummary = String(redactedCall.args.summary ?? summaryText)
-          hitDone = true
-          break
-        }
-      }
-
-      if (hitAskHuman) return
-      if (hitDone) break
-      rounds++
-    }
-
-    if (!this.isActiveRun(gen)) return
-    if (!finalSummary) {
-      finalSummary =
-        rounds >= maxRounds
-          ? 'Reached step limit before finishing. Check the trajectory and try a more specific request.'
-          : 'Finished this pass. Check the trajectory for details.'
-    }
-
-    await this.streamAssistant(assistantId, finalSummary, gen)
-    if (this.isActiveRun(gen)) this.trace('assistant', redactTextForTrajectory(finalSummary).slice(0, 200))
+    await this.continueLlmLoop(llmMessages, map, visionEnabled, gen)
   }
 
   /** Multi-step heuristic planner (no API key) */
@@ -726,6 +549,7 @@ export class AgentSession {
           this.status = 'waiting_human'
           this.transferOwnershipToHumanIfSafe('Waiting for human')
           if (this.policy.pauseOnAskHuman) this.paused = true
+          this.humanHandoff = { kind: 'heuristic', goal }
           this.trace('tool', 'ask_human', this.waitingQuestion)
           this.emit()
           return
@@ -751,7 +575,14 @@ export class AgentSession {
           }
         }
 
-        if (!this.isActiveRun(gen)) return
+        if (!this.isActiveRun(gen)) {
+          if (action.status === 'running') {
+            action.status = 'error'
+            action.detail = 'Stopped'
+            this.emit()
+          }
+          return
+        }
 
         this.stepCount++
         const summaryText = redactTextForTrajectory(result.summary ?? '')
@@ -774,15 +605,15 @@ export class AgentSession {
           observationDump += `\n\n${formatObservationForUser(result.data)}`
         }
 
+        action.status = result.ok ? 'done' : 'error'
+        if (!result.ok) action.detail = result.error
+        this.emit()
+
         if (call.name === 'done' && result.ok) {
           finalSummary = String(call.args.summary ?? summaryText)
           finished = true
           break
         }
-
-        action.status = result.ok ? 'done' : 'error'
-        if (!result.ok) action.detail = result.error
-        this.emit()
       }
 
       if (finished) break
@@ -834,6 +665,7 @@ export class AgentSession {
   ): Promise<boolean> {
     return new Promise((resolve) => {
       const id = randomUUID()
+      const waitGen = this.runGeneration
       this.pendingConfirmation = { id, reason, tool, args }
       this.status = 'waiting_human'
 
@@ -847,8 +679,10 @@ export class AgentSession {
         this.pendingConfirmation = null
         this.confirmResolver = null
 
-        const takenOver =
-          this.paused || this.cancelled || !this.isActiveRun(this.runGeneration)
+        // Capture waitGen at create time — isActiveRun(this.runGeneration) is always
+        // true for the current gen and cannot detect a bumped generation.
+        // Do not treat pause as automatic reject: user may inspect then Accept.
+        const takenOver = this.cancelled || !this.isActiveRun(waitGen)
 
         if (!ok || takenOver) {
           this.pendingOwnershipTransfer = false
@@ -857,6 +691,10 @@ export class AgentSession {
           this.emit()
           resolve(false)
           return
+        }
+
+        if (this.paused) {
+          this.paused = false
         }
 
         if (targetTabId && this.tabs.has(targetTabId)) {
@@ -869,12 +707,350 @@ export class AgentSession {
         }
         this.pendingOwnershipTransfer = false
         this.mutationInFlight = wasInFlight
-        if (this.status === 'waiting_human') this.status = 'acting'
+        if (this.status === 'waiting_human' || this.status === 'paused') {
+          this.status = 'acting'
+        }
         this.emit()
         resolve(true)
       }
       this.emit()
     })
+  }
+
+  /**
+   * Continue an LLM tool loop after ask_human, preserving prior messages and
+   * the secret redaction map from the interrupted run.
+   */
+  private async resumeLlmAfterHuman(
+    answer: string,
+    handoff: {
+      kind: 'llm' | 'heuristic'
+      goal: string
+      llmMessages?: ChatMessage[]
+      map?: SecretRedactionMap
+      visionEnabled?: boolean
+    }
+  ): Promise<void> {
+    const baseMessages = handoff.llmMessages
+    const map = handoff.map
+    if (!baseMessages || !map) {
+      const goal = `Human answered: ${answer}\n\nContinue:\n${handoff.goal}`
+      await this.runTask(goal, this.tabs.getActiveTabId() ?? undefined, { skipUserMessage: true })
+      return
+    }
+
+    this.runGeneration++
+    const gen = this.runGeneration
+    this.cancelled = false
+    this.paused = false
+    this.taskInFlight = true
+    this.currentGoal = handoff.goal
+    this.refreshProvider()
+    this.abort = new AbortController()
+
+    const tabId = this.tabs.getActiveTabId()
+    this.tabs.setOwner(tabId, 'agent')
+    this.tabs.applyGuardPolicy(tabId ?? '', {
+      allowHosts: this.policy.allowHosts ?? [],
+      blockHosts: this.policy.blockHosts ?? [],
+      crossHostRequired: !!this.policy.confirmCrossHost
+    })
+
+    const llmMessages: ChatMessage[] = [
+      ...baseMessages,
+      {
+        role: 'user',
+        content:
+          `Human answered your ask_human question:\n${answer}\n\n` +
+          `Continue the original task using tools. Do not re-ask unless still blocked.`
+      }
+    ]
+
+    this.status = 'thinking'
+    this.emit()
+
+    try {
+      await this.continueLlmLoop(llmMessages, map, Boolean(handoff.visionEnabled), gen)
+    } catch (e) {
+      if (!this.isActiveRun(gen)) return
+      const err = e instanceof Error ? e.message : 'Agent error'
+      this.trace('system', 'Agent error after human reply', err)
+      this.pushAssistant(`Failed after human reply: ${err}`)
+      this.status = 'error'
+      this.taskInFlight = false
+      this.pendingOwnershipTransfer = false
+      this.tabs.releaseAgentTabs()
+      this.emit()
+      return
+    }
+
+    if (!this.isActiveRun(gen)) return
+    const endedWaiting = this.waitingQuestion != null || this.pendingConfirmation != null
+    if (endedWaiting) {
+      this.taskInFlight = false
+      this.emit()
+      return
+    }
+    this.status = 'idle'
+    this.taskInFlight = false
+    this.pendingOwnershipTransfer = false
+    this.tabs.releaseAgentTabs()
+    this.emit()
+  }
+
+  /** Shared LLM tool loop used by runWithLlm and resumeLlmAfterHuman. */
+  private async continueLlmLoop(
+    llmMessages: ChatMessage[],
+    map: SecretRedactionMap,
+    visionEnabled: boolean,
+    gen: number
+  ): Promise<void> {
+    const assistantId = randomUUID()
+    const actions: AgentAction[] = []
+    this.messages.push({
+      id: assistantId,
+      role: 'assistant',
+      content: '',
+      timestamp: Date.now(),
+      actions
+    })
+    this.trimMessages()
+    this.emit()
+
+    let finalSummary = ''
+    let rounds = 0
+    let textOnlyNudges = 0
+    const maxRounds = Math.min(this.policy.maxSteps, 24)
+    const maxTextNudges = 2
+    const secretResolver = (text: string): string => resolveSecretPlaceholders(text, map)
+    // Goal string for handoff storage only
+    const goal = this.currentGoal
+
+    while (rounds < maxRounds && this.isActiveRun(gen)) {
+      while (this.paused && this.isActiveRun(gen)) await sleep(150)
+      if (!this.isActiveRun(gen)) break
+      if (this.stepCount >= this.policy.maxSteps) {
+        finalSummary = 'Stopped: max steps reached (policy).'
+        break
+      }
+
+      this.status = 'thinking'
+      this.emit()
+
+      if (visionEnabled) keepOnlyLatestImage(llmMessages)
+
+      let turn
+      try {
+        turn = await completeWithTools(llmMessages, this.mode, this.abort?.signal)
+      } catch (e) {
+        if (!this.isActiveRun(gen) || (e instanceof Error && e.name === 'AbortError')) return
+        throw e
+      }
+
+      if (!this.isActiveRun(gen)) return
+
+      const toolCalls = turn.toolCalls ?? []
+
+      if (toolCalls.length === 0) {
+        const text = (turn.content || '').trim()
+        const shouldNudge =
+          this.mode === 'act' &&
+          textOnlyNudges < maxTextNudges &&
+          (this.stepCount === 0 || looksLikePassiveDescription(text))
+
+        if (shouldNudge) {
+          textOnlyNudges++
+          if (text) {
+            llmMessages.push({ role: 'assistant', content: text })
+          }
+          llmMessages.push({
+            role: 'user',
+            content:
+              'Stop describing. Call browser tools now (navigate / observe / type / click / wait). ' +
+              'If the user already gave email/password in their message, type them into the form. ' +
+              'Only call done when the task is finished or blocked on CAPTCHA/2FA/human verification.'
+          })
+          this.trace('system', 'Nudged model to use tools (text-only reply)')
+          rounds++
+          continue
+        }
+
+        finalSummary = text || 'Done.'
+        break
+      }
+
+      llmMessages.push({
+        role: 'assistant',
+        content: turn.content,
+        tool_calls: toolCalls
+      })
+
+      this.status = 'acting'
+      this.emit()
+
+      let hitDone = false
+      let hitAskHuman = false
+      const pendingImages: string[] = []
+
+      for (const tc of toolCalls) {
+        if (!this.isActiveRun(gen)) break
+        while (this.paused && this.isActiveRun(gen)) await sleep(150)
+        if (!this.isActiveRun(gen)) break
+
+        if (this.abort?.signal.aborted) {
+          llmMessages.push({
+            role: 'tool',
+            tool_call_id: tc.id,
+            content: JSON.stringify({ ok: false, error: 'Aborted before execution' })
+          })
+          continue
+        }
+
+        const rawCall = toolCallFromLlm(tc)
+        if (!rawCall) {
+          llmMessages.push({
+            role: 'tool',
+            tool_call_id: tc.id,
+            content: JSON.stringify({ ok: false, error: `Unknown tool: ${tc.function.name}` })
+          })
+          continue
+        }
+
+        const redactedArgs = scrubCallArgsForTrajectory(rawCall)
+        const resolvedArgs = resolveCallPlaceholders(rawCall, map)
+        const redactedCall: ToolCall = { id: rawCall.id, name: rawCall.name, args: redactedArgs }
+        const resolvedCall: ToolCall = { id: rawCall.id, name: rawCall.name, args: resolvedArgs }
+
+        const action: AgentAction = {
+          type: redactedCall.name,
+          label: redactedCall.name,
+          detail: summarizeArgs(redactedCall),
+          status: 'running'
+        }
+        actions.push(action)
+        this.emit()
+
+        if (redactedCall.name === 'ask_human') {
+          action.status = 'waiting'
+          this.waitingQuestion = String(redactedCall.args.question ?? 'Need your help')
+          this.status = 'waiting_human'
+          this.transferOwnershipToHumanIfSafe('Waiting for human')
+          if (this.policy.pauseOnAskHuman) this.paused = true
+          this.trace('tool', 'ask_human', this.waitingQuestion, 'ask_human', true)
+          llmMessages.push({
+            role: 'tool',
+            tool_call_id: tc.id,
+            content: JSON.stringify({ ok: true, note: 'Waiting for human reply' })
+          })
+          this.humanHandoff = {
+            kind: 'llm',
+            goal,
+            llmMessages: [...llmMessages],
+            map,
+            visionEnabled
+          }
+          this.emit()
+          hitAskHuman = true
+          break
+        }
+
+        this.mutationInFlight = isMutatingTool(redactedCall.name)
+        let result
+        try {
+          result = await this.executor.execute(resolvedCall, {
+            policy: this.policy,
+            mode: this.mode,
+            requestConfirm: (reason, tool, args) => this.waitForConfirm(reason, tool, args),
+            lastObservation: this.lastObservation,
+            signal: this.abort?.signal,
+            resolver: secretResolver,
+            vision: visionEnabled
+          })
+        } finally {
+          this.mutationInFlight = false
+          if (this.pendingOwnershipTransfer && this.isActiveRun(gen)) {
+            this.pendingOwnershipTransfer = false
+            this.tabs.transferAgentTabsToHuman()
+          } else if (this.pendingOwnershipTransfer) {
+            this.pendingOwnershipTransfer = false
+          }
+        }
+
+        if (!this.isActiveRun(gen)) {
+          if (action.status === 'running') {
+            action.status = 'error'
+            action.detail = 'Stopped'
+            this.emit()
+          }
+          return
+        }
+
+        this.stepCount++
+        const summaryText = redactTextForTrajectory(result.summary ?? '')
+        this.lastToolNotes.push(summaryText)
+        if (this.lastToolNotes.length > 40) this.lastToolNotes = this.lastToolNotes.slice(-30)
+        this.trace('tool', summaryText, undefined, redactedCall.name, result.ok, scrubDataForTrajectory(result.data))
+
+        if (redactedCall.name === 'observe' && result.ok && result.data) {
+          const d = result.data as ObserveSnapshot & { compact?: string }
+          this.lastObservation = {
+            url: safeUrlForLlm(d.url ?? '', 200),
+            title: d.title ?? '',
+            elements: d.elements ?? [],
+            textPreview: (d.textPreview ?? '').slice(0, 800)
+          }
+        }
+
+        action.status = result.ok ? 'done' : 'error'
+        if (!result.ok) action.detail = result.error
+        this.emit()
+
+        const sanitizedPayload = result.ok
+          ? { ok: true, summary: summaryText, data: scrubDataForTrajectory(result.data) }
+          : { ok: false, error: result.error, summary: summaryText }
+
+        llmMessages.push({
+          role: 'tool',
+          tool_call_id: tc.id,
+          content: slimToolResultForLlm(scrubSensitiveUrlFields(sanitizedPayload))
+        })
+
+        if (visionEnabled && redactedCall.name === 'screenshot' && result.ok && result.image) {
+          pendingImages.push(result.image)
+        }
+
+        if (redactedCall.name === 'done') {
+          finalSummary = String(redactedCall.args.summary ?? summaryText)
+          hitDone = true
+          break
+        }
+      }
+
+      for (const img of pendingImages) {
+        llmMessages.push({
+          role: 'user',
+          content: [
+            { type: 'text', text: 'Screenshot of the current viewport:' },
+            { type: 'image_url', image_url: { url: pngDataUrl(img), detail: 'auto' } }
+          ]
+        })
+      }
+
+      if (hitAskHuman) return
+      if (hitDone) break
+      rounds++
+    }
+
+    if (!this.isActiveRun(gen)) return
+    if (!finalSummary) {
+      finalSummary =
+        rounds >= maxRounds
+          ? 'Reached step limit before finishing. Check the trajectory and try a more specific request.'
+          : 'Finished this pass. Check the trajectory for details.'
+    }
+
+    await this.streamAssistant(assistantId, finalSummary, gen)
+    if (this.isActiveRun(gen)) this.trace('assistant', redactTextForTrajectory(finalSummary).slice(0, 200))
   }
 
   private resolveConfirm(ok: boolean): void {
@@ -998,6 +1174,30 @@ function chunkText(text: string, size: number): string[] {
   const chunks: string[] = []
   for (let i = 0; i < text.length; i += size) chunks.push(text.slice(i, i + size))
   return chunks
+}
+
+function messageHasImage(m: ChatMessage): boolean {
+  return Array.isArray(m.content) && m.content.some((p) => p.type === 'image_url')
+}
+
+/**
+ * Vision context control: keep only the newest screenshot image; collapse older
+ * image messages to a text placeholder. Bounds token cost on multi-screenshot runs.
+ */
+function keepOnlyLatestImage(messages: ChatMessage[]): void {
+  let lastIdx = -1
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messageHasImage(messages[i])) {
+      lastIdx = i
+      break
+    }
+  }
+  if (lastIdx < 0) return
+  for (let i = 0; i < lastIdx; i++) {
+    if (messageHasImage(messages[i])) {
+      messages[i] = { role: 'user', content: '[earlier screenshot omitted to save context]' }
+    }
+  }
 }
 
 const SECRET_PLACEHOLDER_RE = /\[BROWGENT_SECRET_\d+\]/g

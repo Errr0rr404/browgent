@@ -10,24 +10,42 @@ import { NewTabPage } from './components/NewTabPage'
 import { SettingsPage } from './components/SettingsPage'
 import type { SettingsSection } from './lib/settings'
 import { LibraryManager } from './components/LibraryManager'
+import { FindBar } from './components/FindBar'
+import { HistoryPage } from './components/HistoryPage'
+import { DownloadsPanel } from './components/DownloadsPanel'
+import type { DownloadItemState } from '@shared/types'
 import { useChromeMetrics } from './hooks/useChromeMetrics'
 import { useAppShortcuts } from './hooks/useAppShortcuts'
 import { useTheme } from './hooks/useTheme'
 import { useBookmarks } from './stores/bookmarks'
+import { useChromePrefs } from './stores/chromePrefs'
 import { exportTrajectoryFile } from './lib/download'
 import { platformCssToken } from './lib/platform'
 import { isBlankUrl } from './lib/urls'
+import { moodFromAgent } from './components/agent/AgentPet'
+import { FloatingAgentPet } from './components/agent/AgentPet/FloatingAgentPet'
 import './styles/app.css'
 
 export default function App(): React.JSX.Element {
   const [tabs, setTabs] = useState<TabState[]>([])
-  const [agentOpen, setAgentOpen] = useState(true)
+  // Closed by default so the floating companion is visible; open panel hides the pet
+  const [agentOpen, setAgentOpen] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [libraryOpen, setLibraryOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [findOpen, setFindOpen] = useState(false)
+  const [downloadsOpen, setDownloadsOpen] = useState(false)
+  const [downloads, setDownloads] = useState<DownloadItemState[]>([])
+  const [isFullScreen, setIsFullScreen] = useState(false)
   const [settingsSection, setSettingsSection] = useState<SettingsSection>('appearance')
   const [agent, setAgent] = useState<AgentSessionState | null>(null)
   const { theme, setTheme } = useTheme()
+  const agentPetVisible = useChromePrefs((s) => s.agentPetVisible)
+  const agentPetX = useChromePrefs((s) => s.agentPetX)
+  const agentPetY = useChromePrefs((s) => s.agentPetY)
+  const setAgentPetVisible = useChromePrefs((s) => s.setAgentPetVisible)
+  const setAgentPetPosition = useChromePrefs((s) => s.setAgentPetPosition)
   const platform = platformCssToken(window.browgent?.platform)
   const contentRef = useRef<HTMLDivElement>(null)
   const creatingRef = useRef(false)
@@ -39,7 +57,10 @@ export default function App(): React.JSX.Element {
   const bookmarkSpaces = useBookmarks((s) => s.spaces)
   const activeSpaceId = useBookmarks((s) => s.activeSpaceId)
 
-  useChromeMetrics(contentRef, `${sidebarOpen}:${agentOpen}:${libraryOpen}:${settingsOpen}`)
+  useChromeMetrics(
+    contentRef,
+    `${sidebarOpen}:${agentOpen}:${libraryOpen}:${settingsOpen}:${historyOpen}:${findOpen}:${downloadsOpen}`
+  )
 
   useEffect(() => {
     if (!window.browgent) return
@@ -47,13 +68,41 @@ export default function App(): React.JSX.Element {
     void window.browgent.getAgentState().then((s) => {
       if (s) setAgent(s)
     })
+    void window.browgent.getDownloads?.().then(setDownloads).catch(() => {
+      /* ignore */
+    })
+    void window.browgent.isFullScreen?.().then(setIsFullScreen).catch(() => {
+      /* ignore */
+    })
     const unsubTabs = window.browgent.onTabsState(setTabs)
     const unsubAgent = window.browgent.onAgentState(setAgent)
+    const unsubFs = window.browgent.onFullScreenChanged?.(setIsFullScreen)
+    const unsubDl = window.browgent.onDownloadsState?.(setDownloads)
     return () => {
       unsubTabs()
       unsubAgent()
+      unsubFs?.()
+      unsubDl?.()
     }
   }, [])
+
+  useEffect(() => {
+    if (!window.browgent?.onPetClick) return
+    const unsubClick = window.browgent.onPetClick(() => {
+      setAgentOpen((v) => !v)
+    })
+    const unsubHide = window.browgent.onPetHide(() => {
+      setAgentPetVisible(false)
+    })
+    const unsubMoved = window.browgent.onPetMoved(({ x, y }) => {
+      setAgentPetPosition(x, y)
+    })
+    return () => {
+      unsubClick()
+      unsubHide()
+      unsubMoved()
+    }
+  }, [setAgentPetVisible, setAgentPetPosition])
 
   const createTabOnce = useCallback(async (url?: string) => {
     if (creatingRef.current) return
@@ -61,6 +110,7 @@ export default function App(): React.JSX.Element {
     try {
       await window.browgent.createTab(url)
       setSettingsOpen(false)
+      setHistoryOpen(false)
     } finally {
       window.setTimeout(() => {
         creatingRef.current = false
@@ -70,16 +120,30 @@ export default function App(): React.JSX.Element {
 
   const openUrl = useCallback(
     (url: string, newTab = false) => {
+      let target = url.trim()
+      if (!target) return
+      // Favorites / pins often store bare hosts — normalize before navigate
+      if (!/^https?:\/\//i.test(target) && !target.startsWith('about:')) {
+        target = target.startsWith('//') ? `https:${target}` : `https://${target}`
+      }
       setSettingsOpen(false)
+      setHistoryOpen(false)
       if (newTab) {
-        void createTabOnce(url)
+        void createTabOnce(target)
         return
       }
       const active = tabs.find((t) => t.isActive)
-      if (active) {
-        void window.browgent.navigate({ tabId: active.id, input: url })
+      if (active?.id) {
+        void window.browgent
+          .navigate({ tabId: active.id, input: target })
+          .then((ok) => {
+            if (!ok) void createTabOnce(target)
+          })
+          .catch(() => {
+            void createTabOnce(target)
+          })
       } else {
-        void createTabOnce(url)
+        void createTabOnce(target)
       }
     },
     [tabs, createTabOnce]
@@ -88,11 +152,52 @@ export default function App(): React.JSX.Element {
   const openSettings = useCallback((section: SettingsSection = 'appearance') => {
     setSettingsSection(section)
     setSettingsOpen(true)
+    setHistoryOpen(false)
     setLibraryOpen(false)
+    setDownloadsOpen(false)
+  }, [])
+
+  /** Toolbar / ⌘, : open if closed, close if already open. */
+  const toggleSettings = useCallback((section: SettingsSection = 'appearance') => {
+    setSettingsOpen((open) => {
+      if (open) return false
+      setSettingsSection(section)
+      setLibraryOpen(false)
+      setHistoryOpen(false)
+      setDownloadsOpen(false)
+      return true
+    })
   }, [])
 
   const closeSettings = useCallback(() => {
     setSettingsOpen(false)
+  }, [])
+
+  const openHistory = useCallback(() => {
+    setHistoryOpen(true)
+    setSettingsOpen(false)
+    setLibraryOpen(false)
+    setDownloadsOpen(false)
+    setFindOpen(false)
+  }, [])
+
+  const toggleHistory = useCallback(() => {
+    setHistoryOpen((open) => {
+      if (open) return false
+      setSettingsOpen(false)
+      setLibraryOpen(false)
+      setDownloadsOpen(false)
+      setFindOpen(false)
+      return true
+    })
+  }, [])
+
+  const openDownloads = useCallback(() => {
+    setDownloadsOpen(true)
+  }, [])
+
+  const toggleDownloads = useCallback(() => {
+    setDownloadsOpen((v) => !v)
   }, [])
 
   const askAgent = useCallback(
@@ -111,13 +216,20 @@ export default function App(): React.JSX.Element {
     agentStatus: agent?.status,
     settingsOpen,
     libraryOpen,
+    historyOpen,
+    findOpen,
+    downloadsOpen,
     createTabOnce,
     openSettings,
+    toggleSettings,
     closeSettings,
     setAgentOpen,
     setSidebarOpen,
     setLibraryOpen,
     setSettingsOpen,
+    setHistoryOpen,
+    setFindOpen,
+    setDownloadsOpen,
     isBookmarkedUrl,
     toggleFavorite,
     pinCurrentAsFavorite
@@ -132,13 +244,49 @@ export default function App(): React.JSX.Element {
 
   const bookmarkedId = activeTab?.url ? isBookmarkedUrl(activeTab.url) : null
   const favorited = bookmarkedId ? isFavorite(bookmarkedId) : false
-  const showNewTab = !settingsOpen && isBlankUrl(activeTab?.url)
+  const chromeOverlay = settingsOpen || historyOpen
+  const showNewTab = !chromeOverlay && isBlankUrl(activeTab?.url)
+  // Guest WebContentsView covers the content hole on real pages — native overlay there.
+  // On New Tab / Settings the guest is hidden — React float is reliable.
+  const guestCoveringPage = !chromeOverlay && !showNewTab
+  // Hide React pet on Settings/History (chrome overlays) so it does not steal clicks
+  const showReactPet = agentPetVisible && !agentOpen && !guestCoveringPage && !chromeOverlay
+  const downloadActiveCount = useMemo(
+    () => downloads.filter((d) => d.state === 'progressing').length,
+    [downloads]
+  )
 
-  // Settings sits over a live page — force-hide guest. New Tab uses about:blank (main-process).
+  // Native overlay: only when a real page is showing (floats above WebContentsView)
+  useEffect(() => {
+    if (!window.browgent?.configurePet) return
+    const show = agentPetVisible && !agentOpen && guestCoveringPage
+    const mood = moodFromAgent(agent?.status)
+    void window.browgent.configurePet({
+      visible: show,
+      theme,
+      mood,
+      ...(agentPetX >= 0 ? { x: agentPetX } : {}),
+      ...(agentPetY >= 0 ? { y: agentPetY } : {})
+    })
+  }, [
+    agentPetVisible,
+    agentOpen,
+    guestCoveringPage,
+    theme,
+    agent?.status,
+    agentPetX,
+    agentPetY
+  ])
+
+  // Settings / History sit over a live page — force-hide guest. New Tab uses about:blank.
   useEffect(() => {
     if (!window.browgent?.setGuestVisible) return
-    void window.browgent.setGuestVisible(!settingsOpen)
-  }, [settingsOpen])
+    void window.browgent.setGuestVisible(!chromeOverlay)
+  }, [chromeOverlay])
+
+  useEffect(() => {
+    if (chromeOverlay || showNewTab) setFindOpen(false)
+  }, [chromeOverlay, showNewTab])
 
   const favorites = useMemo(() => {
     const space =
@@ -166,7 +314,7 @@ export default function App(): React.JSX.Element {
 
   return (
     <div
-      className={`app-shell platform-${platform}${sidebarOpen ? ' sidebar-open' : ''}`}
+      className={`app-shell platform-${platform}${sidebarOpen ? ' sidebar-open' : ''}${isFullScreen ? ' is-fullscreen' : ''}`}
     >
       <div className="ambient" aria-hidden />
       <div className="chrome-top">
@@ -176,6 +324,7 @@ export default function App(): React.JSX.Element {
             tabs={tabs}
             onActivate={(id) => {
               setSettingsOpen(false)
+              setHistoryOpen(false)
               void window.browgent.activateTab(id)
             }}
             onClose={(id) => void window.browgent.closeTab(id)}
@@ -188,7 +337,11 @@ export default function App(): React.JSX.Element {
           agentBusy={agentBusy}
           sidebarOpen={sidebarOpen}
           settingsOpen={settingsOpen}
-          themeOverlaySafe={settingsOpen || showNewTab}
+          historyOpen={historyOpen}
+          downloadsOpen={downloadsOpen}
+          downloadActiveCount={downloadActiveCount}
+          themeOverlaySafe={chromeOverlay || showNewTab}
+          agentPetVisible={agentPetVisible}
           isBookmarked={Boolean(bookmarkedId)}
           isFavorited={favorited}
           theme={theme}
@@ -197,7 +350,18 @@ export default function App(): React.JSX.Element {
           onToggleSidebar={() => setSidebarOpen((v) => !v)}
           onToggleBookmark={onToggleBookmark}
           onOpenSettings={() => openSettings('appearance')}
+          onToggleSettings={() => toggleSettings('appearance')}
+          onToggleHistory={toggleHistory}
+          onOpenHistory={openHistory}
+          onToggleDownloads={toggleDownloads}
+          onOpenDownloads={openDownloads}
         />
+        <FindBar
+          open={findOpen && !chromeOverlay && !showNewTab}
+          tabId={activeTab?.id}
+          onClose={() => setFindOpen(false)}
+        />
+        <DownloadsPanel open={downloadsOpen} onClose={() => setDownloadsOpen(false)} />
       </div>
 
       <div className="body">
@@ -209,6 +373,7 @@ export default function App(): React.JSX.Element {
           onNewTab={() => void createTabOnce()}
           onActivateTab={(id) => {
             setSettingsOpen(false)
+            setHistoryOpen(false)
             void window.browgent.activateTab(id)
           }}
           onCloseTab={(id) => void window.browgent.closeTab(id)}
@@ -223,7 +388,7 @@ export default function App(): React.JSX.Element {
         <div
           className="content-hole"
           ref={contentRef}
-          aria-hidden={!settingsOpen && !showNewTab}
+          aria-hidden={!chromeOverlay && !showNewTab}
         >
           {settingsOpen ? (
             <SettingsPage
@@ -236,6 +401,12 @@ export default function App(): React.JSX.Element {
               onExportTrajectory={() =>
                 void exportTrajectoryFile().catch((e) => console.error('Export failed', e))
               }
+            />
+          ) : historyOpen ? (
+            <HistoryPage
+              open={historyOpen}
+              onClose={() => setHistoryOpen(false)}
+              onOpenUrl={openUrl}
             />
           ) : showNewTab ? (
             <NewTabPage
@@ -262,8 +433,26 @@ export default function App(): React.JSX.Element {
         activeTab={activeTab}
         agent={agent}
         tabCount={tabs.length}
-        statusLabel={settingsOpen ? 'browgent://settings' : undefined}
+        statusLabel={
+          settingsOpen
+            ? 'browgent://settings'
+            : historyOpen
+              ? 'browgent://history'
+              : undefined
+        }
+        onZoomIn={() => void window.browgent.zoomIn?.(activeTab?.id)}
+        onZoomOut={() => void window.browgent.zoomOut?.(activeTab?.id)}
+        onZoomReset={() => void window.browgent.zoomReset?.(activeTab?.id)}
       />
+
+      {showReactPet && (
+        <FloatingAgentPet
+          theme={theme}
+          agentOpen={agentOpen}
+          agentStatus={agent?.status}
+          onToggle={() => setAgentOpen((v) => !v)}
+        />
+      )}
     </div>
   )
 }

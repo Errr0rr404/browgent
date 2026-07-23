@@ -1,0 +1,323 @@
+.floating-pet {
+  position: fixed;
+  z-index: 200;
+  pointer-events: auto;
+  -webkit-app-region: no-drag;
+  touch-action: none;
+}
+
+.floating-pet-hit {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  border: none;
+  background: transparent;
+  padding: 0;
+  cursor: grab;
+  border-radius: 18px;
+}
+
+.floating-pet-hit:active {
+  cursor: grabbing;
+}
+
+.floating-pet-hit:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-2) 28%, transparent);
+  border-radius: 16px;
+}
+
+.floating-pet-hit:hover .floating-pet-svg {
+  filter: drop-shadow(0 4px 14px color-mix(in srgb, var(--accent-2) 35%, transparent));
+}
+
+.floating-pet-shadow {
+  position: absolute;
+  bottom: 6px;
+  left: 50%;
+  width: 36px;
+  height: 8px;
+  transform: translateX(-50%);
+  background: radial-gradient(ellipse, rgba(0, 0, 0, 0.16), transparent 70%);
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+.floating-pet-svg {
+  position: relative;
+  z-index: 1;
+  filter: drop-shadow(0 3px 10px rgba(0, 0, 0, 0.12));
+  overflow: visible;
+}
+
+.floating-pet-frame {
+  transition: stroke 160ms ease;
+}
+
+/* Rest position matches BrandMark orb at (14.4, 14.4) */
+.floating-pet-orb-wrap {
+  transform-box: view-box;
+  transform-origin: 0 0;
+  animation: orbWander 3.6s ease-in-out infinite;
+}
+
+.floating-pet--busy .floating-pet-orb-wrap {
+  animation: orbBusy 0.9s ease-in-out infinite;
+}
+
+.floating-pet--attention .floating-pet-orb-wrap {
+  animation: orbAttention 1.1s ease-in-out infinite;
+}
+
+.floating-pet--idle .floating-pet-svg {
+  animation: markFloat 3.6s ease-in-out infinite;
+}
+
+.floating-pet--busy .floating-pet-svg {
+  animation: markPulse 0.9s ease-in-out infinite;
+}
+
+.floating-pet--attention .floating-pet-svg {
+  animation: markNudge 1.1s ease-in-out infinite;
+}
+
+.floating-pet-orb {
+  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--accent-2) 55%, transparent));
+}
+
+/* Soft glass plate behind the mark so it reads on any page */
+.floating-pet-hit::before {
+  content: '';
+  position: absolute;
+  inset: 8px;
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--bg-elevated, #fff) 72%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border-strong, #000) 40%, transparent);
+  backdrop-filter: blur(10px);
+  z-index: 0;
+  pointer-events: none;
+}
+
+/* Wander inside the rounded square (viewBox units around 14.4, 14.4) */
+@keyframes orbWander {
+  0%,
+  100% {
+    transform: translate(14.4px, 14.4px);
+  }
+  20% {
+    transform: translate(11.2px, 12px);
+  }
+  40% {
+    transform: translate(13px, 10.5px);
+  }
+  60% {
+    transform: translate(16.2px, 12.5px);
+  }
+  80% {
+    transform: translate(15px, 15.8px);
+  }
+}
+
+@keyframes orbBusy {
+  0%,
+  100% {
+    transform: translate(14.4px, 14.4px) scale(1);
+  }
+  50% {
+    transform: translate(14.4px, 14.4px) scale(1.25);
+  }
+}
+
+@keyframes orbAttention {
+  0%,
+  100% {
+    transform: translate(14.4px, 14.4px);
+  }
+  25% {
+    transform: translate(12px, 13px);
+  }
+  50% {
+    transform: translate(16.5px, 13px);
+  }
+  75% {
+    transform: translate(14.4px, 16px);
+  }
+}
+
+@keyframes markFloat {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-3px);
+  }
+}
+
+@keyframes markPulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.72;
+  }
+}
+
+@keyframes markNudge {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  40% {
+    transform: scale(1.06);
+  }
+  60% {
+    transform: scale(0.97);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .floating-pet-orb-wrap,
+  .floating-pet--idle .floating-pet-svg,
+  .floating-pet--busy .floating-pet-svg,
+  .floating-pet--attention .floating-pet-svg {
+    animation: none !important;
+  }
+
+  .floating-pet-orb-wrap {
+    transform: translate(14.4px, 14.4px);
+  }
+}
+
+/* Intro callout above the pet so first-time users know what it is */
+.floating-pet-welcome {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 14px);
+  z-index: 6;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: min(280px, calc(100vw - 32px));
+  padding: 11px 12px;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg-elevated, #fff));
+  border: 1px solid var(--border-strong, rgba(0, 0, 0, 0.12));
+  box-shadow: var(--shadow-soft, 0 8px 24px rgba(0, 0, 0, 0.14));
+  pointer-events: auto;
+  -webkit-app-region: no-drag;
+  animation: floatingPetWelcomeIn 380ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.floating-pet-welcome-icon {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--accent);
+  opacity: 0.9;
+}
+
+.floating-pet-welcome-copy {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  text-align: left;
+}
+
+.floating-pet-welcome-copy strong {
+  font-size: 12.5px;
+  font-weight: 650;
+  color: var(--text-primary, #1a1a1a);
+  letter-spacing: -0.01em;
+}
+
+.floating-pet-welcome-copy span {
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--text-secondary, #555);
+}
+
+.floating-pet-welcome-dismiss {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted, #888);
+  cursor: pointer;
+}
+
+.floating-pet-welcome-dismiss:hover {
+  background: var(--bg-hover, rgba(0, 0, 0, 0.06));
+  color: var(--text-primary, #1a1a1a);
+}
+
+/* Caret pointing down at the pet */
+.floating-pet-welcome-arrow {
+  position: absolute;
+  right: 28px;
+  bottom: -6px;
+  width: 12px;
+  height: 12px;
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg-elevated, #fff));
+  border-right: 1px solid var(--border-strong, rgba(0, 0, 0, 0.12));
+  border-bottom: 1px solid var(--border-strong, rgba(0, 0, 0, 0.12));
+  transform: rotate(45deg);
+}
+
+@keyframes floatingPetWelcomeIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .floating-pet-welcome {
+    animation: none;
+  }
+}
+
+.floating-pet-menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 6px);
+  z-index: 5;
+  min-width: 140px;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  border-radius: 10px;
+  background: var(--bg-elevated, #fff);
+  border: 1px solid var(--border-strong, rgba(0, 0, 0, 0.12));
+  box-shadow: var(--shadow-soft, 0 8px 24px rgba(0, 0, 0, 0.14));
+}
+
+.floating-pet-menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  padding: 8px 10px;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary, #1a1a1a);
+  cursor: pointer;
+}
+
+.floating-pet-menu button:hover {
+  background: var(--bg-hover, rgba(0, 0, 0, 0.06));
+}

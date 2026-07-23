@@ -1,0 +1,194 @@
+/* ── Agent pet shell ─────────────────────────────────────────── */
+.agent-pet-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.agent-pet {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+  border-radius: 50%;
+  color: var(--text-primary);
+  transition: transform 160ms var(--ease), filter 160ms var(--ease);
+}
+
+.agent-pet:hover {
+  transform: translateY(-2px) scale(1.04);
+  filter: brightness(1.05);
+}
+
+.agent-pet:active {
+  transform: scale(0.96);
+}
+
+.agent-pet:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 3px;
+}
+
+.agent-pet--open {
+  filter: drop-shadow(0 0 10px var(--accent-glow, rgba(62, 224, 197, 0.35)));
+}
+
+.agent-pet--companion {
+  flex-shrink: 0;
+}
+
+.agent-pet--dock {
+  flex-shrink: 0;
+}
+
+.agent-pet-visual {
+  display: grid;
+  place-items: center;
+  line-height: 0;
+}
+
+/* Mood motion */
+.agent-pet--idle .pet-body,
+.agent-pet--idle .pet-glow {
+  animation: petFloat 3.2s var(--ease) infinite;
+  transform-origin: center;
+}
+
+.agent-pet--busy .pet-body,
+.agent-pet--busy .pet-cursor {
+  animation: petBusy 0.9s ease-in-out infinite;
+}
+
+.agent-pet--attention .pet-body {
+  animation: petAttention 1.4s ease-in-out infinite;
+}
+
+.agent-pet--attention .pet-alert-dot {
+  animation: petBlink 1s step-end infinite;
+}
+
+@keyframes petFloat {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-2px);
+  }
+}
+
+@keyframes petBusy {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+@keyframes petAttention {
+  0%,
+  100% {
+    transform: rotate(0deg);
+  }
+  25% {
+    transform: rotate(-4deg);
+  }
+  75% {
+    transform: rotate(4deg);
+  }
+}
+
+@keyframes petBlink {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0.2;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-pet--idle .pet-body,
+  .agent-pet--idle .pet-glow,
+  .agent-pet--busy .pet-body,
+  .agent-pet--busy .pet-cursor,
+  .agent-pet--attention .pet-body,
+  .agent-pet--attention .pet-alert-dot {
+    animation: none !important;
+  }
+}
+
+/* Context menu */
+.agent-pet-menu {
+  position: absolute;
+  z-index: 80;
+  min-width: 148px;
+  padding: 4px;
+  border-radius: 10px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  box-shadow: var(--shadow-soft);
+  list-style: none;
+  margin: 0;
+}
+
+.agent-pet-menu[data-placement='above'] {
+  bottom: calc(100% + 6px);
+  right: 0;
+}
+
+.agent-pet-menu[data-placement='below'] {
+  top: calc(100% + 6px);
+  right: 0;
+}
+
+.agent-pet-menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: 7px;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 550;
+  cursor: pointer;
+}
+
+.agent-pet-menu button:hover,
+.agent-pet-menu button:focus-visible {
+  background: var(--bg-hover);
+  outline: none;
+}
+
+/* Dock rail — lives in body flex so guest metrics shrink correctly */
+.agent-pet-rail {
+  width: 64px;
+  min-width: 64px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 0 6px 14px;
+  background: transparent;
+  -webkit-app-region: no-drag;
+  z-index: 15;
+  position: relative;
+}
+
+.agent-pet-rail--panel-open {
+  width: 52px;
+  min-width: 52px;
+  padding-bottom: 18px;
+}

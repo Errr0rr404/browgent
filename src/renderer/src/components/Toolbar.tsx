@@ -1,8 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   ArrowLeft,
   ArrowRight,
   Bot,
+  Clock,
+  Download,
   Lock,
   PanelLeft,
   RefreshCw,
@@ -25,8 +27,13 @@ interface Props {
   agentBusy: boolean
   sidebarOpen: boolean
   settingsOpen: boolean
+  historyOpen?: boolean
+  downloadsOpen?: boolean
+  downloadActiveCount?: number
   /** Guest WebContentsView is not covering the content hole (settings / new tab). */
   themeOverlaySafe?: boolean
+  /** When true, themed pet handles agent entry — hide toolbar Agent button. */
+  agentPetVisible?: boolean
   isBookmarked: boolean
   isFavorited: boolean
   theme: ThemeId
@@ -34,7 +41,14 @@ interface Props {
   onToggleAgent: () => void
   onToggleSidebar: () => void
   onToggleBookmark: () => void
+  /** Always open settings (e.g. theme gallery). */
   onOpenSettings: () => void
+  /** Toolbar gear: open if closed, close if open. */
+  onToggleSettings: () => void
+  onToggleHistory?: () => void
+  onOpenHistory?: () => void
+  onToggleDownloads?: () => void
+  onOpenDownloads?: () => void
 }
 
 export function Toolbar({
@@ -43,7 +57,11 @@ export function Toolbar({
   agentBusy,
   sidebarOpen,
   settingsOpen,
+  historyOpen = false,
+  downloadsOpen = false,
+  downloadActiveCount = 0,
   themeOverlaySafe = true,
+  agentPetVisible = true,
   isBookmarked,
   isFavorited,
   theme,
@@ -51,18 +69,44 @@ export function Toolbar({
   onToggleAgent,
   onToggleSidebar,
   onToggleBookmark,
-  onOpenSettings
+  onOpenSettings,
+  onToggleSettings,
+  onToggleHistory,
+  onOpenHistory,
+  onToggleDownloads,
+  onOpenDownloads
 }: Props): React.JSX.Element {
   const searchEngine = useChromePrefs((s) => s.searchEngine)
-  const display = omniboxDisplayUrl(activeTab?.url, { settingsOpen })
+  const setAgentPetVisible = useChromePrefs((s) => s.setAgentPetVisible)
+  const [agentMenuOpen, setAgentMenuOpen] = useState(false)
+  const agentBtnWrapRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!agentMenuOpen) return
+    const onDoc = (e: MouseEvent): void => {
+      if (agentBtnWrapRef.current?.contains(e.target as Node)) return
+      setAgentMenuOpen(false)
+    }
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setAgentMenuOpen(false)
+    }
+    document.addEventListener('mousedown', onDoc, true)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDoc, true)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [agentMenuOpen])
+  const chromeOverlay = settingsOpen || historyOpen
+  const display = omniboxDisplayUrl(activeTab?.url, { settingsOpen, historyOpen })
   const [value, setValue] = useState(display)
   const [focused, setFocused] = useState(false)
 
   useEffect(() => {
     if (!focused) {
-      setValue(omniboxDisplayUrl(activeTab?.url, { settingsOpen }))
+      setValue(omniboxDisplayUrl(activeTab?.url, { settingsOpen, historyOpen }))
     }
-  }, [activeTab?.id, activeTab?.url, focused, settingsOpen])
+  }, [activeTab?.id, activeTab?.url, focused, settingsOpen, historyOpen])
 
   const submit = (): void => {
     const input = value.trim()
@@ -76,8 +120,32 @@ export function Toolbar({
       ;(document.activeElement as HTMLElement | null)?.blur?.()
       return
     }
+    if (
+      input === 'browgent://history' ||
+      input === 'history' ||
+      input === 'about:history'
+    ) {
+      ;(onOpenHistory ?? onToggleHistory)?.()
+      ;(document.activeElement as HTMLElement | null)?.blur?.()
+      return
+    }
+    if (
+      input === 'browgent://downloads' ||
+      input === 'downloads' ||
+      input === 'about:downloads'
+    ) {
+      ;(onOpenDownloads ?? onToggleDownloads)?.()
+      ;(document.activeElement as HTMLElement | null)?.blur?.()
+      return
+    }
     // Match New Tab: multi-word / no-dot → preferred search engine
     const target = resolveOmniboxInput(input, searchEngine)
+    // Close chrome overlays so the user sees the navigated guest page
+    if (historyOpen) {
+      // history is controlled in App; toggle closed if open
+      if (onToggleHistory && historyOpen) onToggleHistory()
+    }
+    if (settingsOpen) onToggleSettings()
     if (!activeTab?.id) {
       void window.browgent.createTab(target)
     } else {
@@ -87,19 +155,23 @@ export function Toolbar({
   }
 
   const isSecure = display.startsWith('https://')
-  const isLoading = !settingsOpen && (activeTab?.isLoading ?? false)
+  const isLoading = !chromeOverlay && (activeTab?.isLoading ?? false)
   const canBookmark =
-    !settingsOpen &&
+    !chromeOverlay &&
     Boolean(activeTab?.url) &&
     !isBlankUrl(activeTab?.url) &&
     !activeTab!.url.startsWith('data:')
 
   return (
     <div className="toolbar">
-      <div className="toolbar-brand" aria-label="browgent">
-        <BrandMark size={16} className="brand-mark-svg" strokeWidth={2} />
-        <span className="brand-name">browgent</span>
-      </div>
+      {/* Brand only when sidebar is open (toolbar is the first chrome row).
+          When sidebar is closed, brand lives on the tab bar with traffic lights. */}
+      {sidebarOpen && (
+        <div className="toolbar-brand" aria-label="browgent">
+          <BrandMark size={16} className="brand-mark-svg" strokeWidth={2} />
+          <span className="brand-name">browgent</span>
+        </div>
+      )}
       <div className="nav-group">
         {!sidebarOpen && (
           <button
@@ -116,7 +188,7 @@ export function Toolbar({
           type="button"
           className="icon-btn"
           aria-label="Back"
-          disabled={settingsOpen || !activeTab?.canGoBack}
+          disabled={chromeOverlay || !activeTab?.canGoBack}
           onClick={() => void window.browgent.goBack(activeTab?.id)}
         >
           <ArrowLeft size={16} strokeWidth={1.75} />
@@ -125,7 +197,7 @@ export function Toolbar({
           type="button"
           className="icon-btn"
           aria-label="Forward"
-          disabled={settingsOpen || !activeTab?.canGoForward}
+          disabled={chromeOverlay || !activeTab?.canGoForward}
           onClick={() => void window.browgent.goForward(activeTab?.id)}
         >
           <ArrowRight size={16} strokeWidth={1.75} />
@@ -134,7 +206,7 @@ export function Toolbar({
           type="button"
           className="icon-btn"
           aria-label={isLoading ? 'Stop' : 'Reload'}
-          disabled={settingsOpen || isBlankUrl(activeTab?.url)}
+          disabled={chromeOverlay || isBlankUrl(activeTab?.url)}
           onClick={() =>
             isLoading
               ? void window.browgent.stop(activeTab?.id)
@@ -203,6 +275,35 @@ export function Toolbar({
       </form>
 
       <div className="toolbar-actions">
+        {onToggleHistory && (
+          <button
+            type="button"
+            className={`icon-btn${historyOpen ? ' active' : ''}`}
+            aria-label="History"
+            title="History (⌘Y)"
+            aria-pressed={historyOpen}
+            onClick={onToggleHistory}
+          >
+            <Clock size={16} strokeWidth={1.75} />
+          </button>
+        )}
+        {onToggleDownloads && (
+          <button
+            type="button"
+            className={`icon-btn downloads-btn${downloadsOpen ? ' active' : ''}`}
+            aria-label="Downloads"
+            title="Downloads (⌘⇧J)"
+            aria-pressed={downloadsOpen}
+            onClick={onToggleDownloads}
+          >
+            <Download size={16} strokeWidth={1.75} />
+            {downloadActiveCount > 0 && (
+              <span className="downloads-badge" aria-hidden>
+                {downloadActiveCount > 9 ? '9+' : downloadActiveCount}
+              </span>
+            )}
+          </button>
+        )}
         <ThemePicker
           theme={theme}
           onChange={onThemeChange}
@@ -215,22 +316,54 @@ export function Toolbar({
           aria-label="Settings"
           title="Settings (⌘,)"
           aria-pressed={settingsOpen}
-          onClick={onOpenSettings}
+          onClick={onToggleSettings}
         >
           <Settings2 size={16} strokeWidth={1.75} />
         </button>
-        <button
-          type="button"
-          className={`agent-toggle${agentOpen ? ' open' : ''}${agentBusy ? ' busy' : ''}`}
-          onClick={onToggleAgent}
-          aria-pressed={agentOpen}
-          aria-label="Toggle agent panel"
-          title="Toggle agent panel (⌘J)"
-        >
-          <span className="agent-dot" aria-hidden />
-          <Bot size={14} strokeWidth={1.75} />
-          Agent
-        </button>
+        {!agentPetVisible && (
+          <div className="agent-toggle-wrap" ref={agentBtnWrapRef}>
+            <button
+              type="button"
+              className={`agent-toggle${agentOpen ? ' open' : ''}${agentBusy ? ' busy' : ''}`}
+              onClick={() => {
+                setAgentMenuOpen(false)
+                onToggleAgent()
+              }}
+              onContextMenu={(e) => {
+                e.preventDefault()
+                // Absolute menu is clipped by guest WebContentsView over the content hole.
+                if (!themeOverlaySafe) {
+                  setAgentPetVisible(true)
+                  return
+                }
+                setAgentMenuOpen(true)
+              }}
+              aria-pressed={agentOpen}
+              aria-label="Toggle agent panel"
+              title="Toggle agent panel (⌘J) · right-click to show companion"
+            >
+              <span className="agent-dot" aria-hidden />
+              <Bot size={14} strokeWidth={1.75} />
+              Agent
+            </button>
+            {agentMenuOpen && (
+              <ul className="agent-toggle-menu" role="menu">
+                <li role="none">
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setAgentPetVisible(true)
+                      setAgentMenuOpen(false)
+                    }}
+                  >
+                    Show companion
+                  </button>
+                </li>
+              </ul>
+            )}
+          </div>
+        )}
       </div>
     </div>
   )

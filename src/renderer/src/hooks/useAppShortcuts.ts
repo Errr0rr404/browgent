@@ -9,13 +9,21 @@ interface Options {
   agentStatus: AgentSessionState['status'] | undefined
   settingsOpen: boolean
   libraryOpen: boolean
+  historyOpen?: boolean
+  findOpen?: boolean
+  downloadsOpen?: boolean
   createTabOnce: (url?: string) => void | Promise<void>
   openSettings: (section?: SettingsSection) => void
+  /** Preferred for ⌘, — toggles closed if already open */
+  toggleSettings?: (section?: SettingsSection) => void
   closeSettings: () => void
   setAgentOpen: Dispatch<SetStateAction<boolean>>
   setSidebarOpen: Dispatch<SetStateAction<boolean>>
   setLibraryOpen: Dispatch<SetStateAction<boolean>>
   setSettingsOpen: Dispatch<SetStateAction<boolean>>
+  setHistoryOpen?: Dispatch<SetStateAction<boolean>>
+  setFindOpen?: Dispatch<SetStateAction<boolean>>
+  setDownloadsOpen?: Dispatch<SetStateAction<boolean>>
   isBookmarkedUrl: (url: string) => BookmarkId | null
   toggleFavorite: (id: BookmarkId) => void
   pinCurrentAsFavorite: (title: string, url: string, favicon?: string) => void
@@ -27,13 +35,20 @@ export function useAppShortcuts({
   agentStatus,
   settingsOpen,
   libraryOpen,
+  historyOpen = false,
+  findOpen = false,
+  downloadsOpen = false,
   createTabOnce,
   openSettings,
+  toggleSettings,
   closeSettings,
   setAgentOpen,
   setSidebarOpen,
   setLibraryOpen,
   setSettingsOpen,
+  setHistoryOpen,
+  setFindOpen,
+  setDownloadsOpen,
   isBookmarkedUrl,
   toggleFavorite,
   pinCurrentAsFavorite
@@ -49,6 +64,21 @@ export function useAppShortcuts({
           target.isContentEditable)
 
       if (e.key === 'Escape') {
+        if (findOpen) {
+          e.preventDefault()
+          setFindOpen?.(false)
+          return
+        }
+        if (downloadsOpen) {
+          e.preventDefault()
+          setDownloadsOpen?.(false)
+          return
+        }
+        if (historyOpen) {
+          e.preventDefault()
+          setHistoryOpen?.(false)
+          return
+        }
         if (settingsOpen) {
           e.preventDefault()
           closeSettings()
@@ -79,12 +109,19 @@ export function useAppShortcuts({
 
       if (!mod) return
 
-      if (e.key === 't') {
+      // With Shift, Chromium reports e.key as "J"/"S" — always compare lowercased.
+      const key = e.key.length === 1 ? e.key.toLowerCase() : e.key
+
+      if (key === 't') {
         e.preventDefault()
         void createTabOnce()
       }
-      if (e.key === 'w') {
+      if (key === 'w') {
         e.preventDefault()
+        if (historyOpen) {
+          setHistoryOpen?.(false)
+          return
+        }
         if (settingsOpen) {
           closeSettings()
           return
@@ -92,25 +129,32 @@ export function useAppShortcuts({
         const active = tabs.find((t) => t.isActive)
         if (active) void window.browgent.closeTab(active.id)
       }
-      if (e.key === 'l') {
+      if (key === 'l') {
         e.preventDefault()
         const input = document.querySelector<HTMLInputElement>('.omnibox')
         input?.focus()
         input?.select()
       }
-      if (e.key === 'j') {
+
+      if (key === 'j' && e.shiftKey) {
+        e.preventDefault()
+        setDownloadsOpen?.((v) => !v)
+        return
+      }
+      if (key === 'j') {
         e.preventDefault()
         setAgentOpen((v) => !v)
       }
-      if (e.key === 's' && e.shiftKey) {
+      if (key === 's' && e.shiftKey) {
         e.preventDefault()
         setSidebarOpen((v) => !v)
       }
-      if (e.key === ',' && !e.shiftKey) {
+      if (key === ',' && !e.shiftKey) {
         e.preventDefault()
-        openSettings('appearance')
+        if (toggleSettings) toggleSettings('appearance')
+        else openSettings('appearance')
       }
-      if (e.key === 'd' && !e.shiftKey) {
+      if (key === 'd' && !e.shiftKey) {
         e.preventDefault()
         const active = tabs.find((t) => t.isActive)
         if (!active?.url || isBlankUrl(active.url)) return
@@ -118,11 +162,46 @@ export function useAppShortcuts({
         if (existing) toggleFavorite(existing)
         else pinCurrentAsFavorite(active.title, active.url, active.favicon)
       }
-      if (e.key === 'r' && !e.shiftKey) {
+      if (key === 'r' && !e.shiftKey) {
         e.preventDefault()
-        if (settingsOpen) return
+        if (settingsOpen || historyOpen) return
         const active = tabs.find((t) => t.isActive)
         if (active && !isBlankUrl(active.url)) void window.browgent.reload(active.id)
+      }
+      if (key === 'f' && !e.shiftKey) {
+        e.preventDefault()
+        if (settingsOpen || historyOpen) return
+        const active = tabs.find((t) => t.isActive)
+        if (!active || isBlankUrl(active.url)) return
+        setFindOpen?.((v) => !v)
+      }
+      if (key === 'y' && !e.shiftKey) {
+        e.preventDefault()
+        setHistoryOpen?.((v) => !v)
+        setSettingsOpen(false)
+        setDownloadsOpen?.(false)
+      }
+      if (e.key === 'p' && !e.shiftKey) {
+        e.preventDefault()
+        if (settingsOpen || historyOpen) return
+        const active = tabs.find((t) => t.isActive)
+        if (active && !isBlankUrl(active.url)) void window.browgent.printPage?.(active.id)
+      }
+      // Zoom: ⌘+ / ⌘= / ⌘- / ⌘0
+      if (!typing && (e.key === '=' || e.key === '+' || e.code === 'Equal')) {
+        e.preventDefault()
+        if (settingsOpen || historyOpen) return
+        void window.browgent.zoomIn?.(tabs.find((t) => t.isActive)?.id)
+      }
+      if (!typing && (e.key === '-' || e.key === '_')) {
+        e.preventDefault()
+        if (settingsOpen || historyOpen) return
+        void window.browgent.zoomOut?.(tabs.find((t) => t.isActive)?.id)
+      }
+      if (!typing && e.key === '0') {
+        e.preventDefault()
+        if (settingsOpen || historyOpen) return
+        void window.browgent.zoomReset?.(tabs.find((t) => t.isActive)?.id)
       }
       if (e.key >= '1' && e.key <= '9') {
         e.preventDefault()
@@ -130,12 +209,13 @@ export function useAppShortcuts({
         const tab = tabs[idx]
         if (tab) {
           setSettingsOpen(false)
+          setHistoryOpen?.(false)
           void window.browgent.activateTab(tab.id)
         }
       }
       if (!typing && (e.key === '[' || e.key === ']')) {
         e.preventDefault()
-        if (settingsOpen) return
+        if (settingsOpen || historyOpen) return
         const active = tabs.find((t) => t.isActive)
         if (e.key === '[') void window.browgent.goBack(active?.id)
         else void window.browgent.goForward(active?.id)
@@ -152,11 +232,18 @@ export function useAppShortcuts({
     agentStatus,
     settingsOpen,
     libraryOpen,
+    historyOpen,
+    findOpen,
+    downloadsOpen,
     openSettings,
+    toggleSettings,
     closeSettings,
     setAgentOpen,
     setSidebarOpen,
     setLibraryOpen,
-    setSettingsOpen
+    setSettingsOpen,
+    setHistoryOpen,
+    setFindOpen,
+    setDownloadsOpen
   ])
 }

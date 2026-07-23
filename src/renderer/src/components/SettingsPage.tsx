@@ -71,6 +71,11 @@ function buildShortcuts(mod: string): Array<{ label: string; keys: string[] }> {
     { label: 'Open settings', keys: [mod, ','] },
     { label: 'Pin page to favorites', keys: [mod, 'D'] },
     { label: 'Reload page', keys: [mod, 'R'] },
+    { label: 'Find in page', keys: [mod, 'F'] },
+    { label: 'History', keys: [mod, 'Y'] },
+    { label: 'Downloads', keys: [mod, shift, 'J'] },
+    { label: 'Print page', keys: [mod, 'P'] },
+    { label: 'Zoom in / out / reset', keys: [mod, '+ / − / 0'] },
     { label: 'Switch to tab 1–9', keys: [mod, '1–9'] },
     { label: 'Back / forward', keys: [mod, '[ ]'] },
     { label: 'Stop agent / blur omnibox', keys: ['Esc'] }
@@ -288,6 +293,15 @@ export function SettingsPage({
                       </button>
                     )
                   })}
+                </div>
+                <div className="settings-card settings-card-pad" style={{ marginTop: 20 }}>
+                  <ToggleRow
+                    label="Agent companion"
+                    sub="Themed pet on New Tab and the right rail — hides the top Agent button"
+                    on={prefs.agentPetVisible}
+                    onToggle={() => prefs.setAgentPetVisible(!prefs.agentPetVisible)}
+                    last
+                  />
                 </div>
               </section>
             )}

@@ -240,6 +240,7 @@ export function ThemePicker({
         type="button"
         ref={triggerRef}
         className={`theme-picker-btn${open ? ' open' : ''}`}
+        aria-label="Theme"
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={open ? listId : undefined}
@@ -247,12 +248,6 @@ export function ThemePicker({
         onClick={() => setOpen((v) => !v)}
       >
         <Palette size={14} strokeWidth={1.75} />
-        <span className="theme-picker-label">Theme</span>
-        <span className="theme-swatch-row" aria-hidden>
-          {(current?.swatches ?? ['#333', '#666', '#999']).map((c) => (
-            <span key={c} className="theme-swatch-dot" style={{ background: c }} />
-          ))}
-        </span>
       </button>
 
       {menu &&

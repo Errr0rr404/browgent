@@ -15,6 +15,52 @@ export interface TabState {
   isActive: boolean
   /** Which agent (if any) currently owns this tab */
   owner?: 'human' | 'agent' | null
+  /** Page zoom factor (1 = 100%) */
+  zoomFactor?: number
+}
+
+/** Persistent browsing history entry (not per-tab back/forward). */
+export interface HistoryEntry {
+  id: string
+  url: string
+  title: string
+  favicon?: string
+  visitCount: number
+  lastVisit: number
+}
+
+export type DownloadState =
+  | 'progressing'
+  | 'completed'
+  | 'cancelled'
+  | 'interrupted'
+
+export interface DownloadItemState {
+  id: string
+  url: string
+  filename: string
+  savePath: string
+  mimeType?: string
+  totalBytes: number
+  receivedBytes: number
+  state: DownloadState
+  startedAt: number
+  endedAt?: number
+  canResume?: boolean
+}
+
+export interface FindInPageResult {
+  tabId: TabId | null
+  requestId: number
+  activeMatchOrdinal: number
+  matches: number
+  finalUpdate: boolean
+}
+
+export interface FindInPageOptions {
+  forward?: boolean
+  findNext?: boolean
+  matchCase?: boolean
 }
 
 export interface BrowserChromeMetrics {
@@ -145,6 +191,8 @@ export const IPC = {
   WINDOW_MINIMIZE: 'window:minimize',
   WINDOW_MAXIMIZE: 'window:maximize',
   WINDOW_CLOSE: 'window:close',
+  WINDOW_FULLSCREEN_GET: 'window:fullscreenGet',
+  WINDOW_FULLSCREEN_CHANGED: 'window:fullscreenChanged',
 
   AGENT_SEND: 'agent:send',
   AGENT_GET: 'agent:get',
@@ -165,5 +213,45 @@ export const IPC = {
 
   /** Dual-mode driver + Playwright CDP endpoint */
   DRIVER_STATUS: 'driver:status',
-  DRIVER_SET_MODE: 'driver:setMode'
+  DRIVER_SET_MODE: 'driver:setMode',
+
+  /** Floating agent companion (native overlay above guest pages) */
+  PET_CONFIGURE: 'pet:configure',
+  PET_STATE: 'pet:state',
+  PET_DRAG_START: 'pet:dragStart',
+  PET_DRAG_BY: 'pet:dragBy',
+  PET_DRAG_END: 'pet:dragEnd',
+  PET_CLICK: 'pet:click',
+  PET_HIDE: 'pet:hide',
+  PET_MOVED: 'pet:moved',
+
+  /** Find in page */
+  FIND_START: 'find:start',
+  FIND_STOP: 'find:stop',
+  FIND_RESULT: 'find:result',
+
+  /** Page zoom */
+  ZOOM_GET: 'zoom:get',
+  ZOOM_SET: 'zoom:set',
+  ZOOM_IN: 'zoom:in',
+  ZOOM_OUT: 'zoom:out',
+  ZOOM_RESET: 'zoom:reset',
+
+  /** Print active guest page */
+  TAB_PRINT: 'tab:print',
+
+  /** Browsing history */
+  HISTORY_GET: 'history:get',
+  HISTORY_SEARCH: 'history:search',
+  HISTORY_DELETE: 'history:delete',
+  HISTORY_CLEAR: 'history:clear',
+
+  /** Downloads */
+  DOWNLOADS_GET: 'downloads:get',
+  DOWNLOADS_STATE: 'downloads:state',
+  DOWNLOADS_OPEN: 'downloads:open',
+  DOWNLOADS_SHOW: 'downloads:show',
+  DOWNLOADS_CANCEL: 'downloads:cancel',
+  DOWNLOADS_CLEAR: 'downloads:clear',
+  DOWNLOADS_OPEN_FOLDER: 'downloads:openFolder'
 } as const

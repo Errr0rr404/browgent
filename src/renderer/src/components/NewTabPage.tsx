@@ -1,13 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Search } from 'lucide-react'
+import { Info, Search, X } from 'lucide-react'
 import { Favicon } from './Favicon'
 import { BrandMark } from './BrandMark'
 import {
+  buildSearchUrl,
   resolveOmniboxInput,
   useChromePrefs
 } from '../stores/chromePrefs'
 import { platformModKey } from '../lib/platform'
 import '../styles/chrome-pages.css'
+
+const INFO_DISMISS_KEY = 'browgent.newtab.infoDismissed'
 
 export interface NewTabFavorite {
   id: string
@@ -70,6 +73,19 @@ export function NewTabPage({
     useChromePrefs()
   const [query, setQuery] = useState('')
   const [now, setNow] = useState(() => new Date())
+  const [infoOpen, setInfoOpen] = useState(() => {
+    try {
+      // Migrate old welcome dismiss key so returning users aren’t re-prompted
+      const legacy = localStorage.getItem('browgent.newtab.welcomeDismissed')
+      if (legacy === '1') {
+        localStorage.setItem(INFO_DISMISS_KEY, '1')
+        localStorage.removeItem('browgent.newtab.welcomeDismissed')
+      }
+      return localStorage.getItem(INFO_DISMISS_KEY) !== '1'
+    } catch {
+      return true
+    }
+  })
   const inputRef = useRef<HTMLInputElement>(null)
   const mod = useMemo(() => platformModKey(), [])
 
@@ -79,7 +95,6 @@ export function NewTabPage({
     return () => window.clearInterval(id)
   }, [ntClock])
 
-  // Focus the search field when the New Tab surface mounts
   useEffect(() => {
     const t = window.setTimeout(() => inputRef.current?.focus(), 40)
     return () => window.clearTimeout(t)
@@ -92,14 +107,21 @@ export function NewTabPage({
     return name ? `${base}, ${name}.` : `${base}.`
   }, [now, greetingName])
 
+  /** Enter → search engine (or URL if it clearly looks like one). ⌘/Ctrl+Enter → agent. */
   const submitNavigate = useCallback(() => {
     const raw = query.trim()
     if (!raw) return
-    const url = resolveOmniboxInput(raw, searchEngine)
-    if (url) {
-      onNavigate(url)
-      setQuery('')
-    }
+    // Prefer real search for plain language; only treat as URL when it looks like one
+    const looksLikeUrl =
+      /^https?:\/\//i.test(raw) ||
+      /^\/\//.test(raw) ||
+      (/^[^\s]+\.[a-z]{2,}([/:?#].*)?$/i.test(raw) && !/\s/.test(raw))
+    const target = looksLikeUrl
+      ? resolveOmniboxInput(raw, searchEngine)
+      : buildSearchUrl(searchEngine, raw)
+    if (!target) return
+    onNavigate(target)
+    setQuery('')
   }, [query, searchEngine, onNavigate])
 
   const submitAgent = useCallback(() => {
@@ -112,6 +134,7 @@ export function NewTabPage({
   const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>): void => {
     if (e.key !== 'Enter') return
     e.preventDefault()
+    e.stopPropagation()
     if (e.metaKey || e.ctrlKey) submitAgent()
     else submitNavigate()
   }
@@ -121,13 +144,22 @@ export function NewTabPage({
     submitNavigate()
   }
 
+  const dismissInfo = (): void => {
+    setInfoOpen(false)
+    try {
+      localStorage.setItem(INFO_DISMISS_KEY, '1')
+    } catch {
+      /* ignore */
+    }
+  }
+
   return (
     <div className="newtab" data-screen-label="New Tab">
       <div className="newtab-ambient" aria-hidden />
       <div className="newtab-inner">
-        <BrandMark size={44} className="newtab-brand" strokeWidth={1.8} />
+        <BrandMark size={44} className="newtab-brand newtab-enter newtab-enter-1" strokeWidth={1.8} />
 
-        <div className="newtab-hello">
+        <div className="newtab-hello newtab-enter newtab-enter-2">
           {ntClock && (
             <div className="newtab-clock">
               {clock.time} · {clock.date}
@@ -136,28 +168,61 @@ export function NewTabPage({
           <h1 className="newtab-greeting">{greeting}</h1>
         </div>
 
-        <form className="newtab-search" onSubmit={onSubmit}>
+        {infoOpen && (
+          <div className="newtab-info newtab-enter newtab-enter-2" role="status">
+            <Info size={16} strokeWidth={1.75} className="newtab-info-icon" aria-hidden />
+            <div className="newtab-info-copy">
+              <strong>Search tip</strong>
+              <span>
+                Type anything and press Enter to search with {searchEngine}, or enter a full address.
+                Use {mod}↵ (or the agent chip) to ask the agent instead.
+              </span>
+            </div>
+            <button
+              type="button"
+              className="newtab-info-dismiss"
+              aria-label="Dismiss tip"
+              onClick={dismissInfo}
+            >
+              <X size={14} strokeWidth={2} />
+            </button>
+          </div>
+        )}
+
+        <form className="newtab-search newtab-enter newtab-enter-3" onSubmit={onSubmit}>
           <Search size={15} strokeWidth={1.75} className="newtab-search-icon" aria-hidden />
           <input
             ref={inputRef}
+            type="search"
+            enterKeyHint="search"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={onKeyDown}
-            placeholder="Search, enter address, or ask the agent"
-            aria-label="Search or ask the agent"
+            placeholder={`Search ${searchEngine} or enter address`}
+            aria-label={`Search ${searchEngine} or enter address`}
             autoComplete="off"
             spellCheck={false}
           />
-          <span
+          <button
+            type="submit"
+            className="newtab-search-go"
+            aria-label={`Search ${searchEngine}`}
+            title={`Search ${searchEngine} (Enter)`}
+          >
+            Search
+          </button>
+          <button
+            type="button"
             className="newtab-agent-chip"
             title={`${mod}+Enter to ask the agent`}
+            onClick={submitAgent}
           >
             {mod}↵ agent
-          </span>
+          </button>
         </form>
 
         {ntChips && (
-          <div className="newtab-chips">
+          <div className="newtab-chips newtab-enter newtab-enter-4">
             {AGENT_CHIPS.map((text) => (
               <button
                 key={text}
@@ -173,7 +238,7 @@ export function NewTabPage({
 
         {ntFavs && (
           favorites.length > 0 ? (
-            <div className="newtab-favs">
+            <div className="newtab-favs newtab-enter newtab-enter-5">
               {favorites.map((f) => (
                 <button
                   key={f.id}
@@ -188,7 +253,7 @@ export function NewTabPage({
               ))}
             </div>
           ) : (
-            <p className="newtab-favs-empty">
+            <p className="newtab-favs-empty newtab-enter newtab-enter-5">
               Pin sites with the star or {mod}D — they show up here.
             </p>
           )

@@ -27,6 +27,8 @@ export interface ExecuteContext {
   signal?: AbortSignal
   /** Resolve placeholder strings (e.g. LLM-secret placeholders) to raw values for local tool use */
   resolver?: (text: string) => string
+  /** When true, screenshot results carry the base64 image for a vision model. */
+  vision?: boolean
 }
 
 const GUARDED_TAB_TOOLS = new Set<ToolName>([
@@ -95,7 +97,10 @@ export class ToolExecutor {
           }
           const currentHost = this.tabs.getCommittedHost()
           const isCrossHost = !!host && (currentHost === '' || currentHost !== host)
-          if (host && isCrossHost && policy.confirmCrossHost && ctx.requestConfirm) {
+          if (host && isCrossHost && policy.confirmCrossHost) {
+            if (!ctx.requestConfirm) {
+              return fail(name, 'Cross-host new tab requires confirmation but no confirm handler is available')
+            }
             const reason = currentHost === ''
               ? `Open new tab on ${host}?`
               : `Open new tab on ${host} (from ${currentHost})?`
@@ -151,14 +156,15 @@ export class ToolExecutor {
           if (!resolvedId) return fail(name, 'No active tab')
           const currentHost = this.tabs.getCommittedHost(resolvedId)
           const isCrossHost = !!host && (currentHost === '' || currentHost !== host)
-          if (host && isCrossHost) {
-            if (policy.confirmCrossHost && ctx.requestConfirm) {
-              const reason = currentHost === ''
-                ? `Navigate to new host ${host}?`
-                : `Navigate to new host ${host} (from ${currentHost})?`
-              const allowed = await ctx.requestConfirm(reason, name, args)
-              if (!allowed) return fail(name, 'Navigation rejected by human')
+          if (host && isCrossHost && policy.confirmCrossHost) {
+            if (!ctx.requestConfirm) {
+              return fail(name, 'Cross-host navigation requires confirmation but no confirm handler is available')
             }
+            const reason = currentHost === ''
+              ? `Navigate to new host ${host}?`
+              : `Navigate to new host ${host} (from ${currentHost})?`
+            const allowed = await ctx.requestConfirm(reason, name, args)
+            if (!allowed) return fail(name, 'Navigation rejected by human')
           }
           const started = this.tabs.navigate(resolvedId, input)
           if (!started) {
@@ -268,12 +274,16 @@ export class ToolExecutor {
         case 'screenshot': {
           const buf = await this.tabs.screenshotActive(str(args.tabId))
           if (!buf) return fail(name, 'Screenshot failed')
-          // Don't dump full base64 into trajectory — just metadata
-          return ok(
+          const base64 = buf.toString('base64')
+          // Trajectory keeps only metadata; the image (if any) rides a transient
+          // field the session consumes for the vision model and never persists.
+          const result = ok(
             name,
-            { bytes: buf.length, base64Length: buf.toString('base64').length },
+            { bytes: buf.length, base64Length: base64.length },
             `Screenshot ${buf.length} bytes`
           )
+          if (ctx.vision) result.image = base64
+          return result
         }
 
         case 'click': {
@@ -337,7 +347,13 @@ export class ToolExecutor {
                 }
                 const isCross = target.host && (curHost === '' || curHost !== target.host)
                 if (isCross) {
-                  if (policy.confirmCrossHost && ctx.requestConfirm) {
+                  if (policy.confirmCrossHost) {
+                    if (!ctx.requestConfirm) {
+                      return fail(
+                        name,
+                        'Cross-host click requires confirmation but no confirm handler is available'
+                      )
+                    }
                     const allowed = await ctx.requestConfirm(
                       `Click navigates to new host ${target.host}. Allow?`,
                       name,

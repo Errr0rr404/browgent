@@ -15,9 +15,10 @@ export function tabDisplayTitle(title?: string | null, url?: string | null): str
 /** Display string for the omnibox when not editing. */
 export function omniboxDisplayUrl(
   url: string | undefined,
-  options?: { settingsOpen?: boolean }
+  options?: { settingsOpen?: boolean; historyOpen?: boolean }
 ): string {
   if (options?.settingsOpen) return 'browgent://settings'
+  if (options?.historyOpen) return 'browgent://history'
   if (!url || isBlankUrl(url)) return ''
   return url
 }

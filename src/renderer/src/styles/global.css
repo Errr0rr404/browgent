@@ -50,7 +50,8 @@
   --toolbar-h: 50px;
   --statusbar-h: 30px;
   --agent-w: 400px;
-  --sidebar-w: 248px;
+  /* Wide enough for a comfortable 4×2 favorites grid */
+  --sidebar-w: 268px;
 
   /* Typography */
   --font-sans: 'Literata', Georgia, serif;

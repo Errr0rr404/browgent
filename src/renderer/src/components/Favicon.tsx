@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Globe } from 'lucide-react'
 
 interface Props {
@@ -9,9 +9,27 @@ interface Props {
   small?: boolean
 }
 
+/** Many sites don't serve /favicon.ico — fall back to a host-keyed icon service before giving up. */
+function fallbackFaviconUrl(src: string): string | null {
+  try {
+    const host = new URL(src).hostname
+    return host ? `https://icons.duckduckgo.com/ip3/${host}.ico` : null
+  } catch {
+    return null
+  }
+}
+
 export function Favicon({ src, title, size = 14, className, small }: Props): React.JSX.Element {
-  const [broken, setBroken] = useState(false)
-  if (!src || broken) {
+  const [attempt, setAttempt] = useState(0)
+  const fallback = useMemo(() => (src ? fallbackFaviconUrl(src) : null), [src])
+
+  useEffect(() => {
+    setAttempt(0)
+  }, [src])
+
+  const effectiveSrc = attempt === 0 ? src : attempt === 1 ? (fallback ?? undefined) : undefined
+
+  if (!effectiveSrc) {
     if (className === 'tab-favicon') {
       return (
         <span className="tab-favicon placeholder" aria-hidden title={title}>
@@ -44,12 +62,12 @@ export function Favicon({ src, title, size = 14, className, small }: Props): Rea
   return (
     <img
       className={className ?? 'arc-favicon'}
-      src={src}
+      src={effectiveSrc}
       alt=""
       width={size}
       height={size}
       draggable={false}
-      onError={() => setBroken(true)}
+      onError={() => setAttempt((a) => (a === 0 && fallback ? 1 : 2))}
       title={title}
     />
   )

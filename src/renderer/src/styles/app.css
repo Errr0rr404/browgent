@@ -65,13 +65,24 @@
   flex: 1;
 }
 
-/* macOS traffic lights sit on the first chrome row (tabs, or toolbar when sidebar open). */
-.platform-darwin .tabbar {
+/* macOS traffic lights sit on the first chrome row (tabs, or toolbar when sidebar open).
+   In fullscreen the system chrome is hidden — reclaim that inset entirely. */
+.platform-darwin:not(.is-fullscreen) .tabbar {
   padding-left: 78px;
 }
 
-.platform-darwin.sidebar-open .toolbar {
+.platform-darwin.sidebar-open:not(.is-fullscreen) .toolbar {
   padding-left: 78px;
+}
+
+.platform-darwin.is-fullscreen .tabbar,
+.platform-darwin.is-fullscreen .toolbar {
+  padding-left: 14px;
+}
+
+.platform-darwin.is-fullscreen .tabbar-brand,
+.platform-darwin.is-fullscreen .toolbar-brand {
+  margin-left: 0;
 }
 
 .window-controls {
@@ -103,11 +114,24 @@
 /* ── Tabs ───────────────────────────────────────────────────── */
 .tabbar {
   display: flex;
-  align-items: flex-end;
-  gap: 6px;
+  align-items: center;
+  gap: 10px;
   height: var(--tabbar-h);
   padding: 0 12px 0 14px;
   -webkit-app-region: no-drag;
+}
+
+.tabbar-brand {
+  flex-shrink: 0;
+  align-self: center;
+  padding-right: 4px;
+  -webkit-app-region: drag;
+  user-select: none;
+}
+
+.tabbar .tabs-scroll {
+  align-self: flex-end;
+  height: 100%;
 }
 
 .tabs-scroll {
@@ -248,7 +272,7 @@
   border-radius: var(--radius-sm);
   color: var(--text-secondary);
   flex-shrink: 0;
-  margin-bottom: 1px;
+  align-self: center;
   transition: background 140ms var(--ease), color 140ms var(--ease), transform 120ms var(--ease);
 }
 
@@ -379,6 +403,44 @@
   gap: 6px;
 }
 
+.agent-toggle-wrap {
+  position: relative;
+  -webkit-app-region: no-drag;
+}
+
+.agent-toggle-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 60;
+  min-width: 148px;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  border-radius: 10px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  box-shadow: var(--shadow-soft);
+}
+
+.agent-toggle-menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: 7px;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 550;
+  cursor: pointer;
+}
+
+.agent-toggle-menu button:hover {
+  background: var(--bg-hover);
+}
+
 .agent-toggle {
   display: flex;
   align-items: center;
@@ -463,6 +525,10 @@
   animation: arcSidebarIn 220ms var(--ease-out);
   -webkit-app-region: no-drag;
   user-select: none;
+  /* Stay above guest hit-testing mistakes and chrome drag bleed */
+  position: relative;
+  z-index: 25;
+  pointer-events: auto;
 }
 
 @keyframes arcSidebarIn {
@@ -515,22 +581,31 @@
   background: var(--accent-dim);
 }
 
-/* Favorites grid — the Arc signature look */
+/* Favorites grid — 4×2 Arc-style pin board */
 .arc-favorites {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 8px;
-  padding: 8px 12px 14px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-rows: repeat(2, auto);
+  gap: 6px;
+  padding: 8px 10px 14px;
   flex-shrink: 0;
+  pointer-events: auto;
+  position: relative;
+  z-index: 1;
 }
 
 .arc-favorite-tile {
   aspect-ratio: 1;
-  border-radius: var(--radius-lg);
+  border-radius: 12px;
   background: var(--tile-bg);
   border: var(--bw, 1px) solid var(--tile-brd);
   display: grid;
   place-items: center;
+  cursor: pointer;
+  pointer-events: auto;
+  position: relative;
+  z-index: 1;
+  -webkit-app-region: no-drag;
   transition:
     background 140ms var(--ease),
     border-color 140ms var(--ease),
@@ -541,18 +616,34 @@
 .arc-favorite-tile:hover {
   border-color: var(--border-strong);
   transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
 }
 
 .arc-favorite-tile:active {
   transform: scale(0.96);
 }
 
+.arc-favorite-tile:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  outline-offset: 2px;
+}
+
 .arc-favorite-icon {
-  width: 28px;
-  height: 28px;
+  width: 22px;
+  height: 22px;
   display: grid;
   place-items: center;
-  border-radius: 8px;
+  border-radius: 6px;
+  pointer-events: none; /* clicks hit the button, not the img */
+}
+
+.arc-favorite-slot {
+  aspect-ratio: 1;
+  border-radius: 12px;
+  border: 1px dashed color-mix(in srgb, var(--border-strong) 70%, transparent);
+  background: transparent;
+  opacity: 0.45;
+  pointer-events: none;
 }
 
 .arc-favorites-empty {
@@ -1782,4 +1873,279 @@
   background: var(--accent-dim);
   color: var(--accent);
   font-family: var(--font-mono);
+}
+
+/* ── Find bar ─────────────────────────────────────────────────── */
+.find-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px 8px;
+  border-top: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-elevated, var(--bg-app)) 92%, transparent);
+  -webkit-app-region: no-drag;
+}
+
+.find-bar-input {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border-strong, var(--border));
+  background: var(--bg-input, var(--bg-app));
+  color: var(--text-primary);
+  font-size: 12.5px;
+  outline: none;
+}
+
+.find-bar-input:focus {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.find-bar-count {
+  flex-shrink: 0;
+  min-width: 4.5rem;
+  text-align: right;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.find-bar-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.find-bar-btn:hover {
+  background: var(--accent-dim);
+  color: var(--text-primary);
+}
+
+/* ── Downloads panel ──────────────────────────────────────────── */
+.chrome-top {
+  position: relative;
+}
+
+.downloads-btn {
+  position: relative;
+}
+
+.downloads-badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  border-radius: 7px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 14px;
+  text-align: center;
+  pointer-events: none;
+}
+
+.downloads-panel {
+  /* In-flow under toolbar so chrome metrics push the guest view down
+     (WebContentsView paints above HTML overlays in the content hole). */
+  margin: 0 12px 10px auto;
+  width: min(380px, calc(100% - 24px));
+  max-height: min(280px, 40vh);
+  display: flex;
+  flex-direction: column;
+  border-radius: 12px;
+  border: 1px solid var(--border-strong, var(--border));
+  background: var(--bg-elevated, var(--bg-app));
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
+  overflow: hidden;
+  -webkit-app-region: no-drag;
+}
+
+.downloads-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.downloads-panel-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.downloads-panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.downloads-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.downloads-icon-btn:hover {
+  background: var(--accent-dim);
+  color: var(--text-primary);
+}
+
+.downloads-panel-body {
+  overflow-y: auto;
+  padding: 6px 0;
+}
+
+.downloads-empty {
+  padding: 24px 16px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 12.5px;
+}
+
+.downloads-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.downloads-row {
+  padding: 10px 14px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+}
+
+.downloads-row:last-child {
+  border-bottom: none;
+}
+
+.downloads-row-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.downloads-name {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: none;
+  padding: 0;
+  text-align: left;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text-primary);
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.downloads-name:disabled {
+  cursor: default;
+  opacity: 0.9;
+}
+
+.downloads-name:not(:disabled):hover {
+  color: var(--accent);
+}
+
+.downloads-state {
+  flex-shrink: 0;
+  font-size: 10.5px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.downloads-state.state-progressing {
+  color: var(--accent);
+}
+
+.downloads-state.state-completed {
+  color: var(--text-secondary);
+}
+
+.downloads-progress {
+  margin-top: 6px;
+  height: 3px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--border) 80%, transparent);
+  overflow: hidden;
+}
+
+.downloads-progress-bar {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+  transition: width 120ms ease;
+}
+
+.downloads-row-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.downloads-row-btns {
+  display: flex;
+  gap: 8px;
+}
+
+.downloads-link-btn {
+  border: none;
+  background: none;
+  padding: 0;
+  font-size: 11px;
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.downloads-link-btn:hover {
+  text-decoration: underline;
+}
+
+/* ── Status bar zoom ──────────────────────────────────────────── */
+.statusbar-zoom {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.statusbar-zoom-btn {
+  min-width: 22px;
+  font-weight: 600;
+}
+
+.statusbar-zoom-pct {
+  min-width: 2.6rem;
+  font-variant-numeric: tabular-nums;
 }

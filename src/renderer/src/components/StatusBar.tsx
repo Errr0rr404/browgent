@@ -9,6 +9,10 @@ interface Props {
   tabCount: number
   /** Override status host label (e.g. browgent://settings) */
   statusLabel?: string
+  /** When set, zoom controls are interactive */
+  onZoomIn?: () => void
+  onZoomOut?: () => void
+  onZoomReset?: () => void
 }
 
 const APP_VERSION_FALLBACK = 'dev'
@@ -18,7 +22,10 @@ export function StatusBar({
   activeTab,
   agent,
   tabCount,
-  statusLabel
+  statusLabel,
+  onZoomIn,
+  onZoomOut,
+  onZoomReset
 }: Props): React.JSX.Element {
   const host = statusLabel ?? safeHost(activeTab?.url)
   const status = agent?.status ?? 'idle'
@@ -26,6 +33,8 @@ export function StatusBar({
   const mode = agent?.mode ?? 'act'
   const [driver, setDriver] = useState<CdpEndpointStatus | null>(null)
   const [appVersion, setAppVersion] = useState<string>(APP_VERSION_LOADING)
+  const zoomFactor = activeTab?.zoomFactor ?? 1
+  const zoomPct = Math.round(zoomFactor * 100)
 
   const refreshDriver = useCallback(() => {
     if (!window.browgent?.getDriverStatus) return
@@ -145,6 +154,40 @@ export function StatusBar({
         </>
       ) : (
         <span style={{ flex: 1 }} aria-hidden />
+      )}
+      {onZoomIn && onZoomOut && onZoomReset && activeTab && !statusLabel?.startsWith('browgent://') && (
+        <>
+          <span className="statusbar-sep" />
+          <span className="statusbar-zoom" aria-label={`Zoom ${zoomPct} percent`}>
+            <button
+              type="button"
+              className="statusbar-btn statusbar-zoom-btn"
+              title="Zoom out (⌘-)"
+              aria-label="Zoom out"
+              onClick={onZoomOut}
+            >
+              −
+            </button>
+            <button
+              type="button"
+              className="statusbar-btn statusbar-zoom-pct"
+              title="Reset zoom (⌘0)"
+              aria-label={`Zoom ${zoomPct} percent. Click to reset.`}
+              onClick={onZoomReset}
+            >
+              {zoomPct}%
+            </button>
+            <button
+              type="button"
+              className="statusbar-btn statusbar-zoom-btn"
+              title="Zoom in (⌘+)"
+              aria-label="Zoom in"
+              onClick={onZoomIn}
+            >
+              +
+            </button>
+          </span>
+        </>
       )}
       <span className="statusbar-version" aria-label={`Browgent version ${appVersion}`}>
         v{appVersion}

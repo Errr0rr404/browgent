@@ -12,6 +12,11 @@ export interface ChromePrefs {
   ntFavs: boolean
   ntChips: boolean
   searchEngine: SearchEngine
+  /** When true, themed pet is the agent entry (toolbar Agent button hidden). */
+  agentPetVisible: boolean
+  /** Last floating pet position (window content coords). -1 = default bottom-right. */
+  agentPetX: number
+  agentPetY: number
   /** Agent console display */
   agentDensity: AgentConsoleDensity
   agentShowTimestamps: boolean
@@ -41,6 +46,9 @@ export const DEFAULT_CHROME_PREFS: ChromePrefs = {
   ntFavs: true,
   ntChips: true,
   searchEngine: 'Google',
+  agentPetVisible: true,
+  agentPetX: -1,
+  agentPetY: -1,
   agentDensity: 'compact',
   agentShowTimestamps: false,
   agentShowActionsInChat: true,
@@ -82,6 +90,8 @@ interface ChromePrefsStore extends ChromePrefs {
   setNtFavs: (on: boolean) => void
   setNtChips: (on: boolean) => void
   setSearchEngine: (engine: SearchEngine) => void
+  setAgentPetVisible: (on: boolean) => void
+  setAgentPetPosition: (x: number, y: number) => void
   setAgentDensity: (d: AgentConsoleDensity) => void
   setAgentShowTimestamps: (on: boolean) => void
   setAgentShowActionsInChat: (on: boolean) => void
@@ -105,6 +115,8 @@ export const useChromePrefs = create<ChromePrefsStore>()(
       setNtFavs: (on) => set({ ntFavs: on }),
       setNtChips: (on) => set({ ntChips: on }),
       setSearchEngine: (engine) => set({ searchEngine: engine }),
+      setAgentPetVisible: (on) => set({ agentPetVisible: on }),
+      setAgentPetPosition: (x, y) => set({ agentPetX: x, agentPetY: y }),
       setAgentDensity: (d) => set({ agentDensity: d }),
       setAgentShowTimestamps: (on) => set({ agentShowTimestamps: on }),
       setAgentShowActionsInChat: (on) => set({ agentShowActionsInChat: on }),
@@ -115,13 +127,16 @@ export const useChromePrefs = create<ChromePrefsStore>()(
     }),
     {
       name: 'browgent.chromePrefs',
-      version: 2,
+      version: 4,
       partialize: (state) => ({
         greetingName: state.greetingName,
         ntClock: state.ntClock,
         ntFavs: state.ntFavs,
         ntChips: state.ntChips,
         searchEngine: state.searchEngine,
+        agentPetVisible: state.agentPetVisible,
+        agentPetX: state.agentPetX,
+        agentPetY: state.agentPetY,
         agentDensity: state.agentDensity,
         agentShowTimestamps: state.agentShowTimestamps,
         agentShowActionsInChat: state.agentShowActionsInChat,
@@ -131,10 +146,18 @@ export const useChromePrefs = create<ChromePrefsStore>()(
       }),
       migrate: (persisted, version) => {
         const p = (persisted ?? {}) as Partial<ChromePrefs>
-        if (version < 2) {
+        if (version < 4) {
           return {
             ...DEFAULT_CHROME_PREFS,
             ...p,
+            agentPetVisible: pickBool(
+              p.agentPetVisible,
+              DEFAULT_CHROME_PREFS.agentPetVisible
+            ),
+            agentPetX:
+              typeof p.agentPetX === 'number' ? p.agentPetX : DEFAULT_CHROME_PREFS.agentPetX,
+            agentPetY:
+              typeof p.agentPetY === 'number' ? p.agentPetY : DEFAULT_CHROME_PREFS.agentPetY,
             agentDensity: isAgentDensity(p.agentDensity ?? '')
               ? p.agentDensity!
               : DEFAULT_CHROME_PREFS.agentDensity,
@@ -174,6 +197,9 @@ export const useChromePrefs = create<ChromePrefsStore>()(
           searchEngine: isSearchEngine(p.searchEngine ?? '')
             ? p.searchEngine!
             : current.searchEngine,
+          agentPetVisible: pickBool(p.agentPetVisible, current.agentPetVisible),
+          agentPetX: typeof p.agentPetX === 'number' ? p.agentPetX : current.agentPetX,
+          agentPetY: typeof p.agentPetY === 'number' ? p.agentPetY : current.agentPetY,
           agentDensity: isAgentDensity(p.agentDensity ?? '')
             ? p.agentDensity!
             : current.agentDensity,

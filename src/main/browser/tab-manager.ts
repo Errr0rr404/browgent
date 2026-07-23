@@ -1,6 +1,12 @@
 import { BrowserWindow, WebContentsView, shell, type WebContents } from 'electron'
 import { randomUUID } from 'crypto'
-import type { BrowserChromeMetrics, TabId, TabState } from '../../shared/types'
+import type {
+  BrowserChromeMetrics,
+  FindInPageOptions,
+  FindInPageResult,
+  TabId,
+  TabState
+} from '../../shared/types'
 import { normalizeUrl } from '../../shared/types'
 import {
   extractLinks,
@@ -12,6 +18,7 @@ import type { DriverMode } from '../../shared/driver'
 import { getRuntimeFlags, setDriverMode as setRuntimeDriverMode } from './runtime-flags'
 import { detachDebugger, runPageAction, type DomActionKind } from './page-driver'
 import { isHttpOrHttpsOrAboutBlank, looksLikeForbiddenScheme } from '../../shared/policies'
+import { applyWebContentsUserAgent, installGuestStealthPatches } from './guest-identity'
 
 interface AgentGuardPolicy {
   allowHosts: string[]
@@ -39,6 +46,14 @@ interface ManagedTab {
   guardPolicy: AgentGuardPolicy | null
   activeAttempt: NavigationAttempt | null
   navFailedReason: string | null
+  zoomFactor: number
+}
+
+export interface VisitRecord {
+  url: string
+  /** Omit when title is not yet known (e.g. mid-navigation). */
+  title?: string
+  favicon?: string
 }
 
 /** Default new-tab target — chrome renders the New Tab page over about:blank */
@@ -86,6 +101,14 @@ export class TabManager {
    * via URL check — only Settings needs an explicit hide while a real page sits under it.
    */
   private guestForcedHidden = false
+  /** Called after guest bounds update so overlays (pet) can re-raise above guests. */
+  afterLayout: (() => void) | null = null
+  /** Fired once per main-frame navigation for browsing history. */
+  onVisit: ((visit: VisitRecord) => void) | null = null
+  /** Title/favicon updates for an already-recorded URL (no new visit). */
+  onVisitMeta: ((visit: VisitRecord) => void) | null = null
+  /** Find-in-page result stream for the chrome Find bar. */
+  onFindResult: ((result: FindInPageResult) => void) | null = null
 
   constructor(
     private window: BrowserWindow,
@@ -259,15 +282,7 @@ export class TabManager {
     const safeUrl = gate.url
 
     const id = randomUUID()
-    const view = new WebContentsView({
-      webPreferences: {
-        sandbox: true,
-        contextIsolation: true,
-        nodeIntegration: false,
-        spellcheck: true,
-        partition: PAGE_PARTITION
-      }
-    })
+    const view = this.createGuestView()
 
     const tab: ManagedTab = {
       id,
@@ -285,7 +300,8 @@ export class TabManager {
         approvedHost: initialApprovedHost.toLowerCase(),
         ts: Date.now()
       },
-      navFailedReason: null
+      navFailedReason: null,
+      zoomFactor: 1
     }
 
     this.wireViewEvents(tab)
@@ -322,15 +338,7 @@ export class TabManager {
     const safeUrl = gate.url
 
     const id = randomUUID()
-    const view = new WebContentsView({
-      webPreferences: {
-        sandbox: true,
-        contextIsolation: true,
-        nodeIntegration: false,
-        spellcheck: true,
-        partition: PAGE_PARTITION
-      }
-    })
+    const view = this.createGuestView()
 
     const tab: ManagedTab = {
       id,
@@ -343,7 +351,8 @@ export class TabManager {
       owner: null,
       guardPolicy: null,
       activeAttempt: null,
-      navFailedReason: null
+      navFailedReason: null,
+      zoomFactor: 1
     }
 
     this.wireViewEvents(tab)
@@ -485,6 +494,82 @@ export class TabManager {
     return true
   }
 
+  findInPage(text: string, options?: FindInPageOptions, tabId?: TabId): number {
+    const tab = this.resolve(tabId)
+    if (!tab || tab.view.webContents.isDestroyed()) return 0
+    const q = text.trim()
+    if (!q) {
+      tab.view.webContents.stopFindInPage('clearSelection')
+      return 0
+    }
+    return tab.view.webContents.findInPage(q, {
+      forward: options?.forward ?? true,
+      findNext: options?.findNext ?? false,
+      matchCase: options?.matchCase ?? false
+    })
+  }
+
+  stopFindInPage(tabId?: TabId): void {
+    const tab = this.resolve(tabId)
+    if (!tab || tab.view.webContents.isDestroyed()) return
+    try {
+      tab.view.webContents.stopFindInPage('clearSelection')
+    } catch {
+      // ignore
+    }
+  }
+
+  getZoomFactor(tabId?: TabId): number {
+    const tab = this.resolve(tabId)
+    if (!tab || tab.view.webContents.isDestroyed()) return 1
+    try {
+      return tab.view.webContents.getZoomFactor()
+    } catch {
+      return tab.zoomFactor
+    }
+  }
+
+  setZoomFactor(factor: number, tabId?: TabId): number {
+    const tab = this.resolve(tabId)
+    if (!tab || tab.view.webContents.isDestroyed()) return 1
+    const next = Math.min(5, Math.max(0.25, Math.round(factor * 100) / 100))
+    try {
+      tab.view.webContents.setZoomFactor(next)
+      tab.zoomFactor = next
+    } catch {
+      // ignore
+    }
+    this.emitState()
+    return tab.zoomFactor
+  }
+
+  zoomIn(tabId?: TabId): number {
+    const cur = this.getZoomFactor(tabId)
+    return this.setZoomFactor(cur + 0.1, tabId)
+  }
+
+  zoomOut(tabId?: TabId): number {
+    const cur = this.getZoomFactor(tabId)
+    return this.setZoomFactor(cur - 0.1, tabId)
+  }
+
+  zoomReset(tabId?: TabId): number {
+    return this.setZoomFactor(1, tabId)
+  }
+
+  print(tabId?: TabId): boolean {
+    const tab = this.resolve(tabId)
+    if (!tab || tab.view.webContents.isDestroyed()) return false
+    if (this.isBlankTabUrl(tab.url)) return false
+    try {
+      tab.view.webContents.print({ silent: false, printBackground: true })
+      return true
+    } catch (err) {
+      console.warn('[browgent] print failed', err)
+      return false
+    }
+  }
+
   setChromeMetrics(metrics: BrowserChromeMetrics): void {
     this.metrics = { ...metrics }
     this.layoutActiveView()
@@ -519,6 +604,7 @@ export class TabManager {
       } catch {
         // ignore
       }
+      this.afterLayout?.()
       return
     }
 
@@ -535,6 +621,8 @@ export class TabManager {
     } catch {
       // ignore
     }
+
+    this.afterLayout?.()
   }
 
   getState(): TabState[] {
@@ -550,7 +638,8 @@ export class TabManager {
         canGoBack: tab.canGoBack,
         canGoForward: tab.canGoForward,
         isActive: tab.id === this.activeTabId,
-        owner: tab.owner
+        owner: tab.owner,
+        zoomFactor: tab.zoomFactor
       }))
   }
 
@@ -826,6 +915,22 @@ export class TabManager {
     this.emitState()
   }
 
+  /** Guest WebContentsView with Chrome-like identity (no Electron UA leak). */
+  private createGuestView(): WebContentsView {
+    const view = new WebContentsView({
+      webPreferences: {
+        sandbox: true,
+        contextIsolation: true,
+        nodeIntegration: false,
+        spellcheck: true,
+        partition: PAGE_PARTITION
+      }
+    })
+    applyWebContentsUserAgent(view.webContents)
+    installGuestStealthPatches(view.webContents)
+    return view
+  }
+
   private wireViewEvents(tab: ManagedTab): void {
     const { webContents } = tab.view
     const safeEmit = (): void => {
@@ -853,12 +958,18 @@ export class TabManager {
       return { action: 'deny' }
     })
 
-    webContents.on('will-navigate', (event, url, isInMainFrame = true) => {
-      this.guardAgentNavigation(tab, url, event, isInMainFrame)
+    // Electron 36: (details, url, isInPlace, isMainFrame, …) — 3rd arg is isInPlace,
+    // not isMainFrame. Prefer details fields so agent host guards actually run.
+    webContents.on('will-navigate', (details) => {
+      const url = details.url
+      const isMainFrame = details.isMainFrame !== false
+      this.guardAgentNavigation(tab, url, details, isMainFrame)
     })
 
-    webContents.on('will-redirect', (event, url, isInMainFrame = true) => {
-      this.guardAgentNavigation(tab, url, event, isInMainFrame)
+    webContents.on('will-redirect', (details) => {
+      const url = details.url
+      const isMainFrame = details.isMainFrame !== false
+      this.guardAgentNavigation(tab, url, details, isMainFrame)
     })
 
     webContents.on('page-title-updated', (_e, title) => {
@@ -868,10 +979,16 @@ export class TabManager {
       } else {
         tab.title = trimmed
       }
+      if (!this.isBlankTabUrl(tab.url) && tab.title && tab.title !== 'New Tab') {
+        this.onVisitMeta?.({ url: tab.url, title: tab.title, favicon: tab.favicon })
+      }
       safeEmit()
     })
     webContents.on('page-favicon-updated', (_e, favicons) => {
       tab.favicon = favicons?.[0]
+      if (!this.isBlankTabUrl(tab.url)) {
+        this.onVisitMeta?.({ url: tab.url, title: tab.title, favicon: tab.favicon })
+      }
       safeEmit()
     })
     webContents.on('did-start-loading', () => {
@@ -893,12 +1010,21 @@ export class TabManager {
       tab.url = url
       this.syncNavState(tab)
       if (tab.id === this.activeTabId) this.layoutActiveView()
+      if (!this.isBlankTabUrl(url)) {
+        // Commit URL only here — title/favicon are often still the previous page or
+        // "Loading…"; page-title-updated / favicon-updated fill meta via onVisitMeta.
+        this.onVisit?.({ url })
+      }
       safeEmit()
     })
-    webContents.on('did-navigate-in-page', (_e, url) => {
+    webContents.on('did-navigate-in-page', (_e, url, isMainFrame) => {
+      if (isMainFrame === false) return
       tab.url = url
       this.syncNavState(tab)
       if (tab.id === this.activeTabId) this.layoutActiveView()
+      if (!this.isBlankTabUrl(url)) {
+        this.onVisit?.({ url })
+      }
       safeEmit()
     })
     webContents.on('did-fail-load', (_e, errorCode, _d, validatedURL, isMainFrame) => {
@@ -915,6 +1041,15 @@ export class TabManager {
       tab.url = validatedURL || tab.url
       if (tab.activeAttempt) tab.activeAttempt = null
       safeEmit()
+    })
+    webContents.on('found-in-page', (_e, result) => {
+      this.onFindResult?.({
+        tabId: tab.id,
+        requestId: result.requestId,
+        activeMatchOrdinal: result.activeMatchOrdinal,
+        matches: result.matches,
+        finalUpdate: result.finalUpdate
+      })
     })
   }
 

@@ -3,6 +3,7 @@ import { Plus, X } from 'lucide-react'
 import type { TabState } from '@shared/types'
 import { isBlankUrl, tabDisplayTitle } from '../lib/urls'
 import { useRovingTablist } from '../hooks/useRovingTablist'
+import { BrandMark } from './BrandMark'
 import { Favicon } from './Favicon'
 
 function tabLabel(tab: TabState): string {
@@ -34,6 +35,12 @@ export function TabBar({ tabs, onActivate, onClose, onNew }: Props): React.JSX.E
 
   return (
     <div className="tabbar" role="tablist" aria-label="Browser tabs" ref={containerRef}>
+      {/* Brand sits on the first chrome row (with traffic lights) so hiding the
+          library doesn’t leave a blank strip above the toolbar. */}
+      <div className="toolbar-brand tabbar-brand" aria-label="browgent">
+        <BrandMark size={16} className="brand-mark-svg" strokeWidth={2} />
+        <span className="brand-name">browgent</span>
+      </div>
       <div className="tabs-scroll">
         {tabs.map((tab, i) => {
           const tp = r.tabPropsFor(tab, i)

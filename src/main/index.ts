@@ -1,12 +1,22 @@
 import { app, BrowserWindow, ipcMain, session } from 'electron'
 import { join } from 'path'
 import { HOME_URL, PAGE_PARTITION, TabManager } from './browser/tab-manager'
+import { PetOverlay, type PetMood } from './browser/pet-overlay'
+import { HistoryStore } from './browser/history-store'
+import { DownloadManager } from './browser/download-manager'
 import { AgentSession } from './agent/session'
 import { loadEnvFile } from './agent/env'
 import { getMcpStatus } from './mcp/server'
 import { applyCdpCommandLine, getCdpStatus } from './browser/cdp-endpoint'
+import { applyGuestIdentityEarly, applyGuestPageSessionIdentity } from './browser/guest-identity'
 import { getRuntimeFlags } from './browser/runtime-flags'
-import { IPC, type BrowserChromeMetrics, type NavigatePayload, type TabId } from '../shared/types'
+import {
+  IPC,
+  type BrowserChromeMetrics,
+  type FindInPageOptions,
+  type NavigatePayload,
+  type TabId
+} from '../shared/types'
 import type { AgentMode, AgentPolicy } from '../shared/policies'
 
 const TAB_ID_MAX = 64
@@ -143,6 +153,8 @@ if (!gotLock) {
 // Env must load before CDP flags + command-line switches (pre-ready).
 loadEnvFile()
 const runtime = getRuntimeFlags()
+// Guest identity (Chrome UA, no AutomationControlled) before Chromium boots.
+applyGuestIdentityEarly()
 const cdpBoot = applyCdpCommandLine()
 if (cdpBoot.enabled) {
   console.info(`[browgent] CDP enabled on port ${cdpBoot.port} → http://127.0.0.1:${cdpBoot.port}`)
@@ -156,6 +168,9 @@ console.info(
 let mainWindow: BrowserWindow | null = null
 let tabs: TabManager | null = null
 let agent: AgentSession | null = null
+let petOverlay: PetOverlay | null = null
+let historyStore: HistoryStore | null = null
+let downloadManager: DownloadManager | null = null
 let ipcRegistered = false
 let initialTabCreated = false
 
@@ -199,6 +214,46 @@ function createWindow(): void {
     }
   })
 
+  if (!historyStore) historyStore = new HistoryStore()
+  if (!downloadManager) downloadManager = new DownloadManager()
+  downloadManager.setOnChange((items) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send(IPC.DOWNLOADS_STATE, items)
+    }
+  })
+
+  tabs.onVisit = (visit) => {
+    historyStore?.record(visit)
+  }
+  tabs.onVisitMeta = (visit) => {
+    historyStore?.touchMeta(visit.url, visit.title, visit.favicon)
+  }
+  tabs.onFindResult = (result) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send(IPC.FIND_RESULT, result)
+    }
+  }
+
+  petOverlay = new PetOverlay(mainWindow)
+  petOverlay.setHandlers({
+    onToggle: () => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send(IPC.PET_CLICK)
+      }
+    },
+    onHide: () => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send(IPC.PET_HIDE)
+      }
+    },
+    onMoved: (x, y) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send(IPC.PET_MOVED, { x, y })
+      }
+    }
+  })
+  tabs.afterLayout = () => petOverlay?.raise()
+
   // Agent-only: start with a thinner chrome reserve (panel still usable)
   if (flags.agentOnly) {
     tabs.setChromeMetrics({
@@ -237,6 +292,8 @@ function createWindow(): void {
     } catch {
       // ignore
     }
+    petOverlay?.destroy()
+    petOverlay = null
     tabs?.destroy()
     tabs = null
     agent = null
@@ -244,7 +301,25 @@ function createWindow(): void {
     initialTabCreated = false
   })
 
-  mainWindow.on('resize', () => tabs?.layoutActiveView())
+  mainWindow.on('resize', () => {
+    tabs?.layoutActiveView()
+    petOverlay?.raise()
+  })
+
+  const emitFullscreen = (): void => {
+    if (!mainWindow || mainWindow.isDestroyed()) return
+    mainWindow.webContents.send(
+      IPC.WINDOW_FULLSCREEN_CHANGED,
+      mainWindow.isFullScreen()
+    )
+  }
+  mainWindow.on('enter-full-screen', emitFullscreen)
+  mainWindow.on('leave-full-screen', emitFullscreen)
+  // Some macOS builds report late; re-sync after show
+  mainWindow.once('ready-to-show', () => {
+    setTimeout(emitFullscreen, 0)
+    setTimeout(emitFullscreen, 200)
+  })
 
   if (isDev && process.env['ELECTRON_RENDERER_URL']) {
     void mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
@@ -279,10 +354,26 @@ function registerIpcOnce(): void {
   if (ipcRegistered) return
   ipcRegistered = true
 
-  // Only remove invoke handlers (not push-only event channels)
-  const handlerChannels = Object.values(IPC).filter(
-    (c) => c !== IPC.TABS_STATE && c !== IPC.AGENT_STATE
-  )
+  // Bulk wipe of chrome invoke handlers. Exclude:
+  // - push-only main→renderer/pet event channels (no invoke handler)
+  // - pet-owned invoke channels registered by PetOverlay (drag/click/hide)
+  const skipBulkRemove = new Set<string>([
+    IPC.TABS_STATE,
+    IPC.AGENT_STATE,
+    IPC.FIND_RESULT,
+    IPC.DOWNLOADS_STATE,
+    IPC.WINDOW_FULLSCREEN_CHANGED,
+    IPC.PET_STATE,
+    IPC.PET_MOVED,
+    // PetOverlay owns these invoke handlers — removing them on first launch
+    // left drag dead until window recreate.
+    IPC.PET_DRAG_START,
+    IPC.PET_DRAG_BY,
+    IPC.PET_DRAG_END,
+    IPC.PET_CLICK,
+    IPC.PET_HIDE
+  ])
+  const handlerChannels = Object.values(IPC).filter((c) => !skipBulkRemove.has(c))
   for (const channel of handlerChannels) {
     try {
       ipcMain.removeHandler(channel)
@@ -348,6 +439,31 @@ function registerIpcOnce(): void {
     tabs?.setGuestVisible(visible)
   })
 
+  ipcMain.handle(IPC.PET_CONFIGURE, (e, config: unknown) => {
+    assertChromeSender(e)
+    if (!config || typeof config !== 'object') throw new Error('pet config must be an object')
+    const c = config as Record<string, unknown>
+    const partial: {
+      visible?: boolean
+      theme?: string
+      mood?: PetMood
+      x?: number
+      y?: number
+    } = {}
+    if (typeof c['visible'] === 'boolean') partial.visible = c['visible']
+    if (typeof c['theme'] === 'string') partial.theme = c['theme']
+    if (
+      c['mood'] === 'idle' ||
+      c['mood'] === 'busy' ||
+      c['mood'] === 'attention'
+    ) {
+      partial.mood = c['mood']
+    }
+    if (typeof c['x'] === 'number' && Number.isFinite(c['x'])) partial.x = c['x']
+    if (typeof c['y'] === 'number' && Number.isFinite(c['y'])) partial.y = c['y']
+    petOverlay?.configure(partial)
+  })
+
   ipcMain.handle(IPC.APP_VERSION, (e) => {
     assertChromeSender(e)
     return app.getVersion()
@@ -365,6 +481,10 @@ function registerIpcOnce(): void {
   ipcMain.handle(IPC.WINDOW_CLOSE, (e) => {
     assertChromeSender(e)
     return mainWindow?.close()
+  })
+  ipcMain.handle(IPC.WINDOW_FULLSCREEN_GET, (e) => {
+    assertChromeSender(e)
+    return Boolean(mainWindow && !mainWindow.isDestroyed() && mainWindow.isFullScreen())
   })
 
   ipcMain.handle(IPC.AGENT_SEND, async (e, text: unknown, tabId?: unknown) => {
@@ -435,6 +555,112 @@ function registerIpcOnce(): void {
     tabs?.setDriverMode(parsed)
     return parsed
   })
+
+  // ── Find in page ────────────────────────────────────────────
+  ipcMain.handle(IPC.FIND_START, (e, text: unknown, options?: unknown, tabId?: unknown) => {
+    assertChromeSender(e)
+    if (!tabs) return 0
+    const q = ensureString(text, 'find.text', 500)
+    let opts: FindInPageOptions | undefined
+    if (options && typeof options === 'object') {
+      const o = options as Record<string, unknown>
+      opts = {
+        forward: typeof o['forward'] === 'boolean' ? o['forward'] : undefined,
+        findNext: typeof o['findNext'] === 'boolean' ? o['findNext'] : undefined,
+        matchCase: typeof o['matchCase'] === 'boolean' ? o['matchCase'] : undefined
+      }
+    }
+    return tabs.findInPage(q, opts, ensureOptionalTabId(tabId, 'find.tabId'))
+  })
+  ipcMain.handle(IPC.FIND_STOP, (e, tabId?: unknown) => {
+    assertChromeSender(e)
+    tabs?.stopFindInPage(ensureOptionalTabId(tabId, 'find.stop.tabId'))
+  })
+
+  // ── Zoom ────────────────────────────────────────────────────
+  ipcMain.handle(IPC.ZOOM_GET, (e, tabId?: unknown) => {
+    assertChromeSender(e)
+    return tabs?.getZoomFactor(ensureOptionalTabId(tabId, 'zoom.get.tabId')) ?? 1
+  })
+  ipcMain.handle(IPC.ZOOM_SET, (e, factor: unknown, tabId?: unknown) => {
+    assertChromeSender(e)
+    const f = ensureBoundedNumber(factor, 'zoom.factor', 0.25, 5)
+    return tabs?.setZoomFactor(f, ensureOptionalTabId(tabId, 'zoom.set.tabId')) ?? 1
+  })
+  ipcMain.handle(IPC.ZOOM_IN, (e, tabId?: unknown) => {
+    assertChromeSender(e)
+    return tabs?.zoomIn(ensureOptionalTabId(tabId, 'zoom.in.tabId')) ?? 1
+  })
+  ipcMain.handle(IPC.ZOOM_OUT, (e, tabId?: unknown) => {
+    assertChromeSender(e)
+    return tabs?.zoomOut(ensureOptionalTabId(tabId, 'zoom.out.tabId')) ?? 1
+  })
+  ipcMain.handle(IPC.ZOOM_RESET, (e, tabId?: unknown) => {
+    assertChromeSender(e)
+    return tabs?.zoomReset(ensureOptionalTabId(tabId, 'zoom.reset.tabId')) ?? 1
+  })
+
+  // ── Print ───────────────────────────────────────────────────
+  ipcMain.handle(IPC.TAB_PRINT, (e, tabId?: unknown) => {
+    assertChromeSender(e)
+    return tabs?.print(ensureOptionalTabId(tabId, 'tab.print.tabId')) ?? false
+  })
+
+  // ── History ─────────────────────────────────────────────────
+  ipcMain.handle(IPC.HISTORY_GET, (e, limit?: unknown) => {
+    assertChromeSender(e)
+    const n =
+      typeof limit === 'number' && Number.isFinite(limit)
+        ? Math.min(5000, Math.max(1, Math.round(limit)))
+        : 200
+    return historyStore?.list(n) ?? []
+  })
+  ipcMain.handle(IPC.HISTORY_SEARCH, (e, query?: unknown, limit?: unknown) => {
+    assertChromeSender(e)
+    const q = ensureOptionalString(query, 'history.query', 500) ?? ''
+    const n =
+      typeof limit === 'number' && Number.isFinite(limit)
+        ? Math.min(5000, Math.max(1, Math.round(limit)))
+        : 200
+    return historyStore?.search(q, n) ?? []
+  })
+  ipcMain.handle(IPC.HISTORY_DELETE, (e, id: unknown) => {
+    assertChromeSender(e)
+    return historyStore?.delete(ensureString(id, 'history.delete.id', 64)) ?? false
+  })
+  ipcMain.handle(IPC.HISTORY_CLEAR, (e) => {
+    assertChromeSender(e)
+    historyStore?.clear()
+    return true
+  })
+
+  // ── Downloads ───────────────────────────────────────────────
+  ipcMain.handle(IPC.DOWNLOADS_GET, (e) => {
+    assertChromeSender(e)
+    return downloadManager?.getState() ?? []
+  })
+  ipcMain.handle(IPC.DOWNLOADS_OPEN, (e, id: unknown) => {
+    assertChromeSender(e)
+    return downloadManager?.open(ensureString(id, 'downloads.open.id', 64)) ?? false
+  })
+  ipcMain.handle(IPC.DOWNLOADS_SHOW, (e, id: unknown) => {
+    assertChromeSender(e)
+    return downloadManager?.showInFolder(ensureString(id, 'downloads.show.id', 64)) ?? false
+  })
+  ipcMain.handle(IPC.DOWNLOADS_CANCEL, (e, id: unknown) => {
+    assertChromeSender(e)
+    return downloadManager?.cancel(ensureString(id, 'downloads.cancel.id', 64)) ?? false
+  })
+  ipcMain.handle(IPC.DOWNLOADS_CLEAR, (e) => {
+    assertChromeSender(e)
+    downloadManager?.clearCompleted()
+    return true
+  })
+  ipcMain.handle(IPC.DOWNLOADS_OPEN_FOLDER, (e) => {
+    assertChromeSender(e)
+    downloadManager?.openDownloadsFolder()
+    return true
+  })
 }
 
 app.whenReady().then(() => {
@@ -442,6 +668,11 @@ app.whenReady().then(() => {
   loadEnvFile()
 
   const pageSession = session.fromPartition(PAGE_PARTITION)
+  // Strip Electron from UA / client hints so Google, Akamai, etc. do not auto-block guest tabs
+  applyGuestPageSessionIdentity(pageSession)
+  if (!downloadManager) downloadManager = new DownloadManager()
+  downloadManager.wireSession(pageSession)
+  if (!historyStore) historyStore = new HistoryStore()
   // Guest page tabs: deny mic/camera/notifications by default (agent browses untrusted sites)
   pageSession.setPermissionRequestHandler((_wc, _permission, callback) => callback(false))
   // Chrome UI (agent voice): allow media (mic) for speech recognition
@@ -480,4 +711,8 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })
 
-app.on('before-quit', () => tabs?.destroy())
+app.on('before-quit', () => {
+  tabs?.destroy()
+  historyStore?.flush()
+  downloadManager?.flush()
+})

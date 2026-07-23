@@ -155,6 +155,11 @@ export interface ToolResult {
   error?: string
   /** Human-readable one-liner for trajectory UI */
   summary: string
+  /**
+   * Base64 PNG for a vision model (screenshot only). Consumed in-session and
+   * injected as an image message — never written to the trajectory or export.
+   */
+  image?: string
 }
 
 export function isToolName(v: string): v is ToolName {

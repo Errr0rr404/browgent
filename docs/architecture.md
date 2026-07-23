@@ -34,7 +34,9 @@ src/
   main/
     index.ts              Window lifecycle, IPC, permissions
     browser/
-      tab-manager.ts      Tabs, navigation, observe, screenshots
+      tab-manager.ts      Tabs, navigation, observe, screenshots, find/zoom/print
+      history-store.ts    Persistent browsing history (userData)
+      download-manager.ts Guest-session downloads + panel state
       page-driver.ts      Dual DOM / CDP actuation
       cdp-endpoint.ts     remote-debugging-port + status
       runtime-flags.ts    CDP port, driver, agent-only, headless
@@ -78,6 +80,7 @@ See [playwright.md](./playwright.md).
 ## Shared session & identity
 
 - All guest tabs use `persist:browgent-pages` so cookies/login state are shared (local-first identity).
+- Guest pages use a **Chrome-like identity by default for every install** (`guest-identity.ts` + `preload/guest.ts`): stock Chrome user-agent (no `Electron/…`), matching `sec-ch-ua` client hints, `AutomationControlled` disabled, early main-world `webdriver` patch. Always on (not a user setting). Reduces false blocks from Google reCAPTCHA / Akamai (e.g. GoDaddy). Not a full anti-detect suite — aggressive WAFs, CDP automation, or flagged IPs can still challenge.
 - Guest permissions: mic/camera/notifications **denied** by default.
 - Chrome UI may request **media** for speech recognition.
 
@@ -95,7 +98,10 @@ Generation tokens invalidate in-flight work on **Stop** / **Clear** so sessions 
 
 Exposed as `window.browgent` (see `src/preload/index.ts`):
 
-- Tabs: create, close, activate, navigate, back/forward/reload/stop
+- Tabs: create, close, activate, navigate, back/forward/reload/stop, print
+- Find in page / zoom (factor get/set/in/out/reset)
+- History: list, search, delete, clear (persisted under userData)
+- Downloads: list, open, show in folder, cancel, clear, open folder
 - Chrome layout (top/right/bottom/left) for view bounds
 - Agent: send, getState, stop, clear, pause, resume, takeover, mode, policy, confirm, reject, answerHuman, export
 - Driver: status (CDP URL when enabled, mode), setMode (`dom` | `cdp`)

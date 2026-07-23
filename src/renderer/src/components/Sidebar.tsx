@@ -103,13 +103,16 @@ export function Sidebar({
     [spaces, activeSpaceId]
   )
 
+  /** Pinned tiles — max 8 for a 4×2 board */
   const favorites = useMemo(
     () =>
       (space?.favoriteIds ?? [])
         .map((id) => items[id])
-        .filter((x): x is BookmarkItem => Boolean(x)),
+        .filter((x): x is BookmarkItem => Boolean(x))
+        .slice(0, 8),
     [space, items]
   )
+  const favoriteSlots = Math.max(0, 8 - favorites.length)
 
   const spaceFolders = useMemo(
     () =>
@@ -435,7 +438,7 @@ export function Sidebar({
         </button>
       </div>
 
-      {/* Favorites grid — Arc signature */}
+      {/* Favorites grid — 4×2 pin board */}
       <div className="arc-favorites" role="list" aria-label="Favorites">
         {favorites.map((fav) => (
           <button
@@ -444,13 +447,31 @@ export function Sidebar({
             id={`sidebar-favorite-${fav.id}`}
             className="arc-favorite-tile"
             title={fav.title}
-            aria-label={fav.title || fav.url}
-            onClick={() => onOpenUrl(fav.url)}
+            aria-label={`Open ${fav.title || fav.url}`}
+            onMouseDown={(e) => {
+              // Ensure chrome drag regions never swallow the press
+              e.stopPropagation()
+            }}
+            onClick={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+              const url = (fav.url || '').trim()
+              if (!url) return
+              onOpenUrl(url)
+            }}
             onContextMenu={(e) => openCtxFromMouse(e, 'favorite', fav.id)}
-            onKeyDown={(e) => openCtxFromKey(e, 'favorite', fav.id)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault()
+                const url = (fav.url || '').trim()
+                if (url) onOpenUrl(url)
+                return
+              }
+              openCtxFromKey(e, 'favorite', fav.id)
+            }}
           >
-            <span className="arc-favorite-icon">
-              <Favicon src={fav.favicon} title={fav.title} size={22} />
+            <span className="arc-favorite-icon" aria-hidden>
+              <Favicon src={fav.favicon} title={fav.title} size={20} />
             </span>
           </button>
         ))}
@@ -459,6 +480,14 @@ export function Sidebar({
             Pin sites here — star a page or right-click a tab.
           </p>
         )}
+        {favorites.length > 0 &&
+          Array.from({ length: favoriteSlots }, (_, i) => (
+            <div
+              key={`slot-${i}`}
+              className="arc-favorite-slot"
+              aria-hidden
+            />
+          ))}
       </div>
 
       <div className="arc-space-header">
