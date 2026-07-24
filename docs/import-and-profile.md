@@ -32,7 +32,10 @@ Store name, email, phones, company, address, and custom key/values locally (`use
 | Tool | Role |
 |------|------|
 | `get_profile` | Non-secret contact fields for fill |
+| `fill_form` | Match observe refs to profile / explicit fields (never passwords; prefer `dryRun` first) |
 | `get_credentials` | Password for current site (confirm) |
+
+Recipe **Fill with profile** runs a dry-run then real `fill_form`. See also [qa.md](./qa.md).
 
 ## Security
 

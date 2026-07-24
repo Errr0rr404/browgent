@@ -15,7 +15,7 @@ npm run dev
 |---------|---------|
 | `npm run dev` | Electron + Vite HMR (CDP off by default) |
 | `npm run build` / `typecheck` | Compile / TS |
-| `npm run test:unit` | Schema unit smoke |
+| `npm run test:unit` | Tool schema + privacy host-match unit smokes |
 | `npm run mcp` / `mcp:smoke` | STDIO MCP + HTTP smoke (app running) |
 | `npm run demo:hero` | Automated hero demo via MCP |
 | `npm run yc:packet` | Traction packet → `release/` |

@@ -19,28 +19,34 @@ npm run dev:headless          # hidden + agent-only + CDP
 npm run playwright:example    # needs Browgent running + playwright
 npm run mcp                   # STDIO MCP (Browgent must be running)
 npm run mcp:smoke             # HTTP bridge smoke (Browgent must be running)
-npm run test:unit             # tool schema unit smoke
+npm run test:unit             # tool schema + privacy host-match smokes
 npm run test:identity         # guest navigate smoke (app + MCP up)
 npm run demo:hero             # automated YC hero path via MCP
 npm run yc:packet             # traction packet for application
 ```
 
-Docs index: [docs/README.md](./docs/README.md). YC: [docs/yc-application.md](./docs/yc-application.md).
+Docs index: [docs/README.md](./docs/README.md). YC: [docs/yc-application.md](./docs/yc-application.md). QA: [docs/qa.md](./docs/qa.md).
 
 ## Layout
 
 | Path | Role |
 |------|------|
 | `src/main/` | Window, tabs, agent, MCP bridge |
-| `scripts/browgent-mcp.mjs` | STDIO MCP proxy → localhost bridge |
+| `src/main/browser/request-filter.ts` | Guest ad/tracker network cancel |
+| `src/main/browser/cookie-banner.ts` | Consent banner auto-click |
+| `src/main/browser/privacy-store.ts` | Privacy prefs + block stats |
+| `src/main/browser/form-fill.ts` | Profile → field plan for `fill_form` |
+| `src/main/browser/asset-scanner.ts` | Page media/doc inventory |
 | `src/main/browser/page-driver.ts` | Dual DOM / CDP actuation |
 | `src/main/browser/guest-identity.ts` | Chrome-like UA / client hints for guest tabs |
 | `src/main/browser/cdp-endpoint.ts` | Playwright `connectOverCDP` endpoint |
+| `scripts/browgent-mcp.mjs` | STDIO MCP proxy → localhost bridge |
 | `src/preload/guest.ts` | Early main-world identity patches for guest pages |
 | `src/renderer/` | Chrome UI only (no guest DOM) |
-| `src/shared/` | Tools, policies, sites, types, driver |
+| `src/shared/` | Tools, policies, recipes, privacy prefs, sites, types |
+| `src/shared/blocklists/` | Compact ad/tracker host lists |
 | `examples/` | Playwright attach sample |
-| `docs/` | Human documentation (incl. playwright.md) |
+| `docs/` | Human documentation |
 
 ## Invariants
 
@@ -49,3 +55,4 @@ Docs index: [docs/README.md](./docs/README.md). YC: [docs/yc-application.md](./d
 3. Agent runs use a generation token; stop/clear must invalidate in-flight work.
 4. Secrets only via `.env` (gitignored). Never hardcode keys.
 5. **Guest identity always Chrome-like** (`guest-identity.ts` + `preload/guest.ts`) — never ship an Electron UA/client-hints to guest pages (Google/Akamai block new users).
+6. Network privacy filter and cookie banners attach only to the **guest** session, not chrome UI.

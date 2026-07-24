@@ -22,6 +22,7 @@ import { getPasswordVault } from './browser/password-vault'
 import { getProfileStore } from './browser/profile-store'
 import { getPrivacyStore } from './browser/privacy-store'
 import { wireRequestFilter } from './browser/request-filter'
+import { clearCookieBannerCache } from './browser/cookie-banner'
 import { isBrowserId, type ImportOptions } from '../shared/import-types'
 import type { UserProfile } from '../shared/profile'
 import {
@@ -709,7 +710,12 @@ function registerIpcOnce(): void {
     if (Array.isArray(p.allowHosts)) {
       patch.allowHosts = ensureStringArray(p.allowHosts, 'privacy.allowHosts', MAX_HOSTS, HOST_MAX)
     }
-    return getPrivacyStore().set(sanitizePrivacyPrefs({ ...getPrivacyStore().get(), ...patch }))
+    const next = getPrivacyStore().set(
+      sanitizePrivacyPrefs({ ...getPrivacyStore().get(), ...patch })
+    )
+    // Re-allow banner handling on the next navigation after prefs change
+    clearCookieBannerCache()
+    return next
   })
 
   // ── Page assets ─────────────────────────────────────────────

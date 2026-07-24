@@ -4,9 +4,9 @@
 
 | Mode | Tools | Use when |
 |------|-------|----------|
-| **Act** | Full set (navigate, click, type, …) | Automation and multi-step goals |
-| **Research** | Navigate/history, observe, extract, screenshot, scroll/wait, tabs — **no** click/type/hover/press | Read + move without form mutation |
-| **Watch** | observe, extract, get_url, screenshot, list_tabs, think, done, ask_human | You drive; agent answers from page state |
+| **Act** | Full set (navigate, click, type, fill_form, download_assets, asserts, …) | Automation, form fill, multi-step goals |
+| **Research** | Nav/history, observe, extract, screenshot, scroll/wait, tabs, `list_assets`, asserts, `get_profile` — **no** click/type/hover/press/`fill_form` | Read + move without form mutation |
+| **Watch** | observe, extract, get_url, screenshot, list_tabs, think, done, ask_human, `list_assets`, asserts, `get_profile` | You drive; agent answers / QA-checks from page state |
 
 Set mode in the agent panel. Mode updates policy (`researchOnly` when Research).
 
@@ -110,4 +110,15 @@ External automation also: **Playwright over CDP** ([playwright.md](./playwright.
 
 ## Navigation policy
 
-The agent and app only navigate `http://`, `https://`, or `about:blank`. `file:`, `data:`, and `javascript:` URLs are rejected by the navigation gate and `new_tab` flow.
+The agent and app only navigate `http://`, `https://`, or `about:blank`. `file:`, `data:`, and `javascript:` URLs are rejected by the navigation gate and `new_tab` flow. Private/metadata hosts are blocked by default (`BROWGENT_ALLOW_PRIVATE_HOSTS=1` to override).
+
+## Convenience chrome
+
+| UI | Behavior |
+|----|----------|
+| **Summarize** (toolbar / ⌘⇧U) | Research-mode page summary (`src/shared/summary.ts`) |
+| Downloads → **Save page assets** | List/select images & docs; same as `list_assets` / `download_assets` |
+| Settings → **Privacy & data** | Ad/tracker filter, cookie banners, metrics/traction export |
+| Settings → **User Hub** | Profile for `fill_form` / `get_profile`; vault for `get_credentials` |
+
+QA recipes and assert tools: [qa.md](./qa.md).

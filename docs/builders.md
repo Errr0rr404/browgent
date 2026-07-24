@@ -62,7 +62,7 @@ npm run mcp
 }
 ```
 
-Or **Settings → Privacy → Copy MCP config**. Full detail: [mcp.md](./mcp.md).
+Or **Settings → Privacy & data → Copy MCP config**. Full detail: [mcp.md](./mcp.md).
 
 ### C. Playwright (same cookies)
 

@@ -24,7 +24,7 @@
 
 ## Metrics
 
-Settings → Privacy: launches, agent runs, MCP calls, demos, recipes (no page content).  
+Settings → **Privacy & data**: ad/tracker filter + cookie banners; local metrics (launches, agent runs, MCP calls, demos, recipes — no page content).  
 Export: **Export YC traction JSON** or `npm run yc:packet`.
 
 Landing CTA: [website/index.html](../website/index.html) → “Design partner” issue.

@@ -86,7 +86,7 @@ Fill from product + real numbers:
 ```
 
 Generate a machine packet: `npm run yc:packet` → `release/yc-traction-packet.json`  
-In-app: **Settings → Privacy → Export YC traction JSON**
+In-app: **Settings → Privacy & data → Export YC traction JSON**
 
 ### How long have the founders known each other? / equity
 

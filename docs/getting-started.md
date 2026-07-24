@@ -98,7 +98,8 @@ Playwright attach: see [playwright.md](./playwright.md) and `examples/playwright
 4. Policy tab → Strict / Builder / Open  
 5. Trajectory → **Export eval JSON**  
 6. Settings → **Import** (one-click from Chrome/Arc/Edge/…) and **User Hub** (profile + password vault)
-7. Settings → Privacy → **Export YC traction JSON** (optional)
+7. Settings → **Privacy & data** → ad/tracker filter + cookie banners; optional **Export YC traction JSON**
+8. Toolbar **Summarize** (⌘⇧U) or Downloads → save page assets
 
 | Goal | What should happen |
 |------|--------------------|
@@ -106,6 +107,7 @@ Playwright attach: see [playwright.md](./playwright.md) and `examples/playwright
 | **Run demo** | example.com → observe → extract → done |
 | Mic button | Speech → agent instruction |
 | Takeover / Resume | Human owns tabs mid-task |
+| Summarize / shield | Page summary recipe; status bar shows blocked request count |
 
 ## Build installers
 

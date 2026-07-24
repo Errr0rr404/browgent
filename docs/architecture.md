@@ -11,16 +11,18 @@ Browgent is an **Electron** desktop app: the main process owns real Chromium tab
 │  ├─ TabManager → WebContentsView per tab                    │
 │  │    partition: persist:browgent-pages                     │
 │  │    dual driver: DOM inject | CDP debugger                │
+│  │    request filter · cookie banners · asset scan          │
 │  ├─ CDP endpoint → remote-debugging-port (Playwright)       │
 │  ├─ AgentSession → planner / LLM / tools / trajectory       │
 │  ├─ McpBridge → localhost HTTP :17342 (token required)      │
+│  ├─ PrivacyStore · History · Downloads · Profile · Vault    │
 │  ├─ Metrics store → privacy-safe counters (userData)        │
-│  └─ IPC (tabs, agent, driver, metrics, window)              │
+│  └─ IPC (tabs, agent, driver, privacy, metrics, window)     │
 ├─────────────────────────────────────────────────────────────┤
 │  Preload (contextBridge → window.browgent)                  │
 ├─────────────────────────────────────────────────────────────┤
 │  Renderer (React) — chrome only                             │
-│  Tabs · Toolbar · Sidebar · Agent · Status · First-run      │
+│  Tabs · Toolbar · Downloads · Settings · Agent · Status     │
 └─────────────────────────────────────────────────────────────┘
           │
           ├─ STDIO: scripts/browgent-mcp.mjs → bridge
@@ -38,12 +40,22 @@ src/
     browser/
       tab-manager.ts      Tabs, navigation, observe, screenshots, find/zoom/print
       history-store.ts    Persistent browsing history (userData)
-      download-manager.ts Guest-session downloads + panel state
+      download-manager.ts Guest-session downloads + asset subfolders
+      asset-scanner.ts    Page images/media/docs inventory
+      request-filter.ts   Ad/tracker host cancel (guest session)
+      cookie-banner.ts    Best-effort consent button click
+      privacy-store.ts    Privacy prefs + block stats (userData)
+      form-fill.ts        Profile → form field plan for fill_form
+      profile-store.ts    User Hub contact fields
+      password-vault.ts   Local encrypted password vault
+      browser-import.ts   One-click import from other browsers
+      guest-identity.ts   Chrome-like UA / client hints
       page-driver.ts      Dual DOM / CDP actuation
       cdp-endpoint.ts     remote-debugging-port + status
       runtime-flags.ts    CDP port, driver, agent-only, headless
       observe-script.ts   Injected DOM refs (e1, e2…) + actions
       actions.ts          executeJavaScript helpers
+      pet-overlay.ts      Floating companion over guest views
     agent/
       session.ts          Run loop, pause/stop, trajectory
       executor.ts         Tool implementations + policy gates
@@ -60,9 +72,10 @@ src/
     index.ts · guest.ts · pet.ts
   renderer/src/           React chrome only
   shared/
-    tools · policies · policy-presets · recipes · demo
-    mcp · metrics · sites · types · driver · bookmarks
-scripts/                  browgent-mcp, smoke, demo-hero, yc-packet
+    tools · policies · policy-presets · recipes · demo · summary
+    privacy-prefs · profile · blocklists · mcp · metrics
+    sites · types · driver · bookmarks · import-types
+scripts/                  browgent-mcp, unit smokes, demo-hero, yc-packet
 examples/                 playwright-connect, sample trajectory
 recipes/README.md         Index (canonical prompts in shared/recipes.ts)
 ```
@@ -108,6 +121,8 @@ Exposed as `window.browgent` (see `src/preload/index.ts`):
 - History: list, search, delete, clear (persisted under userData)
 - Downloads: list, open, show in folder, cancel, clear, open folder; page asset list/download
 - Privacy: get/set prefs (ads, trackers, cookie banners), stats push
+- Page assets: list / download into downloads folder
+- Import / profile / vault: browser import, User Hub, credentials
 - Chrome layout (top/right/bottom/left) for view bounds
 - Agent: send, getState, stop, clear, pause, resume, takeover, mode, policy, confirm, reject, answerHuman, export
 - Driver: status (CDP URL when enabled, mode), setMode (`dom` | `cdp`)
@@ -115,8 +130,17 @@ Exposed as `window.browgent` (see `src/preload/index.ts`):
 - STDIO adapter: `scripts/browgent-mcp.mjs`
 - Window controls (non-macOS)
 
+## Privacy & network filter
+
+- Guest partition only (`persist:browgent-pages`) — chrome UI is never filtered.
+- Compact host/path blocklist (`src/shared/blocklists/compact-hosts.ts`), not a full uBlock engine.
+- Settings → **Privacy & data**: block ads/trackers, cookie-banner mode, allowlist hosts, shield badge.
+- Status bar shows session block count when the shield badge is enabled.
+
 ## Related
 
 - [Agent guide](./agent-guide.md)
+- [QA with Browgent](./qa.md)
+- [Import & User Hub](./import-and-profile.md)
 - [Playwright + dual driver](./playwright.md)
 - [Contributing](./contributing.md)

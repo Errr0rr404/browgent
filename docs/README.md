@@ -21,7 +21,7 @@ Single index for the repo. Prefer these pages over ad-hoc notes.
 | [Shortcuts](./shortcuts.md) | Keyboard & mouse |
 | [Market map](./market.md) | Competitors + non-wedge backlog |
 | [Guest identity checklist](./guest-identity-checklist.md) | Chrome-like UA regression |
-| [Import & User Hub](./import-and-profile.md) | Browser import + local profile vault |
+| [Import & User Hub](./import-and-profile.md) | Browser import, User Hub profile, `fill_form`, vault |
 
 ## Launch / YC
 
