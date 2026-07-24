@@ -2,6 +2,9 @@
 
 export type BookmarkId = string
 
+/** Max tiles on the Arc-style favorites pin board (4×2) */
+export const MAX_FAVORITES = 8
+
 export interface BookmarkItem {
   id: BookmarkId
   title: string

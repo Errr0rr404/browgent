@@ -6,7 +6,17 @@ import { HistoryStore } from './browser/history-store'
 import { DownloadManager } from './browser/download-manager'
 import { AgentSession } from './agent/session'
 import { loadEnvFile } from './agent/env'
-import { getMcpStatus } from './mcp/server'
+import { getMcpStatus, mcpBridge } from './mcp/server'
+import {
+  buildTractionPacket,
+  getMetrics,
+  recordAgentRun,
+  recordDemoRun,
+  recordLaunch,
+  recordRecipeRun,
+  recordTrajectoryExport,
+  setTelemetryOptIn
+} from './metrics/store'
 import { applyCdpCommandLine, getCdpStatus } from './browser/cdp-endpoint'
 import { applyGuestIdentityEarly, applyGuestPageSessionIdentity } from './browser/guest-identity'
 import { getRuntimeFlags } from './browser/runtime-flags'
@@ -144,6 +154,13 @@ function ensureAgentPolicy(v: unknown): Partial<AgentPolicy> {
   return out
 }
 
+// Stable userData path (mcp-bridge.json, history) across dev + packaged builds
+try {
+  app.setName('browgent')
+} catch {
+  // ignore
+}
+
 const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) {
   app.quit()
@@ -264,11 +281,29 @@ function createWindow(): void {
     })
   }
 
-  agent = new AgentSession(tabs, (state) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send(IPC.AGENT_STATE, state)
+  agent = new AgentSession(
+    tabs,
+    (state) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send(IPC.AGENT_STATE, state)
+      }
+    },
+    () => {
+      try {
+        recordAgentRun()
+      } catch {
+        // ignore
+      }
     }
+  )
+
+  // Localhost MCP bridge — Claude Code / Cursor STDIO proxy attaches here
+  mcpBridge.attach({
+    getAgent: () => agent,
+    getTabs: () => tabs,
+    getVersion: () => app.getVersion()
   })
+  void mcpBridge.start()
 
   registerIpcOnce()
 
@@ -447,6 +482,7 @@ function registerIpcOnce(): void {
       visible?: boolean
       theme?: string
       mood?: PetMood
+      form?: string
       x?: number
       y?: number
     } = {}
@@ -459,6 +495,7 @@ function registerIpcOnce(): void {
     ) {
       partial.mood = c['mood']
     }
+    if (typeof c['form'] === 'string') partial.form = c['form']
     if (typeof c['x'] === 'number' && Number.isFinite(c['x'])) partial.x = c['x']
     if (typeof c['y'] === 'number' && Number.isFinite(c['y'])) partial.y = c['y']
     petOverlay?.configure(partial)
@@ -537,11 +574,39 @@ function registerIpcOnce(): void {
   })
   ipcMain.handle(IPC.AGENT_EXPORT, (e) => {
     assertChromeSender(e)
-    return agent?.exportTrajectory() ?? '{}'
+    const json = agent?.exportTrajectory() ?? '{}'
+    try {
+      recordTrajectoryExport()
+    } catch {
+      // ignore
+    }
+    return json
   })
   ipcMain.handle(IPC.MCP_STATUS, (e) => {
     assertChromeSender(e)
     return getMcpStatus()
+  })
+  ipcMain.handle(IPC.METRICS_GET, (e) => {
+    assertChromeSender(e)
+    return getMetrics()
+  })
+  ipcMain.handle(IPC.METRICS_SET_TELEMETRY, (e, on: unknown) => {
+    assertChromeSender(e)
+    return setTelemetryOptIn(ensureBoolean(on, 'metrics.telemetryOptIn'))
+  })
+  ipcMain.handle(IPC.METRICS_EXPORT_TRACTION, (e) => {
+    assertChromeSender(e)
+    return JSON.stringify(buildTractionPacket(), null, 2)
+  })
+  ipcMain.handle(IPC.METRICS_RECORD_DEMO, (e) => {
+    assertChromeSender(e)
+    recordDemoRun()
+    return getMetrics()
+  })
+  ipcMain.handle(IPC.METRICS_RECORD_RECIPE, (e) => {
+    assertChromeSender(e)
+    recordRecipeRun()
+    return getMetrics()
   })
 
   ipcMain.handle(IPC.DRIVER_STATUS, async (e) => {
@@ -666,6 +731,11 @@ function registerIpcOnce(): void {
 app.whenReady().then(() => {
   // Reload .env in case userData path is now available
   loadEnvFile()
+  try {
+    recordLaunch()
+  } catch {
+    // ignore
+  }
 
   const pageSession = session.fromPartition(PAGE_PARTITION)
   // Strip Electron from UA / client hints so Google, Akamai, etc. do not auto-block guest tabs
@@ -712,6 +782,7 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', () => {
+  mcpBridge.stop()
   tabs?.destroy()
   historyStore?.flush()
   downloadManager?.flush()

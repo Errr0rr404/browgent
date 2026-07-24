@@ -116,14 +116,21 @@ export function parseBrowseIntent(goal: string): BrowseIntent {
     return { navigateUrl: trimmed, task: '', navigateOnly: true, siteToken: null }
   }
 
-  // "search X" / "find X" — google search, no multi-step browser act unless more follows
-  if (/^(search|find)\s+(for\s+)?/i.test(trimmed) && !NAV_PREFIX.test(trimmed)) {
-    const q = trimmed.replace(/^(search|find)\s+(for\s+)?/i, '').trim()
-    return {
-      navigateUrl: `https://www.google.com/search?q=${encodeURIComponent(q)}`,
-      task: '',
-      navigateOnly: true,
-      siteToken: 'google'
+  // Explicit "search/find/look up X" prefix (not "go to …")
+  if (
+    /^(?:please\s+)?(?:can you\s+)?(?:could you\s+)?(?:search|find|look\s*up)\s+(?:for\s+)?/i.test(
+      trimmed
+    ) &&
+    !NAV_PREFIX.test(trimmed)
+  ) {
+    const searchQ = extractBrowserSearchQuery(trimmed)
+    if (searchQ) {
+      return {
+        navigateUrl: buildAgentSearchUrl(searchQ),
+        task: '',
+        navigateOnly: true,
+        siteToken: 'search'
+      }
     }
   }
 
@@ -210,6 +217,17 @@ export function parseBrowseIntent(goal: string): BrowseIntent {
       task: trimmed,
       navigateOnly: false,
       siteToken: embedded.token
+    }
+  }
+
+  // Open-ended web research: "whats the cheapest iphone find that on browser"
+  const openSearch = extractBrowserSearchQuery(trimmed)
+  if (openSearch) {
+    return {
+      navigateUrl: buildAgentSearchUrl(openSearch),
+      task: '',
+      navigateOnly: true,
+      siteToken: 'search'
     }
   }
 
@@ -454,7 +472,95 @@ export function resolveSiteToken(
   return null
 }
 
-/** Turn free text into a navigable URL (alias, domain, intent, or Google search). */
+/**
+ * Build a web-search URL for agent / omnibox fallbacks.
+ * DuckDuckGo by default — Google reCAPTCHA is common on fresh Electron profiles.
+ */
+export function buildAgentSearchUrl(query: string): string {
+  const q = query.trim()
+  if (!q) return 'https://duckduckgo.com/'
+  return `https://duckduckgo.com/?q=${encodeURIComponent(q)}`
+}
+
+/**
+ * Detect natural-language "find this on the web/browser" goals and extract a search query.
+ * Returns null when the goal is not a web-search intent (e.g. "summarize this page").
+ *
+ * Examples that match:
+ *  - "search for cheapest iphone"
+ *  - "find wireless earbuds under $50"
+ *  - "whats the cheapest iphone find that on browser"
+ *  - "look up electron webcontentsview"
+ *  - "best price for macbook air"
+ */
+export function extractBrowserSearchQuery(goal: string): string | null {
+  const trimmed = goal.trim()
+  if (!trimmed) return null
+
+  // Pure page-local research — do not leave the tab
+  if (
+    /^(summar(y|ize)|describe|extract|read)\b/i.test(trimmed) ||
+    /\b(this page|current page|the page|on this page)\b/i.test(trimmed)
+  ) {
+    return null
+  }
+
+  // Explicit search/find/lookup prefix
+  const explicit = trimmed.match(
+    /^(?:please\s+)?(?:can you\s+)?(?:could you\s+)?(?:search|find|look\s*up)\s+(?:for\s+)?(.+)/i
+  )
+  if (explicit?.[1]) {
+    return cleanSearchQuery(explicit[1])
+  }
+
+  // "… find that on browser" / "… on the browser" / "using the browser"
+  if (/\b(find\s+that|on|in|using|via)\s+(the\s+)?browser\b/i.test(trimmed)) {
+    return cleanSearchQuery(trimmed)
+  }
+
+  // Price / product discovery questions
+  if (
+    /\b(cheapest|best\s+price|lowest\s+price|most\s+affordable|how\s+much|price\s+of|shop\s+for|buy)\b/i.test(
+      trimmed
+    )
+  ) {
+    return cleanSearchQuery(trimmed)
+  }
+
+  // "what's the X" / "what is the best X" when not about the current page
+  if (
+    /\bwhat(?:'s|s|\s+is)\s+(?:the\s+)?(?:cheapest|best|lowest|most|latest|newest)\b/i.test(
+      trimmed
+    )
+  ) {
+    return cleanSearchQuery(trimmed)
+  }
+
+  return null
+}
+
+function cleanSearchQuery(raw: string): string | null {
+  const q = raw
+    .replace(/\bfind\s+that\b/gi, ' ')
+    .replace(/\b(on|in|using|via)\s+(the\s+)?browser\b/gi, ' ')
+    .replace(
+      /\b(please|for me|can you|could you|would you|i want|i need|help me|go ahead and)\b/gi,
+      ' '
+    )
+    .replace(/\bwhat(?:'s|s)?\b/gi, ' ')
+    .replace(/\bwhat\s+is\b/gi, ' ')
+    .replace(/\b(search|find|look\s*up)\s+(for\s+)?/gi, ' ')
+    .replace(/^\s*me\s+/i, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 200)
+  // Need at least one real content token
+  if (!q || q.length < 2) return null
+  if (/^(the|a|an|to|for|me)$/i.test(q)) return null
+  return q
+}
+
+/** Turn free text into a navigable URL (alias, domain, intent, or web search). */
 export function resolveNavigableTarget(input: string): string {
   const trimmed = input.trim()
   if (!trimmed) return 'about:blank'
@@ -481,6 +587,9 @@ export function resolveNavigableTarget(input: string): string {
     if (intent.navigateUrl) return intent.navigateUrl
   }
 
+  const searchQ = extractBrowserSearchQuery(trimmed)
+  if (searchQ) return buildAgentSearchUrl(searchQ)
+
   const alias = resolveSiteToken(trimmed)
   if (alias) return alias.url
 
@@ -498,5 +607,5 @@ export function resolveNavigableTarget(input: string): string {
     return `https://${SITE_ALIASES[first]}/`
   }
 
-  return `https://www.google.com/search?q=${encodeURIComponent(trimmed)}`
+  return buildAgentSearchUrl(trimmed)
 }

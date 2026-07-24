@@ -27,7 +27,7 @@ Research synthesized from Browserbase/Stagehand, browser-use, Skyvern, MultiOn, 
 | Live narration of steps | ChatGPT agent UX | ✅ Action chips + activity feed |
 | Research vs act modes | Comet vs Operator | ✅ research / act / watch |
 | Domain policy / safety | Claude allowlists | ✅ Policy engine (differentiator) |
-| MCP server same session | Browserbase MCP (cloud) | ⚠️ Tool catalog status stub; live STDIO MCP roadmap |
+| MCP server same session | Browserbase MCP (cloud) | ✅ Localhost bridge + STDIO (`npm run mcp`) |
 | Playwright connectOverCDP | Browserbase / raw Chromium | ✅ Dual mode (CDP endpoint + DOM driver) |
 | Shared tool/type surface | All infra | ✅ `src/shared` tools + policies + driver types |
 | CAPTCHA solve / residential proxy | Cloud BaaS | ⏳ Optional later (cloud runner) |
@@ -45,7 +45,22 @@ Research synthesized from Browserbase/Stagehand, browser-use, Skyvern, MultiOn, 
 7. **Handoff**: agent stuck → human acts → agent resumes same tab
 8. **Dual driver** — DOM inject (fast in-app) + CDP endpoint (Playwright/Stagehand attach) without shipping Playwright inside the app
 
-## Implementation priority (this sprint)
+## Implementation status
 
-P0 tools + observations + trajectory + policies + takeover + modes + dual driver + UI ✅  
-P1 STDIO MCP server, cloud runners, CAPTCHA, skill replay, multi-agent locks
+| Priority | Scope | Status |
+|----------|--------|--------|
+| P0 | Tools, trajectory, policies, takeover, modes, dual driver, UI | ✅ |
+| P1 | STDIO MCP + HTTP bridge, recipes, installers, traction export | ✅ |
+| P2 / non-wedge | Cloud runners, CAPTCHA solve, skill marketplace, multi-agent locks, Chromium fork, consumer parity with Comet | ⏸ parked until real demand |
+
+## Non-wedge backlog (do not prioritize over attach + users)
+
+| Item | Why parked |
+|------|------------|
+| Agent pet / theme candy | Brand, not wedge |
+| CAPTCHA / residential proxies as core | Cloud BaaS game |
+| Chromium fork | Months of cost |
+| Multi-tenant cloud browser | Contradicts local-first |
+| Auto-update | After release cadence stabilizes |
+
+When in doubt: does it make **co-browse attach + policy + usage** stronger? If no, leave it here.

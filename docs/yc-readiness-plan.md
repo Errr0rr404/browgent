@@ -1,13 +1,14 @@
 # YC Readiness Plan — Browgent
 
 > Product + implementation roadmap so Browgent is fundable by YC (or strong without it).  
-> Date: 2026-07-23 · Status: draft for execution
+> Date: 2026-07-23 · Status: **implementation audit complete** (see Part I)  
+> Canonical application packet: [yc-application.md](./yc-application.md) · Docs index: [README.md](./README.md)
 
 **Goal:** Ship a sharp **local co-browse agent runtime** with builder distribution (MCP + Playwright), installable binaries, real usage signal, and a demo story YC cannot confuse with BrowserOS/Comet.
 
-**Architecture (stay the course):** Electron desktop; React chrome-only; guest `WebContentsView` + `persist:browgent-pages`; dual DOM/CDP driver; agent tool loop + policies + trajectory; Playwright via CDP; live STDIO MCP (to build).
+**Architecture (stay the course):** Electron desktop; React chrome-only; guest `WebContentsView` + `persist:browgent-pages`; dual DOM/CDP driver; agent tool loop + policies + trajectory; Playwright via CDP; **live STDIO MCP (shipped)**.
 
-**Tech stack (do not rewrite):** Electron, electron-vite, React, TypeScript, OpenAI-compatible LLM client, Playwright attach (external), MCP SDK (add).
+**Tech stack (do not rewrite):** Electron, electron-vite, React, TypeScript, OpenAI-compatible LLM client, Playwright attach (external), `@modelcontextprotocol/sdk` (in dependencies).
 
 ---
 
@@ -99,15 +100,15 @@ Not “feature complete.” Ready when a partner can believe:
 
 | Gate | Target | Status today (approx.) |
 |------|--------|-------------------------|
-| Locked wedge + competitor line | Written + on README/site | ⚠️ Partial in README |
-| End-to-end hero demo | Reliable multi-step + takeover + export | ⚠️ Works in-dev |
-| Live STDIO MCP on same session | Claude Code/Cursor attach &lt;5 min | ❌ Stub only |
-| Playwright attach documented | One-command example | ✅ Example exists |
-| Install without source build | Signed mac + Windows (Linux nice) | ⚠️ mac arm64 DMG |
-| Cross-platform | ≥2 OS installers | ❌ mac-centric |
-| Public face | Landing + 90s video + clear README | ⚠️ GitHub only |
-| Traction signal | Weekly installs/runs + growth | ❌ Not instrumented |
-| Design partners | 3–5 users who depend on you | ❌ |
+| Locked wedge + competitor line | Written + on README/site | ✅ positioning + website/ |
+| End-to-end hero demo | Reliable multi-step + takeover + export | ✅ recipes + hero-demo.md (record video still human) |
+| Live STDIO MCP on same session | Claude Code/Cursor attach &lt;5 min | ✅ Bridge + STDIO |
+| Playwright attach documented | One-command example | ✅ |
+| Install without source build | Signed mac + Windows (Linux nice) | ⚠️ scripts ready; notarization needs cert |
+| Cross-platform | ≥2 OS installers | ⚠️ dist:win/linux scripts; build on target CI |
+| Public face | Landing + 90s video + clear README | ✅ landing HTML; video human |
+| Traction signal | Weekly installs/runs + growth | ✅ local metrics + opt-in telemetry |
+| Design partners | 3–5 users who depend on you | ⚠️ program doc; outreach human |
 | Founder package | Video, equity, full-time story | Outside product |
 
 ---
@@ -316,6 +317,89 @@ They are an open-source agentic *browser* for end-user automation. We are the *r
 
 ---
 
+## Part I — Implementation audit (2026-07-23)
+
+Legend: ✅ done in repo · ⚠️ partial / needs human or CI machine · ❌ not done (and not required for product phases 0–4)
+
+### Phase 0 — Positioning
+
+| Task | Status | Evidence |
+|------|--------|----------|
+| 0.1 One-liner + not-BrowserOS table | ✅ | `README.md` hero, `docs/positioning.md`, `website/index.html` |
+| 0.2 Hero workflow script | ✅ | `docs/hero-demo.md`, `docs/builders.md` |
+| 0.3 Record demo video | ⚠️ | Script ready; recording is human |
+| 0.4 Park non-wedge work | ✅ | `docs/backlog-non-wedge.md` |
+
+### Phase 1 — Attachability
+
+| Task | Status | Evidence |
+|------|--------|----------|
+| 1.1 Live STDIO MCP same session | ✅ | `src/main/mcp/bridge.ts`, `scripts/browgent-mcp.mjs`, `npm run mcp` / `mcp:smoke` |
+| 1.1 Status UI | ✅ | Status bar `mcp · :port`, Settings MCP port + copy config |
+| 1.2 Playwright / dual driver | ✅ | `docs/playwright.md`, `examples/playwright-connect.mjs` |
+| 1.3 Policy + takeover + stop/clear | ✅ | Generation tokens in `session.ts`, confirm UX, MCP `needsHuman` |
+| Builders one-pager | ✅ | `docs/builders.md` |
+
+### Phase 2 — Installable product
+
+| Task | Status | Evidence |
+|------|--------|----------|
+| 2.1 Windows installer target | ✅ | `electron-builder.yml` win + `npm run dist:win` (build on Win/CI) |
+| 2.2 macOS Gatekeeper docs | ✅ | `docs/install.md` (notarization needs cert ⚠️) |
+| 2.3 Linux AppImage | ✅ | `npm run dist:linux` |
+| 2.4 First-run UX | ✅ | `FirstRunModal.tsx` + recipes + heuristic/API key copy |
+| 2.5 Auto-update | ❌ | Explicitly optional / non-goal until release cadence |
+
+### Phase 3 — Hero product surface
+
+| Task | Status | Evidence |
+|------|--------|----------|
+| 3.1 Recipes 5–10 | ✅ | 9 in-app (`src/shared/recipes.ts`) + `recipes/*.md` |
+| 3.2 Trajectory eval export | ✅ | `schemaVersion` + `evalSteps`; sample `examples/trajectory-eval-sample.json` |
+| 3.3 Modes + policy presets | ✅ | Act/Research/Watch bar; Strict/Builder/Open in Policy pane |
+| 3.4 Reliability site matrix | ✅ | `docs/reliability-sites.md` (manual pass before demos) |
+| 3.5 Guest identity suite | ✅ | `docs/guest-identity-checklist.md`, `npm run test:identity` |
+
+### Phase 4 — Traction machine
+
+| Task | Status | Evidence |
+|------|--------|----------|
+| 4.1 Landing page | ✅ | `website/index.html` |
+| 4.2 Privacy-safe metrics | ✅ | `src/main/metrics/store.ts`, Settings opt-in |
+| 4.3 Changelog + ship rhythm | ✅ | `CHANGELOG.md`, `docs/shipping-rhythm.md` |
+| 4.4 Design partner program | ⚠️ | `docs/design-partners.md` (outreach human) |
+| 4.5 GitHub presence | ✅ | Issue templates + good_first_issue; README wedge (GIF optional ⚠️) |
+| 4.6 Distribution hooks | ✅ | `docs/mcp.md`, `docs/builders.md`, Playwright docs |
+
+### Phase 5 — Optional scale
+
+| Item | Status |
+|------|--------|
+| Cloud runners, multi-agent locks, marketplace, paid tier | ❌ intentionally deferred |
+
+### Product vs human remaining
+
+| Still needed for YC application | Owner | Product support now in repo |
+|----------------------------------|--------|------------------------------|
+| 60–90s demo video | Founder | `docs/hero-demo.md` + **Run demo** + `npm run demo:hero` |
+| Signed/notarized multi-OS releases | Founder + secrets | `.github/workflows/release.yml` (tag `v*`) |
+| Real design partners + quotes | Founder | outreach templates + landing CTA |
+| Usage curve | Founder | Settings **Export YC traction JSON** + `npm run yc:packet` |
+| Application answers | Founder | `docs/yc-application.md` drafts |
+
+### Verify commands
+
+```bash
+npm run typecheck
+npm run test:unit
+npm run build
+# with app running:
+npm run mcp:smoke
+npm run test:identity
+```
+
+---
+
 ## Next step after plan approval
 
 Execute in order:
@@ -325,4 +409,4 @@ Execute in order:
 3. Parallel: Windows dist  
 4. Land recipes + public demo + telemetry  
 
-Implementation detail for MCP should be a separate task-level plan (`docs/superpowers/plans/…-stdio-mcp.md`) once Phase 0 is locked.
+**Code phases 0–4 are implemented.** Next: human demo video, release artifacts, design partners.

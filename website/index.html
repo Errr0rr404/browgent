@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Browgent — Local co-browse runtime for AI agents</title>
+    <meta
+      name="description"
+      content="Humans and agents share real Chromium tabs — policy, takeover, MCP, and Playwright. Local-first. Open source."
+    />
+    <meta property="og:title" content="Browgent — Local co-browse runtime" />
+    <meta
+      property="og:description"
+      content="Same tabs for humans and agents. Policy, takeover, MCP + Playwright. Not another chat sidebar."
+    />
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0b0d12;
+        --surface: #141820;
+        --text: #e8eaef;
+        --muted: #9aa3b2;
+        --accent: #5b9cff;
+        --border: rgba(255, 255, 255, 0.08);
+        font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: radial-gradient(1200px 600px at 20% -10%, #1a2740 0%, var(--bg) 55%);
+        color: var(--text);
+        line-height: 1.5;
+      }
+      a { color: var(--accent); }
+      .wrap { max-width: 920px; margin: 0 auto; padding: 48px 20px 80px; }
+      .kicker {
+        font-size: 12px; font-weight: 700; letter-spacing: 0.06em;
+        text-transform: uppercase; color: var(--accent); margin: 0 0 12px;
+      }
+      h1 { font-size: clamp(1.85rem, 4.2vw, 2.7rem); line-height: 1.12; margin: 0 0 16px; }
+      .lead { font-size: 1.12rem; color: var(--muted); max-width: 42rem; }
+      .cta { display: flex; flex-wrap: wrap; gap: 12px; margin: 28px 0 36px; }
+      .btn {
+        display: inline-flex; align-items: center; gap: 8px;
+        padding: 12px 18px; border-radius: 10px; font-weight: 600;
+        text-decoration: none; border: 1px solid var(--border);
+      }
+      .btn.primary { background: var(--accent); color: #0b0d12; border-color: transparent; }
+      .btn.ghost { color: var(--text); background: transparent; }
+      .grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+      .card {
+        background: var(--surface); border: 1px solid var(--border);
+        border-radius: 14px; padding: 16px 18px;
+      }
+      .card h3 { margin: 0 0 6px; font-size: 1rem; }
+      .card p { margin: 0; color: var(--muted); font-size: 0.92rem; }
+      table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 0.9rem; }
+      th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--border); }
+      th { color: var(--muted); font-weight: 600; }
+      code { font-size: 0.85em; background: rgba(255,255,255,0.06); padding: 2px 6px; border-radius: 4px; }
+      footer { margin-top: 48px; color: var(--muted); font-size: 0.85rem; }
+      section { margin-top: 44px; }
+      h2 { font-size: 1.25rem; margin: 0 0 12px; }
+      .video-slot {
+        aspect-ratio: 16/9; border-radius: 14px; border: 1px dashed var(--border);
+        background: color-mix(in srgb, var(--surface) 80%, #000);
+        display: grid; place-items: center; color: var(--muted); text-align: center; padding: 24px;
+      }
+      .video-slot strong { color: var(--text); display: block; margin-bottom: 6px; }
+      ol { color: var(--muted); padding-left: 1.2rem; }
+      ol li { margin: 6px 0; }
+      .pill-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+      .pill {
+        font-size: 11px; font-weight: 600; letter-spacing: 0.03em;
+        padding: 5px 10px; border-radius: 999px; border: 1px solid var(--border);
+        color: var(--muted);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <p class="kicker">Local co-browse runtime · open source</p>
+      <h1>Humans + agents on the same Chromium tabs.</h1>
+      <p class="lead">
+        Browgent is not another chat sidebar. It is a desktop runtime where agents act with
+        <strong>policy</strong>, <strong>takeover</strong>, <strong>trajectory export</strong>,
+        <strong>MCP</strong>, and <strong>Playwright</strong> — on <strong>your</strong> logged-in session.
+      </p>
+      <div class="pill-row">
+        <span class="pill">Local-first cookies</span>
+        <span class="pill">Claude Code / Cursor MCP</span>
+        <span class="pill">Playwright CDP</span>
+        <span class="pill">Eval-pack trajectories</span>
+      </div>
+      <div class="cta">
+        <a class="btn primary" href="https://github.com/Errr0rr404/browgent/releases/latest">Download</a>
+        <a class="btn ghost" href="https://github.com/Errr0rr404/browgent">Star on GitHub</a>
+        <a class="btn ghost" href="https://github.com/Errr0rr404/browgent/blob/main/docs/builders.md">Builders guide</a>
+        <a class="btn ghost" href="https://github.com/Errr0rr404/browgent/issues/new?template=feature_request.md&amp;title=Design%20partner%20interest">Design partner</a>
+      </div>
+
+      <section>
+        <h2>Demo</h2>
+        <div class="video-slot" id="demo">
+          <div>
+            <strong>60–90s video goes here</strong>
+            Record with <code>docs/builders.md</code> · B-roll via <code>npm run demo:hero</code>
+            <br /><br />
+            <a href="https://github.com/Errr0rr404/browgent/blob/main/docs/builders.md">Demo script →</a>
+          </div>
+        </div>
+      </section>
+
+      <div class="grid" style="margin-top: 28px">
+        <div class="card">
+          <h3>True co-browse</h3>
+          <p>Same tab tree. Ownership badges. Takeover → resume without losing the session.</p>
+        </div>
+        <div class="card">
+          <h3>Builder attach</h3>
+          <p>STDIO MCP for Claude Code / Cursor. Playwright over CDP on the same cookies.</p>
+        </div>
+        <div class="card">
+          <h3>Policy + audit</h3>
+          <p>Confirm sensitive actions, host gates, modes, eval-pack trajectory JSON.</p>
+        </div>
+      </div>
+
+      <section>
+        <h2>Not these</h2>
+        <table>
+          <thead>
+            <tr><th>Product</th><th>Job</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><strong>Browgent</strong></td><td>Local co-browse <em>runtime</em> + attach</td></tr>
+            <tr><td>BrowserOS</td><td>OSS agentic consumer browser</td></tr>
+            <tr><td>Comet / Dia</td><td>Polished AI browser product</td></tr>
+            <tr><td>Browserbase</td><td>Cloud multi-tenant fleets</td></tr>
+            <tr><td>Playwright MCP alone</td><td>Dev tools without shared human UI</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section>
+        <h2>60-second builder path</h2>
+        <div class="card">
+          <ol>
+            <li>Install or <code>npm run dev</code></li>
+            <li>Status bar: <code>mcp · :17342</code> (token in userData)</li>
+            <li><code>npm run mcp</code> → wire Claude Code</li>
+            <li>In-app: <strong>Run demo</strong> or recipe chips</li>
+            <li>Takeover when needed → Export trajectory</li>
+          </ol>
+        </div>
+      </section>
+
+      <section>
+        <h2>Design partners</h2>
+        <div class="card">
+          <p>
+            Building browser agents or HITL automation? We’re onboarding a small set of partners
+            for free support in exchange for honest feedback (and an optional quote).
+          </p>
+          <p style="margin-top: 12px">
+            <a class="btn primary" href="https://github.com/Errr0rr404/browgent/issues/new?template=feature_request.md&amp;title=Design%20partner%20interest">Apply as design partner</a>
+          </p>
+        </div>
+      </section>
+
+      <footer>
+        MIT · Local-first ·
+        <a href="https://github.com/Errr0rr404/browgent">Errr0rr404/browgent</a>
+        ·
+        <a href="https://github.com/Errr0rr404/browgent/blob/main/docs/yc-application.md">YC packet</a>
+      </footer>
+    </div>
+  </body>
+</html>

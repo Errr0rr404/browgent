@@ -17,13 +17,22 @@ npm run dist / dist:dir       # all targets / unpacked dir
 npm run dev:agent             # compact automation shell
 npm run dev:headless          # hidden + agent-only + CDP
 npm run playwright:example    # needs Browgent running + playwright
+npm run mcp                   # STDIO MCP (Browgent must be running)
+npm run mcp:smoke             # HTTP bridge smoke (Browgent must be running)
+npm run test:unit             # tool schema unit smoke
+npm run test:identity         # guest navigate smoke (app + MCP up)
+npm run demo:hero             # automated YC hero path via MCP
+npm run yc:packet             # traction packet for application
 ```
+
+Docs index: [docs/README.md](./docs/README.md). YC: [docs/yc-application.md](./docs/yc-application.md).
 
 ## Layout
 
 | Path | Role |
 |------|------|
-| `src/main/` | Window, tabs, agent, MCP status |
+| `src/main/` | Window, tabs, agent, MCP bridge |
+| `scripts/browgent-mcp.mjs` | STDIO MCP proxy → localhost bridge |
 | `src/main/browser/page-driver.ts` | Dual DOM / CDP actuation |
 | `src/main/browser/guest-identity.ts` | Chrome-like UA / client hints for guest tabs |
 | `src/main/browser/cdp-endpoint.ts` | Playwright `connectOverCDP` endpoint |

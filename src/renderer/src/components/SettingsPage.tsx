@@ -19,6 +19,8 @@ import {
 import type { AgentSessionState } from '@shared/types'
 import { DEFAULT_POLICY, type AgentMode, type AgentPolicy } from '@shared/policies'
 import type { CdpEndpointStatus } from '@shared/driver'
+import type { McpStatus } from '@shared/mcp'
+import type { LocalMetrics } from '@shared/metrics'
 import { THEMES, type ThemeId } from '../themes/themes'
 import {
   SEARCH_ENGINES,
@@ -29,6 +31,7 @@ import {
 import { parseHosts } from '../lib/hosts'
 import { platformModKey } from '../lib/platform'
 import { providerLabel } from '../lib/providers'
+import { exportTractionPacketFile } from '../lib/download'
 import type { SettingsSection } from '../lib/settings'
 import { ToggleRow } from './ui/ToggleRow'
 import '../styles/chrome-pages.css'
@@ -116,6 +119,9 @@ export function SettingsPage({
   const [maxStepsDraft, setMaxStepsDraft] = useState(String(policy.maxSteps))
   const [committedMaxSteps, setCommittedMaxSteps] = useState(policy.maxSteps)
   const [driverStatus, setDriverStatus] = useState<CdpEndpointStatus | null>(null)
+  const [mcpStatus, setMcpStatus] = useState<McpStatus | null>(null)
+  const [metrics, setMetrics] = useState<LocalMetrics | null>(null)
+  const [mcpConfigCopied, setMcpConfigCopied] = useState(false)
 
   const prefs = useChromePrefs()
   const shortcuts = useMemo(() => buildShortcuts(platformModKey()), [])
@@ -137,7 +143,38 @@ export function SettingsPage({
     void window.browgent.getDriverStatus().then(setDriverStatus).catch(() => {
       /* ignore */
     })
+    if (window.browgent?.getMcpStatus) {
+      void window.browgent.getMcpStatus().then(setMcpStatus).catch(() => {
+        /* ignore */
+      })
+    }
+    if (window.browgent?.getMetrics) {
+      void window.browgent.getMetrics().then(setMetrics).catch(() => {
+        /* ignore */
+      })
+    }
   }, [])
+
+  const copyMcpConfig = useCallback(() => {
+    const cfg = {
+      mcpServers: {
+        browgent: {
+          command: 'npm',
+          args: ['run', 'mcp'],
+          cwd: '<path-to-browgent-repo>',
+          env: {
+            BROWGENT_MCP_URL: mcpStatus?.baseUrl || 'http://127.0.0.1:17342',
+            BROWGENT_MCP_TOKEN: '<from userData/mcp-bridge.json or BROWGENT_MCP_TOKEN env>'
+          }
+        }
+      }
+    }
+    const text = JSON.stringify(cfg, null, 2)
+    void navigator.clipboard.writeText(text).then(() => {
+      setMcpConfigCopied(true)
+      window.setTimeout(() => setMcpConfigCopied(false), 2000)
+    })
+  }, [mcpStatus?.baseUrl])
 
   const commitMaxSteps = (): void => {
     let n = Number(maxStepsDraft)
@@ -184,6 +221,11 @@ export function SettingsPage({
   const cdpNote =
     driverStatus?.note ||
     'CDP is localhost-only. Set BROWGENT_CDP_PORT to enable Playwright attach.'
+  const mcpPort =
+    mcpStatus?.port != null ? String(mcpStatus.port) : mcpStatus?.enabled ? '…' : 'off'
+  const mcpNote =
+    mcpStatus?.note ||
+    'MCP bridge is localhost-only. Claude Code: npm run mcp (see docs/mcp.md).'
 
   return (
     <div className="settings-page" data-screen-label="Settings">
@@ -513,7 +555,7 @@ export function SettingsPage({
                   </p>
                 </div>
                 <div className="settings-card settings-card-pad">
-                  <div className="settings-toggle-row settings-toggle-row-last">
+                  <div className="settings-toggle-row">
                     <span className="settings-toggle-text">
                       <span className="settings-toggle-label">
                         CDP port{' '}
@@ -528,6 +570,63 @@ export function SettingsPage({
                       aria-label="CDP port"
                     />
                   </div>
+                  <div className="settings-toggle-row settings-toggle-row-last">
+                    <span className="settings-toggle-text">
+                      <span className="settings-toggle-label">
+                        MCP bridge{' '}
+                        <span className="settings-muted">(localhost only)</span>
+                      </span>
+                      <span className="settings-toggle-sub">{mcpNote}</span>
+                    </span>
+                    <input
+                      className="settings-num mono"
+                      value={mcpPort}
+                      readOnly
+                      aria-label="MCP bridge port"
+                    />
+                  </div>
+                </div>
+                <div className="settings-card settings-card-pad">
+                  <ToggleRow
+                    label="Anonymous usage counters"
+                    sub="Local only by default: launches, agent runs, MCP calls. Never page content, URLs, or prompts. Remote flush only if you opt in and BROWGENT_TELEMETRY_URL is set."
+                    on={prefs.telemetryOptIn}
+                    onToggle={() => {
+                      const next = !prefs.telemetryOptIn
+                      prefs.setTelemetryOptIn(next)
+                      void window.browgent?.setTelemetryOptIn?.(next).then(setMetrics)
+                    }}
+                  />
+                  {metrics && (
+                    <p className="settings-lead" style={{ marginTop: 8 }}>
+                      Launches {metrics.appLaunchCount} · agent runs {metrics.agentRunCount} · MCP{' '}
+                      {metrics.mcpCallCount} · demos {metrics.demoRunCount ?? 0} · recipes{' '}
+                      {metrics.recipeRunCount ?? 0} · exports {metrics.trajectoryExportCount}
+                    </p>
+                  )}
+                  <button
+                    type="button"
+                    className="settings-btn"
+                    style={{ marginTop: 10 }}
+                    onClick={() =>
+                      void exportTractionPacketFile()
+                        .then(() => {
+                          /* optional toast via parent not wired */
+                        })
+                        .catch((e) => console.error(e))
+                    }
+                  >
+                    Export YC traction JSON
+                  </button>
+                </div>
+                <div className="settings-card settings-card-pad">
+                  <p className="settings-toggle-label">Claude Code / Cursor MCP config</p>
+                  <p className="settings-toggle-sub" style={{ marginBottom: 8 }}>
+                    Copy JSON for your MCP client. Token required — see userData/mcp-bridge.json.
+                  </p>
+                  <button type="button" className="settings-btn" onClick={copyMcpConfig}>
+                    {mcpConfigCopied ? 'Copied' : 'Copy MCP config'}
+                  </button>
                 </div>
                 <div className="settings-actions">
                   {onExportTrajectory && (
@@ -539,6 +638,13 @@ export function SettingsPage({
                       Export trajectory JSON
                     </button>
                   )}
+                  <button
+                    type="button"
+                    className="settings-btn"
+                    onClick={() => prefs.setOnboardingDismissed(false)}
+                  >
+                    Show welcome again
+                  </button>
                 </div>
               </section>
             )}

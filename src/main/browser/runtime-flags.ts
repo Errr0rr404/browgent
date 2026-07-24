@@ -6,14 +6,19 @@
  *   BROWGENT_DRIVER=dom|cdp    in-app agent actuation path
  *   BROWGENT_AGENT_ONLY=1      compact window, CDP on, ready for automation
  *   BROWGENT_HEADLESS=1        hide window (still runs Chromium + CDP)
+ *   BROWGENT_MCP_PORT=17342    localhost MCP HTTP bridge (0 = off)
+ *   BROWGENT_MCP=0|1           shorthand; default ON with port 17342
  *
- * CLI: --cdp-port=9222 --driver=cdp --agent-only --headless
+ * CLI: --cdp-port=9222 --driver=cdp --agent-only --headless --mcp-port=17342 --mcp=0
  */
 
 import { parseDriverMode, type DriverMode } from '../../shared/driver'
+import { DEFAULT_MCP_PORT } from '../../shared/mcp'
 
 export interface RuntimeFlags {
   cdpPort: number | null
+  /** Localhost MCP bridge port; null = disabled */
+  mcpPort: number | null
   driverMode: DriverMode
   agentOnly: boolean
   headless: boolean
@@ -87,7 +92,22 @@ export function resolveRuntimeFlags(): RuntimeFlags {
     process.env.BROWGENT_DRIVER ?? argValue('driver') ?? (agentOnly ? 'cdp' : 'dom')
   const driverMode = parseDriverMode(driverRaw)
 
-  return { cdpPort, driverMode, agentOnly, headless }
+  // MCP bridge — default ON (localhost) so Claude Code / Cursor can attach
+  const mcpPortEnv = process.env.BROWGENT_MCP_PORT
+  const mcpPortArg = argValue('mcp-port')
+  const mcpToggleEnv = process.env.BROWGENT_MCP
+  const mcpToggleArg = argValue('mcp')
+  const mcpPortRaw = mcpPortEnv ?? mcpPortArg
+  const mcpToggleRaw = mcpToggleEnv ?? mcpToggleArg
+
+  let mcpPort: number | null = DEFAULT_MCP_PORT
+  if (defined(mcpPortRaw)) {
+    mcpPort = parsePort(mcpPortRaw)
+  } else if (defined(mcpToggleRaw)) {
+    mcpPort = truthy(mcpToggleRaw) ? DEFAULT_MCP_PORT : null
+  }
+
+  return { cdpPort, mcpPort, driverMode, agentOnly, headless }
 }
 
 let cached: RuntimeFlags | null = null

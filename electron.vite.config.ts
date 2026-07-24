@@ -1,6 +1,35 @@
 import { resolve } from 'path'
+import type { Plugin } from 'vite'
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 import react from '@vitejs/plugin-react'
+
+/**
+ * Sandboxed Electron preloads may only load their single entry script.
+ * Multi-entry Rollup builds extract shared modules into `chunks/*.js`, which
+ * then fail at runtime (`module not found: ./chunks/...`) and leave
+ * `window.browgent` undefined — every chrome click dies.
+ *
+ * Fail the preload build loudly if a shared chunk is emitted.
+ */
+function assertNoPreloadChunks(): Plugin {
+  return {
+    name: 'assert-no-preload-chunks',
+    generateBundle(_options, bundle) {
+      const shared = Object.keys(bundle).filter(
+        (file) =>
+          file.includes('chunks/') ||
+          (bundle[file]?.type === 'chunk' &&
+            !(bundle[file] as { isEntry?: boolean }).isEntry)
+      )
+      if (shared.length === 0) return
+      throw new Error(
+        `[browgent] Preload build emitted shared chunks that sandbox cannot load:\n` +
+          shared.map((f) => `  - ${f}`).join('\n') +
+          `\nDo not share value imports across preload entries (index / guest / pet).`
+      )
+    }
+  }
+}
 
 export default defineConfig({
   main: {
@@ -19,7 +48,7 @@ export default defineConfig({
     }
   },
   preload: {
-    plugins: [externalizeDepsPlugin()],
+    plugins: [externalizeDepsPlugin(), assertNoPreloadChunks()],
     resolve: {
       alias: {
         '@shared': resolve('src/shared')
@@ -33,6 +62,13 @@ export default defineConfig({
           guest: resolve(__dirname, 'src/preload/guest.ts'),
           // Floating agent companion overlay (above guest WebContentsViews)
           pet: resolve(__dirname, 'src/preload/pet.ts')
+        },
+        output: {
+          // Prefer self-contained CJS entries (no cross-entry shared chunks)
+          format: 'cjs',
+          entryFileNames: '[name].js',
+          // If a chunk is ever emitted, assertNoPreloadChunks fails the build
+          chunkFileNames: 'chunks/[name]-[hash].js'
         }
       }
     }

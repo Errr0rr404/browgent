@@ -5,7 +5,22 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-teal.svg)](./LICENSE)
 [![Release](https://img.shields.io/github/v/release/Errr0rr404/browgent?include_prereleases&label=release)](https://github.com/Errr0rr404/browgent/releases/latest)
 
-Not another chat sidebar bolted onto Chrome. Browgent is a **desktop co-browse runtime**: real multi-tab Chromium, agent tools, safety policies, trajectory export, and Playwright over CDP — all on your machine.
+Not another chat sidebar bolted onto Chrome. Browgent is a **desktop co-browse runtime**: real multi-tab Chromium, agent tools, safety policies, trajectory export, **MCP**, and Playwright over CDP — all on your machine.
+
+> **One-liner:** Local co-browse runtime where humans and agents share real Chromium tabs — policy, takeover, trajectories, MCP + Playwright. Cookies stay on disk.
+
+| Not | Instead |
+|-----|---------|
+| BrowserOS (agentic consumer browser) | **Runtime / control plane** for builders + HITL |
+| Comet / Dia / Atlas | Open, attachable, policy-auditable co-browse |
+| Browserbase / cloud BaaS | **Local-first** same-session tabs, not multi-tenant fleets |
+
+Builder path: [docs/builders.md](./docs/builders.md) · Install: [docs/getting-started.md](./docs/getting-started.md) · **YC:** [docs/yc-application.md](./docs/yc-application.md)
+
+```bash
+npm run demo:hero    # automated co-browse path (Browgent must be running)
+npm run yc:packet    # traction JSON → release/yc-traction-packet.json
+```
 
 ## What Browgent does that others don’t
 
@@ -26,7 +41,7 @@ Consumer AI browsers (Comet, Dia, Atlas) optimize for “ask the assistant.” C
 | **Compact element refs** (`e1`, `e2`…) — Stagehand / browser-use style observe | ✅ | — | ❌ | ❌ | ❌ | via frameworks |
 | **Works offline of a vendor chat** — heuristic planner without API key | ✅ | n/a | ❌ | ❌ | ❌ | n/a |
 | **Model not locked to one cloud chat** — Grok via key; swap/extend the loop | ✅ | n/a | Perplexity | product LLM | OpenAI | bring-your-agent |
-| **Shared tool surface** — desktop tools catalog; STDIO MCP roadmap; Playwright CDP today | ⚠️ | extensions | ❌ | ❌ | ❌ | cloud MCP |
+| **Shared tool surface** — desktop tools + live STDIO MCP + Playwright CDP | ✅ | extensions | ❌ | ❌ | ❌ | cloud MCP |
 | **Voice → agent on real tabs** | ✅ | — | ⚠️ | ⚠️ | ⚠️ | — |
 
 \*Browserbase, Steel, Kernel, Hyperbrowser, etc. — great for fleets; not a local co-browse desktop.
@@ -64,6 +79,18 @@ npm run dev
 
 Optional: copy `.env.example` → `.env` and set `XAI_API_KEY` for [Grok](https://console.x.ai) (default brain), or point `BROWGENT_PROVIDER` / `BROWGENT_API_KEY` / `BROWGENT_BASE_URL` at any OpenAI-compatible model. Without a key, the heuristic agent still drives the browser.
 
+### MCP (Claude Code / Cursor)
+
+With Browgent running, the localhost bridge listens on **:17342** by default (status bar: `mcp · :17342`).
+
+```bash
+npm run mcp:smoke    # HTTP bridge smoke
+npm run mcp          # STDIO MCP server for coding agents
+```
+
+See [docs/mcp.md](./docs/mcp.md), [docs/getting-started.md](./docs/getting-started.md), [recipes/](./recipes/).  
+Landing: [website/index.html](./website/index.html).
+
 ## Capabilities at a glance
 
 | Mode | Behavior |
@@ -96,14 +123,12 @@ Disable remote debugging with `BROWGENT_CDP=0`. Details: [docs/playwright.md](./
 
 | Doc | Description |
 |-----|-------------|
+| [**Docs index**](./docs/README.md) | Full documentation map |
 | [Getting started](./docs/getting-started.md) | Install, env, first run |
-| [Architecture](./docs/architecture.md) | Process model & folders |
-| [Agent guide](./docs/agent-guide.md) | Modes, tools, policies, Grok |
-| [Playwright + dual driver](./docs/playwright.md) | CDP endpoint, drivers, headless |
-| [Shortcuts](./docs/shortcuts.md) | Keyboard shortcuts |
-| [Contributing](./docs/contributing.md) | Dev setup & PR guide |
-| [Releasing](./docs/releasing.md) | DMG / GitHub Releases |
-| [Market notes](./docs/market.md) | Full competitive research |
+| [Builders](./docs/builders.md) | Positioning + Claude / MCP / Playwright |
+| [MCP](./docs/mcp.md) | Bridge + STDIO + security |
+| [YC application](./docs/yc-application.md) | Application packet + checklist |
+| [Architecture](./docs/architecture.md) | Process model |
 | [Security](./SECURITY.md) | Vulnerability reporting |
 
 ## License

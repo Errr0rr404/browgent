@@ -13,16 +13,14 @@ npm run dev
 
 | Command | Purpose |
 |---------|---------|
-| `npm run dev` | Electron + Vite HMR (CDP off by default — see [playwright.md](./playwright.md) to enable) |
-| `npm run build` | Compile main / preload / renderer |
-| `npm run typecheck` | TypeScript (node + web projects) |
-| `npm run dist:mac` | Build + package macOS DMG → `release/` |
-| `npm run preview` | Preview built app |
-| `npm run playwright:example` | Attach Playwright via CDP (Browgent must be running) |
-| `npm run dev:agent` | Compact automation shell (implies CDP unless disabled) |
-| `npm run dev:headless` | Hidden window + agent-only (implies CDP unless disabled) |
-| `npm run dist` | Build + electron-builder (mac/win/linux targets in yml) |
-| `npm run dist:dir` | Unpacked app directory under `release/` |
+| `npm run dev` | Electron + Vite HMR (CDP off by default) |
+| `npm run build` / `typecheck` | Compile / TS |
+| `npm run test:unit` | Schema unit smoke |
+| `npm run mcp` / `mcp:smoke` | STDIO MCP + HTTP smoke (app running) |
+| `npm run demo:hero` | Automated hero demo via MCP |
+| `npm run yc:packet` | Traction packet → `release/` |
+| `npm run playwright:example` | CDP attach sample |
+| `npm run dist:mac` / `dist:win` / `dist:linux` | Installers → `release/` |
 
 ## Conventions
 
@@ -30,8 +28,8 @@ npm run dev
 2. **Typecheck + build** must pass before PR.
 3. **Guest safety** — keep sandbox, no `nodeIntegration`, deny sensitive permissions on page sessions.
 4. **Chrome vs page** — do not cover the content hole with absolute HTML menus; expand chrome in-flow (see theme picker).
-5. **Tools** — add definitions in `src/shared/tools.ts`, implement in `executor.ts`, document in [agent-guide](./agent-guide.md) if user-facing.
-6. Prefer small, focused PRs.
+5. **Tools** — add definitions in `src/shared/tools.ts`, implement in `executor.ts`, document in [agent-guide](./agent-guide.md) if user-facing. Recipes: `src/shared/recipes.ts` only (update [recipes/README.md](../recipes/README.md) table).
+6. Prefer small, focused PRs. Keep docs linked from [docs/README.md](./README.md) — avoid new top-level doc files without indexing them.
 
 ## Project map
 

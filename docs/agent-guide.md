@@ -97,7 +97,9 @@ Mic uses Chromium **Web Speech API** (system STT on many macOS setups). Guest pa
 
 ## MCP
 
-`getMcpStatus` returns the **tool catalog stub** (same names as the desktop agent) with a note that the live STDIO MCP server is on the roadmap. External automation today uses **Playwright over CDP** ([playwright.md](./playwright.md)).
+Live localhost bridge (default port **17342**) + STDIO adapter (`npm run mcp`). Same tools and policies as the desktop agent on shared tabs. See [mcp.md](./mcp.md).
+
+External automation also: **Playwright over CDP** ([playwright.md](./playwright.md)).
 
 ## Navigation policy
 

@@ -206,6 +206,7 @@ export class DownloadManager {
     const it = this.items.get(id)
     if (!it || it.state !== 'completed') return false
     if (!it.savePath || !existsSync(it.savePath)) return false
+    if (!this.isUnderDownloadsRoot(it.savePath)) return false
     void shell.openPath(it.savePath)
     return true
   }
@@ -213,12 +214,23 @@ export class DownloadManager {
   showInFolder(id: string): boolean {
     const it = this.items.get(id)
     if (!it?.savePath) return false
-    if (!existsSync(it.savePath)) {
+    if (!existsSync(it.savePath) || !this.isUnderDownloadsRoot(it.savePath)) {
       void shell.openPath(app.getPath('downloads'))
       return true
     }
     shell.showItemInFolder(it.savePath)
     return true
+  }
+
+  /** Prevent shell.openPath on paths rewritten in downloads.json outside the downloads root. */
+  private isUnderDownloadsRoot(p: string): boolean {
+    try {
+      const root = resolve(app.getPath('downloads')) + sep
+      const target = resolve(p)
+      return target.startsWith(root)
+    } catch {
+      return false
+    }
   }
 
   cancel(id: string): boolean {

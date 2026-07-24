@@ -12,6 +12,8 @@ directories:
 files:
   - 'out/**/*'
   - 'package.json'
+  - 'scripts/browgent-mcp.mjs'
+  - 'recipes/README.md'
   - '!**/.vscode/*'
   - '!src/*'
   - '!docs/*'

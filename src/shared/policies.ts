@@ -123,10 +123,53 @@ export function hostFromUrl(url: string): string | null {
   }
 }
 
+/**
+ * Hosts agents should not open without an explicit allowlist entry —
+ * loopback, link-local, private IPv4, cloud metadata endpoints.
+ * Set BROWGENT_ALLOW_PRIVATE_HOSTS=1 to disable this gate (power users).
+ */
+export function isPrivateOrMetadataHost(host: string): boolean {
+  const h = host.toLowerCase().replace(/^\[|\]$/g, '')
+  if (!h) return true
+  if (h === 'localhost' || h === '0.0.0.0' || h === '::1' || h === '0:0:0:0:0:0:0:1') {
+    return true
+  }
+  if (h === 'metadata.google.internal' || h.endsWith('.metadata.google.internal')) return true
+  if (h === 'metadata' || h === 'instance-data') return true
+
+  // IPv4
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h)
+  if (m) {
+    const a = Number(m[1])
+    const b = Number(m[2])
+    if ([a, b, Number(m[3]), Number(m[4])].some((n) => n > 255)) return true
+    if (a === 127 || a === 0 || a === 10) return true
+    if (a === 169 && b === 254) return true // link-local + AWS metadata 169.254.169.254
+    if (a === 172 && b >= 16 && b <= 31) return true
+    if (a === 192 && b === 168) return true
+    if (a === 100 && b >= 64 && b <= 127) return true // CGNAT
+    return false
+  }
+
+  // IPv6 unique-local / link-local (simplified)
+  if (h.startsWith('fc') || h.startsWith('fd') || h.startsWith('fe80')) return true
+
+  return false
+}
+
 export function isHostAllowed(host: string, policy: AgentPolicy): boolean {
   if (!host) return false
   if (policy.blockHosts.some((b) => host === b || host.endsWith(`.${b}`))) return false
-  if (policy.allowHosts.length === 0) return true
+  if (policy.allowHosts.length === 0) {
+    // Default: block private/metadata unless explicitly allowed later via allowHosts
+    if (
+      process.env.BROWGENT_ALLOW_PRIVATE_HOSTS !== '1' &&
+      isPrivateOrMetadataHost(host)
+    ) {
+      return false
+    }
+    return true
+  }
   return policy.allowHosts.some((a) => {
     const entry = a.toLowerCase().trim()
     if (!entry || entry.length < 2) return false

@@ -1,0 +1,74 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            script: dist:mac
+          - os: windows-latest
+            script: dist:win
+          - os: ubuntu-latest
+            script: dist:linux
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.12'
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run test:unit
+      - run: npm run ${{ matrix.script }}
+        env:
+          # Unsigned OSS artifacts unless secrets are configured
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: browgent-${{ matrix.os }}
+          path: |
+            release/*.dmg
+            release/*.exe
+            release/*.AppImage
+            release/*.yml
+            release/*.blockmap
+          if-no-files-found: warn
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist-artifacts
+          merge-multiple: true
+      - name: List artifacts
+        run: find dist-artifacts -type f | head -50
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist-artifacts/**/*.dmg
+            dist-artifacts/**/*.exe
+            dist-artifacts/**/*.AppImage
+          generate_release_notes: true
+          draft: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

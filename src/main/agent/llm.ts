@@ -629,7 +629,21 @@ function detectParamFix(
 
 export function slimToolResultForLlm(data: unknown, max = 6000): string {
   try {
-    const s = typeof data === 'string' ? data : JSON.stringify(data, null, 0)
+    let payload: unknown = data
+    // Observe: never ship full elements[] to the model (refs live in compact)
+    if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
+      const o = payload as Record<string, unknown>
+      if (Array.isArray(o.elements) && typeof o.compact === 'string') {
+        payload = {
+          url: o.url,
+          title: o.title,
+          textPreview: o.textPreview,
+          compact: o.compact,
+          elementCount: o.elements.length
+        }
+      }
+    }
+    const s = typeof payload === 'string' ? payload : JSON.stringify(payload, null, 0)
     if (s.length <= max) return s
     return s.slice(0, max) + '…[truncated]'
   } catch {

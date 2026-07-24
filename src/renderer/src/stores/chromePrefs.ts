@@ -1,10 +1,16 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import {
+  normalizePetFormPref,
+  type PetFormPref
+} from '../components/agent/AgentPet/pet-forms'
 
 export type SearchEngine = 'Google' | 'DuckDuckGo' | 'Brave' | 'Kagi'
 
 /** How dense the agent console should feel. */
 export type AgentConsoleDensity = 'comfortable' | 'compact'
+
+export type { PetFormPref }
 
 export interface ChromePrefs {
   greetingName: string
@@ -17,6 +23,8 @@ export interface ChromePrefs {
   /** Last floating pet position (window content coords). -1 = default bottom-right. */
   agentPetX: number
   agentPetY: number
+  /** Morphing companion form: cycle through mark/invader/cloud or lock one. */
+  agentPetForm: PetFormPref
   /** Agent console display */
   agentDensity: AgentConsoleDensity
   agentShowTimestamps: boolean
@@ -24,6 +32,10 @@ export interface ChromePrefs {
   agentCollapseLong: boolean
   agentShowModeBar: boolean
   agentShowComposerHints: boolean
+  /** First-run welcome dismissed */
+  onboardingDismissed: boolean
+  /** Opt-in anonymous counter telemetry (no page content) */
+  telemetryOptIn: boolean
 }
 
 export const SEARCH_ENGINES: SearchEngine[] = [
@@ -45,16 +57,20 @@ export const DEFAULT_CHROME_PREFS: ChromePrefs = {
   ntClock: true,
   ntFavs: true,
   ntChips: true,
-  searchEngine: 'Google',
+  // DuckDuckGo default — Google reCAPTCHA is common on fresh Electron profiles
+  searchEngine: 'DuckDuckGo',
   agentPetVisible: true,
   agentPetX: -1,
   agentPetY: -1,
+  agentPetForm: 'cycle',
   agentDensity: 'compact',
   agentShowTimestamps: false,
   agentShowActionsInChat: true,
   agentCollapseLong: true,
   agentShowModeBar: true,
-  agentShowComposerHints: false
+  agentShowComposerHints: false,
+  onboardingDismissed: false,
+  telemetryOptIn: false
 }
 
 export function buildSearchUrl(engine: SearchEngine, query: string): string {
@@ -92,12 +108,15 @@ interface ChromePrefsStore extends ChromePrefs {
   setSearchEngine: (engine: SearchEngine) => void
   setAgentPetVisible: (on: boolean) => void
   setAgentPetPosition: (x: number, y: number) => void
+  setAgentPetForm: (form: PetFormPref) => void
   setAgentDensity: (d: AgentConsoleDensity) => void
   setAgentShowTimestamps: (on: boolean) => void
   setAgentShowActionsInChat: (on: boolean) => void
   setAgentCollapseLong: (on: boolean) => void
   setAgentShowModeBar: (on: boolean) => void
   setAgentShowComposerHints: (on: boolean) => void
+  setOnboardingDismissed: (on: boolean) => void
+  setTelemetryOptIn: (on: boolean) => void
   patch: (partial: Partial<ChromePrefs>) => void
 }
 
@@ -117,17 +136,20 @@ export const useChromePrefs = create<ChromePrefsStore>()(
       setSearchEngine: (engine) => set({ searchEngine: engine }),
       setAgentPetVisible: (on) => set({ agentPetVisible: on }),
       setAgentPetPosition: (x, y) => set({ agentPetX: x, agentPetY: y }),
+      setAgentPetForm: (form) => set({ agentPetForm: form }),
       setAgentDensity: (d) => set({ agentDensity: d }),
       setAgentShowTimestamps: (on) => set({ agentShowTimestamps: on }),
       setAgentShowActionsInChat: (on) => set({ agentShowActionsInChat: on }),
       setAgentCollapseLong: (on) => set({ agentCollapseLong: on }),
       setAgentShowModeBar: (on) => set({ agentShowModeBar: on }),
       setAgentShowComposerHints: (on) => set({ agentShowComposerHints: on }),
+      setOnboardingDismissed: (on) => set({ onboardingDismissed: on }),
+      setTelemetryOptIn: (on) => set({ telemetryOptIn: on }),
       patch: (partial) => set(partial)
     }),
     {
       name: 'browgent.chromePrefs',
-      version: 4,
+      version: 7,
       partialize: (state) => ({
         greetingName: state.greetingName,
         ntClock: state.ntClock,
@@ -137,16 +159,19 @@ export const useChromePrefs = create<ChromePrefsStore>()(
         agentPetVisible: state.agentPetVisible,
         agentPetX: state.agentPetX,
         agentPetY: state.agentPetY,
+        agentPetForm: state.agentPetForm,
         agentDensity: state.agentDensity,
         agentShowTimestamps: state.agentShowTimestamps,
         agentShowActionsInChat: state.agentShowActionsInChat,
         agentCollapseLong: state.agentCollapseLong,
         agentShowModeBar: state.agentShowModeBar,
-        agentShowComposerHints: state.agentShowComposerHints
+        agentShowComposerHints: state.agentShowComposerHints,
+        onboardingDismissed: state.onboardingDismissed,
+        telemetryOptIn: state.telemetryOptIn
       }),
       migrate: (persisted, version) => {
         const p = (persisted ?? {}) as Partial<ChromePrefs>
-        if (version < 4) {
+        if (version < 6) {
           return {
             ...DEFAULT_CHROME_PREFS,
             ...p,
@@ -158,6 +183,7 @@ export const useChromePrefs = create<ChromePrefsStore>()(
               typeof p.agentPetX === 'number' ? p.agentPetX : DEFAULT_CHROME_PREFS.agentPetX,
             agentPetY:
               typeof p.agentPetY === 'number' ? p.agentPetY : DEFAULT_CHROME_PREFS.agentPetY,
+            agentPetForm: normalizePetFormPref(p.agentPetForm),
             agentDensity: isAgentDensity(p.agentDensity ?? '')
               ? p.agentDensity!
               : DEFAULT_CHROME_PREFS.agentDensity,
@@ -180,8 +206,24 @@ export const useChromePrefs = create<ChromePrefsStore>()(
             agentShowComposerHints: pickBool(
               p.agentShowComposerHints,
               DEFAULT_CHROME_PREFS.agentShowComposerHints
-            )
+            ),
+            onboardingDismissed: pickBool(p.onboardingDismissed, false),
+            telemetryOptIn: pickBool(p.telemetryOptIn, false),
+            // v7: prefer DDG so New Tab search avoids Google reCAPTCHA
+            searchEngine: 'DuckDuckGo'
           }
+        }
+        if (version < 7) {
+          // One-time switch off Google default — Google reCAPTCHA on Electron is too common.
+          // Users can re-select Google in Settings if they prefer.
+          const engine = p.searchEngine
+          return {
+            ...p,
+            searchEngine:
+              engine === 'Google' || !isSearchEngine(engine ?? '')
+                ? 'DuckDuckGo'
+                : engine
+          } as ChromePrefs
         }
         return p as ChromePrefs
       },
@@ -200,6 +242,9 @@ export const useChromePrefs = create<ChromePrefsStore>()(
           agentPetVisible: pickBool(p.agentPetVisible, current.agentPetVisible),
           agentPetX: typeof p.agentPetX === 'number' ? p.agentPetX : current.agentPetX,
           agentPetY: typeof p.agentPetY === 'number' ? p.agentPetY : current.agentPetY,
+          agentPetForm: normalizePetFormPref(
+            p.agentPetForm !== undefined ? p.agentPetForm : current.agentPetForm
+          ),
           agentDensity: isAgentDensity(p.agentDensity ?? '')
             ? p.agentDensity!
             : current.agentDensity,
@@ -213,7 +258,9 @@ export const useChromePrefs = create<ChromePrefsStore>()(
           agentShowComposerHints: pickBool(
             p.agentShowComposerHints,
             current.agentShowComposerHints
-          )
+          ),
+          onboardingDismissed: pickBool(p.onboardingDismissed, current.onboardingDismissed),
+          telemetryOptIn: pickBool(p.telemetryOptIn, current.telemetryOptIn)
         }
       }
     }

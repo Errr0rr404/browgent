@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "format": "browgent.trajectory.eval",
+  "exportedAt": "2026-07-23T00:00:00.000Z",
+  "mode": "act",
+  "provider": "heuristic",
+  "model": null,
+  "goal": "Navigate to example.com and summarize",
+  "policy": {
+    "allowHosts": [],
+    "blockHosts": [],
+    "maxSteps": 40,
+    "confirmCrossHost": false,
+    "confirmSensitiveClicks": true,
+    "sensitiveClickPatterns": ["submit", "pay"],
+    "pauseOnAskHuman": true,
+    "researchOnly": false
+  },
+  "stats": {
+    "stepCount": 3,
+    "trajectoryLength": 5,
+    "toolCalls": 3,
+    "okTools": 3,
+    "failedTools": 0
+  },
+  "evalSteps": [
+    {
+      "i": 0,
+      "ts": 0,
+      "tool": "navigate",
+      "ok": true,
+      "title": "navigate",
+      "detail": "Navigated to https://example.com/"
+    },
+    {
+      "i": 1,
+      "ts": 1,
+      "tool": "observe",
+      "ok": true,
+      "title": "observe",
+      "detail": "Observed elements"
+    },
+    {
+      "i": 2,
+      "ts": 2,
+      "tool": "done",
+      "ok": true,
+      "title": "done",
+      "detail": "Example Domain summary"
+    }
+  ],
+  "steps": [],
+  "messages": []
+}

@@ -142,6 +142,9 @@ export async function discoverWebSocketDebuggerUrl(
   })
 }
 
+const CDP_STATUS_TTL_MS = 15_000
+let cdpStatusCache: { at: number; ws: string | null; port: number | null } | null = null
+
 export async function getCdpStatus(driverMode?: DriverMode): Promise<CdpEndpointStatus> {
   const flags = getRuntimeFlags()
   const enabled = flags.cdpPort != null
@@ -149,7 +152,19 @@ export async function getCdpStatus(driverMode?: DriverMode): Promise<CdpEndpoint
   let webSocketDebuggerUrl: string | null = null
 
   if (enabled) {
-    webSocketDebuggerUrl = await discoverWebSocketDebuggerUrl()
+    const now = Date.now()
+    if (
+      cdpStatusCache &&
+      cdpStatusCache.port === flags.cdpPort &&
+      now - cdpStatusCache.at < CDP_STATUS_TTL_MS
+    ) {
+      webSocketDebuggerUrl = cdpStatusCache.ws
+    } else {
+      webSocketDebuggerUrl = await discoverWebSocketDebuggerUrl()
+      cdpStatusCache = { at: now, ws: webSocketDebuggerUrl, port: flags.cdpPort }
+    }
+  } else {
+    cdpStatusCache = null
   }
 
   const mode = driverMode ?? flags.driverMode

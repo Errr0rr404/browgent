@@ -1,35 +1,22 @@
 ---
 name: Bug report
-about: Something is broken or incorrect
-title: '[bug] '
+about: Something broken in co-browse, agent, MCP, or install
 labels: bug
-assignees: ''
 ---
 
-## Description
+**What happened**
 
-What happened?
+**Expected**
 
-## Steps to reproduce
-
+**Steps**
 1.
 2.
-3.
 
-## Expected behavior
-
-## Actual behavior
-
-## Environment
-
-- OS: (e.g. macOS 15 / Windows 11 / Ubuntu)
+**Environment**
+- OS:
 - Browgent version / commit:
-- Node version:
-- Agent brain: Grok / heuristic
-- Relevant mode: act / research / watch
+- Mode (act/research/watch):
+- MCP / CDP on? (`mcp · :port` / `cdp · :port`)
 
-## Logs / screenshots
-
-Paste terminal output or attach screenshots if useful.
-
-## Additional context
+**Logs / trajectory**
+(paste export if relevant — redact secrets)

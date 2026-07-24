@@ -14,6 +14,8 @@ export interface PetOverlayState {
   visible: boolean
   theme: string
   mood: PetMood
+  /** mark | invader | cloud | cycle */
+  form: string
   x: number
   y: number
 }
@@ -28,6 +30,7 @@ export class PetOverlay {
     visible: false,
     theme: 'eink',
     mood: 'idle',
+    form: 'cycle',
     x: -1,
     y: -1
   }
@@ -229,6 +232,7 @@ export class PetOverlay {
       this.view.webContents.send(IPC.PET_STATE, {
         theme: this.state.theme,
         mood: this.state.mood,
+        form: this.state.form,
         visible: this.state.visible,
         x: this.state.x,
         y: this.state.y,
@@ -261,7 +265,7 @@ export class PetOverlay {
 }
 
 function petHtml(): string {
-  /* Browgent logo mark: rounded square + wandering orb (matches BrandMark). */
+  /* Morphing companion: mark / invader / cloud — mirrors FloatingAgentPet. */
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -279,9 +283,7 @@ function petHtml(): string {
     position: absolute; right: 0; bottom: 0;
     width: 96px; height: 96px; display: grid; place-items: center;
   }
-  body.full-drag #stage {
-    right: auto; bottom: auto;
-  }
+  body.full-drag #stage { right: auto; bottom: auto; }
   .shadow {
     position: absolute; bottom: 10px; left: 50%; width: 36px; height: 8px;
     transform: translateX(-50%);
@@ -292,48 +294,38 @@ function petHtml(): string {
     width: 56px; height: 56px; position: relative; z-index: 1;
     filter: drop-shadow(0 3px 10px rgba(0,0,0,0.14));
   }
-  #pet.idle { animation: markFloat 3.6s ease-in-out infinite; }
-  #pet.busy { animation: markPulse 0.9s ease-in-out infinite; }
-  #pet.attention { animation: markNudge 1.1s ease-in-out infinite; }
-  .orb-wrap {
-    transform-box: view-box; transform-origin: 0 0;
-    animation: orbWander 3.6s ease-in-out infinite;
+  #pet.idle { animation: markFloat 3.4s ease-in-out infinite; }
+  #pet.busy { animation: markPulse 0.95s ease-in-out infinite; }
+  #pet.attention { animation: markNudge 1.05s ease-in-out infinite; }
+  .layer { position: absolute; inset: 0; display: grid; place-items: center; }
+  .layer svg { width: 56px; height: 56px; overflow: visible; }
+  .layer.in { animation: morphIn 620ms cubic-bezier(0.16,1,0.3,1) both; }
+  .layer.out { animation: morphOut 520ms cubic-bezier(0.4,0,0.7,0.2) both; }
+  @keyframes morphIn {
+    0% { opacity: 0; transform: scale(0.55) rotate(-12deg); filter: blur(3px); }
+    55% { opacity: 1; filter: blur(0); }
+    75% { transform: scale(1.08) rotate(2deg); }
+    100% { opacity: 1; transform: scale(1) rotate(0); filter: blur(0); }
   }
-  #pet.busy .orb-wrap { animation: orbBusy 0.9s ease-in-out infinite; }
-  #pet.attention .orb-wrap { animation: orbAttention 1.1s ease-in-out infinite; }
-  @keyframes orbWander {
-    0%, 100% { transform: translate(14.4px, 14.4px); }
-    20% { transform: translate(11.2px, 12px); }
-    40% { transform: translate(13px, 10.5px); }
-    60% { transform: translate(16.2px, 12.5px); }
-    80% { transform: translate(15px, 15.8px); }
-  }
-  @keyframes orbBusy {
-    0%, 100% { transform: translate(14.4px, 14.4px) scale(1); }
-    50% { transform: translate(14.4px, 14.4px) scale(1.25); }
-  }
-  @keyframes orbAttention {
-    0%, 100% { transform: translate(14.4px, 14.4px); }
-    25% { transform: translate(12px, 13px); }
-    50% { transform: translate(16.5px, 13px); }
-    75% { transform: translate(14.4px, 16px); }
+  @keyframes morphOut {
+    0% { opacity: 1; transform: scale(1); }
+    100% { opacity: 0; transform: scale(0.45) rotate(14deg); filter: blur(4px); }
   }
   @keyframes markFloat {
     0%, 100% { transform: translateY(0); }
-    50% { transform: translateY(-3px); }
+    50% { transform: translateY(-4px); }
   }
   @keyframes markPulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.72; }
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.78; transform: scale(0.96); }
   }
   @keyframes markNudge {
-    0%, 100% { transform: scale(1); }
-    40% { transform: scale(1.06); }
-    60% { transform: scale(0.97); }
+    0%, 100% { transform: scale(1) rotate(0); }
+    30% { transform: scale(1.07) rotate(-3deg); }
+    55% { transform: scale(0.97) rotate(2deg); }
   }
   @media (prefers-reduced-motion: reduce) {
-    #pet, .orb-wrap { animation: none !important; }
-    .orb-wrap { transform: translate(14.4px, 14.4px); }
+    #pet, .layer.in, .layer.out { animation: none !important; }
   }
   .menu {
     display: none; position: absolute; right: 4px; bottom: 90px; min-width: 132px;
@@ -353,12 +345,7 @@ function petHtml(): string {
 <body>
   <div id="stage">
     <div class="shadow" aria-hidden="true"></div>
-    <div id="pet" class="idle" title="Agent companion — drag to move">
-      <svg viewBox="0 0 24 24" width="56" height="56" fill="none" aria-hidden="true">
-        <rect x="3" y="3" width="18" height="18" rx="5.5" stroke="var(--accent)" stroke-width="1.75"/>
-        <g class="orb-wrap"><circle cx="0" cy="0" r="3" fill="var(--accent-2)"/></g>
-      </svg>
-    </div>
+    <div id="pet" class="idle" title="Agent companion — drag to move"></div>
     <div class="menu" id="menu" role="menu">
       <button type="button" id="hide-btn" role="menuitem">Hide companion</button>
     </div>
@@ -368,6 +355,12 @@ function petHtml(): string {
   const pet = document.getElementById('pet');
   const menu = document.getElementById('menu');
   const stage = document.getElementById('stage');
+  const forms = ['mark','invader','cloud'];
+  let formPref = 'cycle';
+  let form = 'mark';
+  let mood = 'idle';
+  let cycleTimer = null;
+
   const themes = {
     eink: { a:'#191813', b:'#55534b' },
     midnight: { a:'#3ee0c5', b:'#5b8cff' },
@@ -378,14 +371,61 @@ function petHtml(): string {
     synthwave: { a:'#ff6ec7', b:'#00e5ff' },
     brutalist: { a:'#000000', b:'#d00000' }
   };
+
+  function svgFor(id, m) {
+    if (id === 'invader') {
+      const ey = m === 'busy' ? 10.5 : 10;
+      const eh = m === 'busy' ? 1.2 : 2.4;
+      return '<svg viewBox="0 0 24 24" fill="none"><g fill="var(--accent)"><rect x="6" y="4" width="2" height="3" rx="0.4"/><rect x="16" y="4" width="2" height="3" rx="0.4"/><rect x="5" y="3" width="2" height="2" rx="0.3"/><rect x="17" y="3" width="2" height="2" rx="0.3"/><path d="M7 7h10v2H7V7zm-2 2h14v6H5V9zm1 6h3v2H6v-2zm9 0h3v2h-3v-2z"/><path d="M4 11h2v3H4v-3zm14 0h2v3h-2v-3z"/><rect x="7" y="17" width="2" height="3" rx="0.3"/><rect x="11" y="17" width="2" height="3" rx="0.3"/><rect x="15" y="17" width="2" height="3" rx="0.3"/><rect x="8" y="'+ey+'" width="2.2" height="'+eh+'" rx="0.3" fill="#fff"/><rect x="13.8" y="'+ey+'" width="2.2" height="'+eh+'" rx="0.3" fill="#fff"/></g></svg>';
+    }
+    if (id === 'cloud') {
+      return '<svg viewBox="0 0 24 24" fill="none"><defs><linearGradient id="cf" x1="4" y1="4" x2="20" y2="20"><stop stop-color="#6ea8ff"/><stop offset="0.55" stop-color="#3d7cf0"/><stop offset="1" stop-color="#2b5fd4"/></linearGradient></defs><circle cx="8.2" cy="11" r="4.2" fill="url(#cf)"/><circle cx="15.8" cy="10.6" r="4.4" fill="url(#cf)"/><circle cx="12" cy="9.2" r="4.8" fill="url(#cf)"/><ellipse cx="12" cy="14.2" rx="7.4" ry="5.2" fill="url(#cf)"/><rect x="7.5" y="10.5" width="9" height="6.2" rx="2.2" fill="#152238"/><g fill="none" stroke="#7dffb3" stroke-width="1.15" stroke-linecap="round" stroke-linejoin="round"><path d="M9.3 12.6 L11.1 13.8 L9.3 15"/><path d="M12.4 15 h2.4"/></g></svg>';
+    }
+    return '<svg viewBox="0 0 24 24" fill="none"><rect x="3" y="3" width="18" height="18" rx="5.5" stroke="var(--accent)" stroke-width="1.75"/><circle cx="14.4" cy="14.4" r="3" fill="var(--accent-2)"/></svg>';
+  }
+
+  function render(next, animate) {
+    const prev = form;
+    form = next;
+    if (!animate) {
+      pet.innerHTML = '<div class="layer">'+svgFor(form, mood)+'</div>';
+      return;
+    }
+    pet.innerHTML =
+      '<div class="layer out">'+svgFor(prev, mood)+'</div>'+
+      '<div class="layer in">'+svgFor(form, mood)+'</div>';
+    setTimeout(function () {
+      pet.innerHTML = '<div class="layer">'+svgFor(form, mood)+'</div>';
+    }, 620);
+  }
+
   function applyTheme(id) {
     const t = themes[id] || themes.eink;
     document.documentElement.style.setProperty('--accent', t.a);
     document.documentElement.style.setProperty('--accent-2', t.b);
   }
-  function applyMood(mood) {
+  function applyMood(m) {
+    mood = m || 'idle';
     pet.classList.remove('idle', 'busy', 'attention');
-    pet.classList.add(mood || 'idle');
+    pet.classList.add(mood);
+    // re-render current form for mood-sensitive eyes
+    pet.innerHTML = '<div class="layer">'+svgFor(form, mood)+'</div>';
+  }
+  let lastFormPref = '';
+  function applyFormPref(pref) {
+    const next = pref || 'cycle';
+    if (next === lastFormPref) return;
+    lastFormPref = next;
+    formPref = next;
+    if (cycleTimer) { clearInterval(cycleTimer); cycleTimer = null; }
+    if (formPref === 'cycle') {
+      cycleTimer = setInterval(function () {
+        const i = forms.indexOf(form);
+        render(forms[(i + 1) % forms.length], true);
+      }, 5200);
+    } else if (forms.indexOf(formPref) >= 0) {
+      render(formPref, true);
+    }
   }
   function placeStage(x, y, full) {
     if (full) {
@@ -399,10 +439,13 @@ function petHtml(): string {
     }
   }
   applyTheme('eink');
+  render('mark', false);
+  applyFormPref('cycle');
   if (window.browgentPet) {
     window.browgentPet.onState(function (s) {
       if (s && s.theme) applyTheme(s.theme);
       if (s && s.mood) applyMood(s.mood);
+      if (s && s.form) applyFormPref(s.form);
       if (s) placeStage(s.x, s.y, !!s.dragging);
     });
   }

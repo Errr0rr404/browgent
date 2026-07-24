@@ -1,13 +1,27 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import { IPC } from '../shared/types'
+
+/**
+ * Pet-only channel names (must match `IPC` in shared/types).
+ * Do not import from `@shared` here: multi-entry preload builds extract
+ * shared modules into `chunks/*.js`, and Electron's sandboxed preload
+ * cannot require those files ("module not found" → window.browgent missing).
+ */
+const PET = {
+  STATE: 'pet:state',
+  DRAG_START: 'pet:dragStart',
+  DRAG_BY: 'pet:dragBy',
+  DRAG_END: 'pet:dragEnd',
+  CLICK: 'pet:click',
+  HIDE: 'pet:hide'
+} as const
 
 const api = {
-  dragStart: (): Promise<void> => ipcRenderer.invoke(IPC.PET_DRAG_START),
+  dragStart: (): Promise<void> => ipcRenderer.invoke(PET.DRAG_START),
   dragBy: (dx: number, dy: number): Promise<void> =>
-    ipcRenderer.invoke(IPC.PET_DRAG_BY, dx, dy),
-  dragEnd: (): Promise<void> => ipcRenderer.invoke(IPC.PET_DRAG_END),
-  click: (): Promise<void> => ipcRenderer.invoke(IPC.PET_CLICK),
-  hide: (): Promise<void> => ipcRenderer.invoke(IPC.PET_HIDE),
+    ipcRenderer.invoke(PET.DRAG_BY, dx, dy),
+  dragEnd: (): Promise<void> => ipcRenderer.invoke(PET.DRAG_END),
+  click: (): Promise<void> => ipcRenderer.invoke(PET.CLICK),
+  hide: (): Promise<void> => ipcRenderer.invoke(PET.HIDE),
   onState: (
     cb: (state: {
       theme: string
@@ -29,8 +43,8 @@ const api = {
         dragging?: boolean
       }
     ): void => cb(state)
-    ipcRenderer.on(IPC.PET_STATE, listener)
-    return () => ipcRenderer.removeListener(IPC.PET_STATE, listener)
+    ipcRenderer.on(PET.STATE, listener)
+    return () => ipcRenderer.removeListener(PET.STATE, listener)
   }
 }
 

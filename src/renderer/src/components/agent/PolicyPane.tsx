@@ -1,6 +1,7 @@
 import { useEffect, useState, type KeyboardEvent } from 'react'
 import type { AgentSessionState } from '@shared/types'
 import { DEFAULT_POLICY, type AgentPolicy } from '@shared/policies'
+import { POLICY_PRESETS, type PolicyPresetId } from '@shared/policy-presets'
 
 interface Props {
   state: AgentSessionState | null
@@ -14,6 +15,7 @@ export function PolicyPane({ state, onOpenSettings }: Props): React.JSX.Element 
   const [committedMaxSteps, setCommittedMaxSteps] = useState(policy.maxSteps)
   const [driverMode, setDriverMode] = useState<'dom' | 'cdp'>('dom')
   const [cdpNote, setCdpNote] = useState('')
+  const [preset, setPreset] = useState<PolicyPresetId | ''>('')
 
   useEffect(() => {
     if (policy.maxSteps !== committedMaxSteps) {
@@ -21,6 +23,23 @@ export function PolicyPane({ state, onOpenSettings }: Props): React.JSX.Element 
       setMaxStepsDraft(String(policy.maxSteps))
     }
   }, [policy.maxSteps, committedMaxSteps])
+
+  // Keep highlight in sync with live policy (Settings / reload / manual tweaks)
+  useEffect(() => {
+    const match = POLICY_PRESETS.find(
+      (pack) =>
+        !!pack.policy.confirmCrossHost === !!policy.confirmCrossHost &&
+        !!pack.policy.confirmSensitiveClicks === !!policy.confirmSensitiveClicks &&
+        !!pack.policy.pauseOnAskHuman === !!policy.pauseOnAskHuman &&
+        (pack.policy.maxSteps == null || pack.policy.maxSteps === policy.maxSteps)
+    )
+    setPreset(match?.id ?? '')
+  }, [
+    policy.confirmCrossHost,
+    policy.confirmSensitiveClicks,
+    policy.pauseOnAskHuman,
+    policy.maxSteps
+  ])
 
   useEffect(() => {
     if (!window.browgent?.getDriverStatus) return
@@ -57,10 +76,37 @@ export function PolicyPane({ state, onOpenSettings }: Props): React.JSX.Element 
     }
   }
 
+  const applyPreset = (id: PolicyPresetId): void => {
+    const pack = POLICY_PRESETS.find((x) => x.id === id)
+    if (!pack) return
+    setPreset(id)
+    void window.browgent.setAgentPolicy(pack.policy)
+  }
+
   return (
     <>
       <p className="empty-hint">
         Safety gates for this session. Host allow/block lists and console display live in Settings.
+      </p>
+
+      <p className="policy-presets-label">Safety preset</p>
+      <div className="policy-presets" role="group" aria-label="Policy presets">
+        {POLICY_PRESETS.map((pack) => (
+          <button
+            key={pack.id}
+            type="button"
+            className={`policy-preset-btn${preset === pack.id ? ' on' : ''}`}
+            title={pack.description}
+            aria-pressed={preset === pack.id}
+            onClick={() => applyPreset(pack.id)}
+          >
+            {pack.label}
+          </button>
+        ))}
+      </div>
+      <p className="empty-hint">
+        {POLICY_PRESETS.find((x) => x.id === preset)?.description ??
+          'Custom gates — pick a preset or tune below.'}
       </p>
 
       <label className="policy-row">

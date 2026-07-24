@@ -211,13 +211,30 @@ export function applyWebContentsUserAgent(wc: WebContents): void {
 /**
  * Backup page-world patches if preload injection is delayed or CSP-blocked.
  * Idempotent with guest preload (`__browgentIdentityPatched`).
+ * Includes Client Hints (userAgentData) so Google-style checks match stock Chrome.
  */
 export function installGuestStealthPatches(wc: WebContents): void {
   if (wc.isDestroyed()) return
 
+  const major = getChromeMajor()
+  const full = getChromeVersion()
+  const platform =
+    process.platform === 'darwin' ? 'macOS' : process.platform === 'win32' ? 'Windows' : 'Linux'
+  const platformVersion =
+    process.platform === 'darwin' ? '14.0.0' : process.platform === 'win32' ? '15.0.0' : '6.5.0'
+  const architecture = process.arch === 'arm64' ? 'arm' : 'x86'
+
+  // Always upgrade version-accurate Client Hints (preload may have set a placeholder).
+  // Flag __browgentIdentityFull marks the full main-process patch.
   const script = `(() => {
-    if (globalThis.__browgentIdentityPatched) return;
+    if (globalThis.__browgentIdentityFull) return;
+    globalThis.__browgentIdentityFull = true;
     globalThis.__browgentIdentityPatched = true;
+    const major = ${JSON.stringify(major)};
+    const full = ${JSON.stringify(full)};
+    const platform = ${JSON.stringify(platform)};
+    const platformVersion = ${JSON.stringify(platformVersion)};
+    const architecture = ${JSON.stringify(architecture)};
     try {
       Object.defineProperty(Navigator.prototype, 'webdriver', {
         get: () => undefined,
@@ -225,11 +242,60 @@ export function installGuestStealthPatches(wc: WebContents): void {
       });
     } catch (_) {}
     try {
-      if (!window.chrome) {
-        window.chrome = { runtime: {} };
-      } else if (window.chrome && typeof window.chrome === 'object' && !window.chrome.runtime) {
-        window.chrome.runtime = {};
+      if (navigator.webdriver === true) {
+        Object.defineProperty(navigator, 'webdriver', {
+          get: () => undefined,
+          configurable: true
+        });
       }
+    } catch (_) {}
+    try {
+      if (!window.chrome) {
+        window.chrome = { runtime: {}, loadTimes: function(){}, csi: function(){}, app: {} };
+      } else if (window.chrome && typeof window.chrome === 'object') {
+        if (!window.chrome.runtime) window.chrome.runtime = {};
+      }
+    } catch (_) {}
+    try {
+      const brands = [
+        { brand: 'Google Chrome', version: major },
+        { brand: 'Chromium', version: major },
+        { brand: 'Not.A/Brand', version: '99' }
+      ];
+      const fullVersionList = [
+        { brand: 'Google Chrome', version: full },
+        { brand: 'Chromium', version: full },
+        { brand: 'Not.A/Brand', version: '10.0.1.4' }
+      ];
+      const uad = {
+        brands,
+        mobile: false,
+        platform,
+        getHighEntropyValues: async (hints) => {
+          const out = {
+            brands,
+            mobile: false,
+            platform,
+            platformVersion,
+            architecture,
+            bitness: '64',
+            model: '',
+            uaFullVersion: full,
+            fullVersionList
+          };
+          if (!Array.isArray(hints)) return out;
+          const filtered = { brands, mobile: false, platform };
+          for (const h of hints) {
+            if (h in out) filtered[h] = out[h];
+          }
+          return filtered;
+        },
+        toJSON: () => ({ brands, mobile: false, platform })
+      };
+      Object.defineProperty(Navigator.prototype, 'userAgentData', {
+        get: () => uad,
+        configurable: true
+      });
     } catch (_) {}
   })();`
 
@@ -240,5 +306,7 @@ export function installGuestStealthPatches(wc: WebContents): void {
     })
   }
 
+  // Run as early as possible and again on each navigation
   wc.on('dom-ready', run)
+  wc.on('did-finish-load', run)
 }

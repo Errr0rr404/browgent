@@ -4,6 +4,14 @@ import type { AgentSessionStatus } from '@shared/types'
 import type { ThemeId } from '../../../themes/themes'
 import { useChromePrefs } from '../../../stores/chromePrefs'
 import { platformModKey } from '../../../lib/platform'
+import { MorphingPetVisual } from './MorphingPetVisual'
+import {
+  PET_FORM_IDS,
+  PET_FORM_LABELS,
+  PET_FORM_TINT,
+  type PetFormId,
+  type PetFormPref
+} from './pet-forms'
 import { moodFromAgent } from './types'
 import './floating-pet.css'
 
@@ -14,13 +22,13 @@ interface Props {
   onToggle: () => void
 }
 
-const SIZE = 80
+const SIZE = 84
 const PAD = 12
 const PET_WELCOME_KEY = 'browgent.pet.welcomeDismissed'
 
 /**
- * Floating companion = animated browgent logo (rounded square + wandering orb).
- * Drag to move; click toggles agent; right-click hides.
+ * Floating companion — morphing mark / invader / cloud bot.
+ * Drag to move; click toggles agent; right-click for hide + form picker.
  */
 export function FloatingAgentPet({
   theme: _theme,
@@ -32,8 +40,10 @@ export function FloatingAgentPet({
   const agentPetVisible = useChromePrefs((s) => s.agentPetVisible)
   const agentPetX = useChromePrefs((s) => s.agentPetX)
   const agentPetY = useChromePrefs((s) => s.agentPetY)
+  const agentPetForm = useChromePrefs((s) => s.agentPetForm)
   const setAgentPetVisible = useChromePrefs((s) => s.setAgentPetVisible)
   const setAgentPetPosition = useChromePrefs((s) => s.setAgentPetPosition)
+  const setAgentPetForm = useChromePrefs((s) => s.setAgentPetForm)
 
   const [menuOpen, setMenuOpen] = useState(false)
   const [welcomeOpen, setWelcomeOpen] = useState(() => {
@@ -43,6 +53,11 @@ export function FloatingAgentPet({
       return true
     }
   })
+  const [dragging, setDragging] = useState(false)
+  const [activeForm, setActiveForm] = useState<PetFormId>(
+    agentPetForm === 'cycle' ? 'mark' : agentPetForm
+  )
+  const [pressed, setPressed] = useState(false)
   const mod = platformModKey()
   const dragRef = useRef<{
     startX: number
@@ -54,6 +69,7 @@ export function FloatingAgentPet({
   const rootRef = useRef<HTMLDivElement>(null)
 
   const mood = moodFromAgent(agentStatus)
+  const formPref: PetFormPref = agentPetForm
 
   const clampPos = useCallback((x: number, y: number) => {
     const maxX = Math.max(PAD, window.innerWidth - SIZE - PAD)
@@ -123,6 +139,8 @@ export function FloatingAgentPet({
       moved: false
     }
     setMenuOpen(false)
+    setDragging(true)
+    setPressed(true)
   }
 
   const onPointerMove = (e: React.PointerEvent): void => {
@@ -137,6 +155,8 @@ export function FloatingAgentPet({
   const onPointerUp = (e: React.PointerEvent): void => {
     const d = dragRef.current
     dragRef.current = null
+    setDragging(false)
+    setPressed(false)
     try {
       e.currentTarget.releasePointerCapture(e.pointerId)
     } catch {
@@ -149,24 +169,43 @@ export function FloatingAgentPet({
       setAgentPetPosition(next.x, next.y)
       return
     }
+    dismissWelcome()
     onToggle()
+  }
+
+  const pickForm = (pref: PetFormPref): void => {
+    setAgentPetForm(pref)
+    setMenuOpen(false)
   }
 
   return (
     <div
       ref={rootRef}
-      className={`floating-pet floating-pet--${mood}`}
-      style={{ left: pos.x, top: pos.y, width: SIZE, height: SIZE }}
+      className={`floating-pet floating-pet--${mood} floating-pet--form-${activeForm}${dragging ? ' floating-pet--dragging' : ''}${pressed ? ' floating-pet--pressed' : ''}${welcomeOpen ? ' floating-pet--welcome' : ''}`}
+      style={{
+        left: pos.x,
+        top: pos.y,
+        width: SIZE,
+        height: SIZE,
+        ['--pet-tint' as string]: PET_FORM_TINT[activeForm]
+      }}
+      data-form={activeForm}
     >
       {welcomeOpen && (
         <div className="floating-pet-welcome" role="status">
+          <div className="floating-pet-welcome-glow" aria-hidden />
           <Sparkles size={14} strokeWidth={1.75} className="floating-pet-welcome-icon" aria-hidden />
           <div className="floating-pet-welcome-copy">
-            <strong>Welcome — your agent pet</strong>
+            <strong>Meet your morphing pet</strong>
             <span>
-              This floating mark is your agent companion. Click to chat, drag to move, right-click
-              to hide. From New Tab, {mod}↵ also asks the agent.
+              Click to chat, drag to move, right-click to switch forms (mark → invader → cloud).
+              From New Tab, {mod}↵ asks the agent.
             </span>
+            <div className="floating-pet-welcome-dots" aria-hidden>
+              {PET_FORM_IDS.map((id) => (
+                <span key={id} className={`floating-pet-welcome-dot floating-pet-welcome-dot--${id}`} />
+              ))}
+            </div>
           </div>
           <button
             type="button"
@@ -185,7 +224,7 @@ export function FloatingAgentPet({
         className="floating-pet-hit"
         aria-label={agentOpen ? 'Close agent panel' : 'Open agent panel'}
         aria-expanded={agentOpen}
-        title="Agent companion — drag to move · click to open · right-click to hide"
+        title="Agent companion — drag · click to open · right-click for forms"
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
@@ -195,46 +234,35 @@ export function FloatingAgentPet({
         }}
       >
         <span className="floating-pet-shadow" aria-hidden />
-        {/* Same geometry as BrandMark — rounded square + accent orb */}
-        <svg
-          className="floating-pet-svg"
-          width={56}
-          height={56}
-          viewBox="0 0 24 24"
-          fill="none"
-          aria-hidden
-        >
-          <rect
-            className="floating-pet-frame"
-            x="3"
-            y="3"
-            width="18"
-            height="18"
-            rx="5.5"
-            stroke="var(--accent)"
-            strokeWidth={1.75}
-          />
-          {/* Orb wanders inside the mark */}
-          <g className="floating-pet-orb-wrap">
-            <circle className="floating-pet-orb" cx="0" cy="0" r="3" fill="var(--accent-2)" />
-          </g>
-        </svg>
+        <span className="floating-pet-ring" aria-hidden />
+        <MorphingPetVisual
+          formPref={formPref}
+          mood={mood}
+          paused={dragging || menuOpen}
+          celebrate={welcomeOpen}
+          onFormChange={setActiveForm}
+        />
       </button>
 
       {menuOpen && (
         <ul className="floating-pet-menu" role="menu">
-          <li role="none">
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => {
-                setMenuOpen(false)
-                setAgentPetVisible(false)
-              }}
-            >
-              Hide companion
-            </button>
+          <li className="floating-pet-menu-label" role="presentation">
+            Form
           </li>
+          {(['cycle', ...PET_FORM_IDS] as PetFormPref[]).map((id) => (
+            <li key={id} role="none">
+              <button
+                type="button"
+                role="menuitemradio"
+                aria-checked={formPref === id}
+                className={formPref === id ? 'is-active' : undefined}
+                onClick={() => pickForm(id)}
+              >
+                {PET_FORM_LABELS[id]}
+              </button>
+            </li>
+          ))}
+          <li className="floating-pet-menu-sep" role="separator" />
           <li role="none">
             <button
               type="button"
@@ -247,6 +275,18 @@ export function FloatingAgentPet({
               }}
             >
               Reset position
+            </button>
+          </li>
+          <li role="none">
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setMenuOpen(false)
+                setAgentPetVisible(false)
+              }}
+            >
+              Hide companion
             </button>
           </li>
         </ul>

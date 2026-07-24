@@ -165,6 +165,8 @@ export interface ObserveSnapshot {
   title: string
   elements: ObserveElement[]
   textPreview: string
+  /** Tab this snapshot was taken on (for multi-tab ref validation) */
+  tabId?: string
 }
 
 /** Normalize user omnibox / agent input into a navigable URL (aliases, domains, search). */
@@ -253,5 +255,12 @@ export const IPC = {
   DOWNLOADS_SHOW: 'downloads:show',
   DOWNLOADS_CANCEL: 'downloads:cancel',
   DOWNLOADS_CLEAR: 'downloads:clear',
-  DOWNLOADS_OPEN_FOLDER: 'downloads:openFolder'
+  DOWNLOADS_OPEN_FOLDER: 'downloads:openFolder',
+
+  /** Privacy-safe local metrics (no page content) */
+  METRICS_GET: 'metrics:get',
+  METRICS_SET_TELEMETRY: 'metrics:setTelemetry',
+  METRICS_EXPORT_TRACTION: 'metrics:exportTraction',
+  METRICS_RECORD_DEMO: 'metrics:recordDemo',
+  METRICS_RECORD_RECIPE: 'metrics:recordRecipe'
 } as const

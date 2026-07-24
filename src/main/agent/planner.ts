@@ -11,9 +11,10 @@ import type { AgentMode } from '../../shared/policies'
 import type { ObserveElement, ObserveSnapshot } from '../../shared/types'
 import type { ToolCall } from '../../shared/tools'
 import {
+  buildAgentSearchUrl,
+  extractBrowserSearchQuery,
   extractCredentials,
-  parseBrowseIntent,
-  resolveNavigableTarget
+  parseBrowseIntent
 } from '../../shared/sites'
 import { makeToolCall } from './executor'
 
@@ -31,9 +32,21 @@ export function planNextActions(ctx: PlanContext): ToolCall[] {
   const goal = ctx.goal.trim()
   const lower = goal.toLowerCase()
   const intent = parseBrowseIntent(goal)
+  const searchQuery = extractBrowserSearchQuery(goal)
 
   // ── Step 0: orient / navigate ──────────────────────────────
   if (ctx.step === 0) {
+    // Web-search goals first (incl. research mode — navigate is allowed)
+    // e.g. "whats the cheapest iphone find that on browser"
+    if (searchQuery || intent.siteToken === 'search') {
+      const q = searchQuery || intent.task || goal
+      const searchUrl =
+        intent.siteToken === 'search' && intent.navigateUrl
+          ? intent.navigateUrl
+          : buildAgentSearchUrl(q)
+      return planWebSearch(q, searchUrl)
+    }
+
     if (intent.navigateUrl) {
       const target = intent.navigateUrl
       if (intent.navigateOnly || !intent.task) {
@@ -56,27 +69,6 @@ export function planNextActions(ctx: PlanContext): ToolCall[] {
         makeToolCall('navigate', { url: target }),
         makeToolCall('wait', { ms: 1100 }),
         makeToolCall('observe', {})
-      ]
-    }
-
-    if (lower.startsWith('search ') || lower.includes('search for ') || /^find\s+/i.test(goal)) {
-      const q = goal
-        .replace(/^.*search\s+(for\s+)?/i, '')
-        .replace(/^find\s+/i, '')
-        .trim()
-      const url = resolveNavigableTarget(q.includes('.') && !q.includes(' ') ? q : q)
-      const searchUrl =
-        url.includes('google.com/search') || !/^https?:\/\//.test(q)
-          ? `https://www.google.com/search?q=${encodeURIComponent(q)}`
-          : url
-      return [
-        makeToolCall('navigate', { url: searchUrl }),
-        makeToolCall('wait', { ms: 900 }),
-        makeToolCall('observe', {}),
-        makeToolCall('extract_text', { maxChars: 3000 }),
-        makeToolCall('done', {
-          summary: `Searched for “${q}”. Say “click the first result” or “click eN” to open a hit.`
-        })
       ]
     }
 
@@ -110,9 +102,12 @@ export function planNextActions(ctx: PlanContext): ToolCall[] {
       ]
     }
 
+    // Page-local research only — NOT open-ended "what's the cheapest X" (handled above)
     if (
       ctx.mode === 'research' ||
-      /summar(y|ize)|what('s| is) on|extract|read this|describe/i.test(lower)
+      /summar(y|ize)|what(?:'s|s| is) on (this |the )?page|extract|read this|describe (this |the )?page/i.test(
+        lower
+      )
     ) {
       return [
         makeToolCall('observe', {}),
@@ -167,7 +162,11 @@ export function planNextActions(ctx: PlanContext): ToolCall[] {
     ]
   }
 
-  if (/summar|what|explain|describe|extract|read/i.test(lower) && ctx.step <= 2) {
+  // Page-local research only — avoid matching every "what" (e.g. "what's the cheapest…")
+  if (
+    /summar(y|ize)|explain|describe|extract|read this|what(?:'s|s| is) on/i.test(lower) &&
+    ctx.step <= 2
+  ) {
     return [
       makeToolCall('extract_text', { maxChars: 5000 }),
       makeToolCall('extract_links', { limit: 12 }),
@@ -563,6 +562,28 @@ function prettyHost(url: string): string {
   } catch {
     return url
   }
+}
+
+/** Navigate to a search engine, extract results, stop with guidance for next step. */
+function planWebSearch(query: string, searchUrl: string): ToolCall[] {
+  const q = query.trim().slice(0, 160)
+  return [
+    makeToolCall('think', {
+      thought: `Search the web for “${q}” and extract result text`
+    }),
+    makeToolCall('navigate', { url: searchUrl }),
+    makeToolCall('wait', { ms: 1200 }),
+    makeToolCall('observe', {}),
+    makeToolCall('extract_text', { maxChars: 4500 }),
+    makeToolCall('extract_links', { limit: 12 }),
+    makeToolCall('done', {
+      summary:
+        `Searched for “${q}” on ${prettyHost(searchUrl)}. ` +
+        `Check the trajectory for titles, prices, and links from the results page. ` +
+        `Say “click the first result” or “click eN” to open a hit.` +
+        isHeuristicNote()
+    })
+  ]
 }
 
 function buildResearchSummary(ctx: PlanContext): string {

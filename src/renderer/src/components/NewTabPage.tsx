@@ -26,9 +26,9 @@ interface Props {
 }
 
 const AGENT_CHIPS = [
-  'summarize my open tabs',
-  'find the newest release of browgent',
-  'compare docs: playwright vs puppeteer'
+  'summarize this page in 3 bullets',
+  'list interactive elements on this page',
+  'open example.com and extract the main text'
 ] as const
 
 const DAYS = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'] as const
@@ -107,9 +107,14 @@ export function NewTabPage({
     return name ? `${base}, ${name}.` : `${base}.`
   }, [now, greetingName])
 
+  /** Prefer live input value so Enter never races a stale controlled-state frame. */
+  const currentQuery = useCallback((): string => {
+    return (inputRef.current?.value ?? query).trim()
+  }, [query])
+
   /** Enter → search engine (or URL if it clearly looks like one). ⌘/Ctrl+Enter → agent. */
   const submitNavigate = useCallback(() => {
-    const raw = query.trim()
+    const raw = currentQuery()
     if (!raw) return
     // Prefer real search for plain language; only treat as URL when it looks like one
     const looksLikeUrl =
@@ -122,17 +127,19 @@ export function NewTabPage({
     if (!target) return
     onNavigate(target)
     setQuery('')
-  }, [query, searchEngine, onNavigate])
+  }, [currentQuery, searchEngine, onNavigate])
 
   const submitAgent = useCallback(() => {
-    const raw = query.trim()
+    const raw = currentQuery()
     if (!raw) return
     onAskAgent(raw)
     setQuery('')
-  }, [query, onAskAgent])
+  }, [currentQuery, onAskAgent])
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>): void => {
-    if (e.key !== 'Enter') return
+    if (e.key !== 'Enter' && e.key !== 'NumpadEnter') return
+    // Don’t hijack IME confirm
+    if (e.nativeEvent.isComposing || e.keyCode === 229) return
     e.preventDefault()
     e.stopPropagation()
     if (e.metaKey || e.ctrlKey) submitAgent()
@@ -193,7 +200,8 @@ export function NewTabPage({
           <Search size={15} strokeWidth={1.75} className="newtab-search-icon" aria-hidden />
           <input
             ref={inputRef}
-            type="search"
+            type="text"
+            inputMode="search"
             enterKeyHint="search"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
@@ -201,6 +209,8 @@ export function NewTabPage({
             placeholder={`Search ${searchEngine} or enter address`}
             aria-label={`Search ${searchEngine} or enter address`}
             autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="off"
             spellCheck={false}
           />
           <button
@@ -215,7 +225,10 @@ export function NewTabPage({
             type="button"
             className="newtab-agent-chip"
             title={`${mod}+Enter to ask the agent`}
-            onClick={submitAgent}
+            onClick={(e) => {
+              e.preventDefault()
+              submitAgent()
+            }}
           >
             {mod}↵ agent
           </button>

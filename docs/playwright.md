@@ -73,14 +73,28 @@ await page.goto('https://example.com')
 // … same tabs the human sees in Browgent
 ```
 
+### Prefer guest pages
+
+Electron exposes the chrome shell *and* guest tabs. Always pick pages whose URL is real `http(s)` content (not `chrome://`, `devtools://`, or the app `file://` / vite chrome URL). The example script already filters for this.
+
+```js
+const page = contexts
+  .flatMap((c) => c.pages())
+  .find((p) => {
+    const u = p.url()
+    return u.startsWith('http://') || u.startsWith('https://')
+  })
+```
+
 ### Caveats
 
 1. **Multiple targets** — Electron exposes chrome UI + guest pages. Prefer pages with real `http(s)` URLs.
 2. **Shared session** — Guest tabs use `persist:browgent-pages`. Playwright sees those cookies when attached to the right context.
-3. **Dual control** — Human + in-app agent + Playwright can all act; use takeover / pause when coordinating.
+3. **Dual control** — Human + in-app agent + Playwright + MCP can all act; use takeover / pause when coordinating.
 4. **Debugger exclusivity** — A page target accepts one active debugger client. Keep the **in-app driver on `dom`** while Playwright is attached (default). Switching in-app driver to `cdp` uses `webContents.debugger` and can contend with remote CDP on that tab.
 5. **Security** — CDP is **off** by default for normal `npm run dev`. When you enable it, it listens on localhost only; any local process can control the session. Disable with `BROWGENT_CDP=0` when you do not need external automation. Never tunnel CDP to the public internet without auth.
 6. **No Playwright dependency in app** — keeps Browgent install lean; attach from outside.
+7. **MCP vs CDP** — MCP (`docs/mcp.md`) uses Browgent's tool surface + policies. CDP/Playwright bypasses the policy engine. Use MCP for governed automation; CDP for raw scripts.
 
 ## Toggle in-app driver
 

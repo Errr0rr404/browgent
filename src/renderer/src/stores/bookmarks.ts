@@ -6,6 +6,7 @@ import {
   createFolderId,
   faviconForUrl,
   hostFromUrl,
+  MAX_FAVORITES,
   titleFromUrl,
   type BookmarkFolder,
   type BookmarkId,
@@ -108,10 +109,13 @@ export const useBookmarks = create<BookmarksStore>()(
               itemIds: [...folders[folderId].itemIds, itemId]
             }
           } else if (asFavorite) {
-            spaces = patchActiveSpace(state, (s) => ({
-              ...s,
-              favoriteIds: [...s.favoriteIds, itemId]
-            }))
+            spaces = patchActiveSpace(state, (s) => {
+              if (s.favoriteIds.length >= MAX_FAVORITES) {
+                // Board full — fall back to loose space list
+                return { ...s, itemIds: [...s.itemIds, itemId] }
+              }
+              return { ...s, favoriteIds: [...s.favoriteIds, itemId] }
+            })
           } else {
             spaces = patchActiveSpace(state, (s) => ({
               ...s,
@@ -147,7 +151,8 @@ export const useBookmarks = create<BookmarksStore>()(
           const isFav = space.favoriteIds.includes(id)
 
           if (!isFav) {
-            // Pin to favorites grid
+            // Pin to favorites grid (no-op when board is full)
+            if (space.favoriteIds.length >= MAX_FAVORITES) return state
             return {
               spaces: patchActiveSpace(state, (s) => ({
                 ...s,

@@ -1,10 +1,11 @@
 /**
- * Canonical agent tool surface — parity with Stagehand / browser-use / agent-browser,
- * plus Browgent-specific tools (tab control, policies, human handoff).
+ * Canonical agent tool surface — parity with Stagehand / browser-use / BrowserOS-style
+ * accessibility snapshots, plus Browgent-specific tools (tab control, policies, human handoff).
  */
 
 export type ToolName =
   | 'navigate'
+  | 'search'
   | 'back'
   | 'forward'
   | 'reload'
@@ -39,31 +40,59 @@ export interface ToolDef {
 export const TOOL_DEFS: ToolDef[] = [
   {
     name: 'navigate',
-    description: 'Navigate the active (or given) tab to a URL or search query',
+    description:
+      'Open a URL. Pass a full https URL, a host (github.com), or free text (auto web-search). After load, returns a fresh element snapshot (refs e1…). Prefer search for product/price lookups.',
     params: { url: 'string', tabId: 'string?' }
   },
-  { name: 'back', description: 'Go back in history', params: { tabId: 'string?' } },
-  { name: 'forward', description: 'Go forward in history', params: { tabId: 'string?' } },
-  { name: 'reload', description: 'Reload page', params: { tabId: 'string?' } },
+  {
+    name: 'search',
+    description:
+      'Web search (DuckDuckGo) + page snapshot + result text. Use for "cheapest X", "find Y", comparisons, or facts not on the current page. Faster than manual navigate+observe+extract.',
+    params: { query: 'string', tabId: 'string?' }
+  },
+  {
+    name: 'back',
+    description: 'Go back in history (returns updated snapshot)',
+    params: { tabId: 'string?' }
+  },
+  {
+    name: 'forward',
+    description: 'Go forward in history (returns updated snapshot)',
+    params: { tabId: 'string?' }
+  },
+  {
+    name: 'reload',
+    description: 'Reload page (returns updated snapshot)',
+    params: { tabId: 'string?' }
+  },
   {
     name: 'click',
-    description: 'Click element by ref from last observe (e.g. e3) or CSS selector',
+    description:
+      'Click by ref from the latest snapshot (e.g. e3). Prefer refs over CSS. Returns a fresh snapshot after the click.',
     params: { ref: 'string?', selector: 'string?', tabId: 'string?' }
   },
   {
     name: 'type',
     description:
-      'Type text into element (ref or selector). text is required unless clear=true (which wipes the field, optionally before typing a new value).',
-    params: { text: 'string?', ref: 'string?', selector: 'string?', clear: 'boolean?', tabId: 'string?' }
+      'Type into a field by ref. clear=true wipes first. Prefer refs from the latest snapshot. Returns a fresh snapshot.',
+    params: {
+      text: 'string?',
+      ref: 'string?',
+      selector: 'string?',
+      clear: 'boolean?',
+      tabId: 'string?'
+    }
   },
   {
     name: 'press_key',
-    description: 'Press a key (Enter, Tab, Escape, ArrowDown, Meta+l, etc.)',
+    description:
+      'Press a key (Enter, Tab, Escape, ArrowDown, Meta+l). Use Enter to submit forms/search. Returns a fresh snapshot.',
     params: { key: 'string', tabId: 'string?' }
   },
   {
     name: 'scroll',
-    description: 'Scroll page or element. direction: up|down|left|right or amount in px',
+    description:
+      'Scroll page or element. direction: up|down|left|right; amount optional px. Returns a fresh snapshot.',
     params: { direction: 'string?', amount: 'number?', ref: 'string?', tabId: 'string?' }
   },
   {
@@ -73,32 +102,42 @@ export const TOOL_DEFS: ToolDef[] = [
   },
   {
     name: 'select_option',
-    description: 'Select dropdown option by value or label',
-    params: { value: 'string?', label: 'string?', ref: 'string?', selector: 'string?', tabId: 'string?' }
+    description: 'Select dropdown option by value or label (returns snapshot)',
+    params: {
+      value: 'string?',
+      label: 'string?',
+      ref: 'string?',
+      selector: 'string?',
+      tabId: 'string?'
+    }
   },
   {
     name: 'wait',
-    description: 'Wait milliseconds or until selector/ref appears',
+    description:
+      'Wait ms or until ref/selector appears. Prefer short waits (300–800ms); navigate/search already wait for load.',
     params: { ms: 'number?', ref: 'string?', selector: 'string?', tabId: 'string?' }
   },
   {
     name: 'screenshot',
-    description: 'Capture viewport screenshot (returns size metadata only; bytes are not stored in trajectory)',
+    description:
+      'Capture viewport (use when icons/canvas lack text refs; vision models only when enabled)',
     params: { tabId: 'string?' }
   },
   {
     name: 'observe',
-    description: 'Snapshot interactive elements with compact refs (e1, e2…) + page meta',
+    description:
+      'Accessibility-style snapshot: interactive elements with refs e1, e2…. Mutating tools already return a snapshot — only call observe when the page changed without a tool (or after human takeover).',
     params: { tabId: 'string?' }
   },
   {
     name: 'extract_text',
-    description: 'Extract readable page text (title, url, body excerpt)',
+    description:
+      'Extract readable page text for answering questions / prices / summaries. Pair with search results pages.',
     params: { tabId: 'string?', maxChars: 'number?' }
   },
   {
     name: 'extract_links',
-    description: 'Extract links from page',
+    description: 'Extract links (title + href). Use after search to pick a result to click.',
     params: { tabId: 'string?', limit: 'number?' }
   },
   { name: 'get_url', description: 'Get current URL and title', params: { tabId: 'string?' } },
@@ -124,18 +163,20 @@ export const TOOL_DEFS: ToolDef[] = [
   },
   {
     name: 'ask_human',
-    description: 'Pause and ask the human a question (login, CAPTCHA, choice)',
+    description:
+      'Pause for CAPTCHA, 2FA, login wall, or a real choice. Do not ask for data already in the user message.',
     params: { question: 'string' },
     sensitive: true
   },
   {
     name: 'done',
-    description: 'Mark the task complete with a final answer for the user',
+    description:
+      'Finish with a direct answer: what you found, prices/links, or why blocked. Always call when the goal is met.',
     params: { summary: 'string' }
   },
   {
     name: 'think',
-    description: 'Internal reasoning step (no browser side effect)',
+    description: 'Brief internal plan only — do not monologue. Prefer acting with tools.',
     params: { thought: 'string' }
   }
 ]
@@ -160,8 +201,21 @@ export interface ToolResult {
    * injected as an image message — never written to the trajectory or export.
    */
   image?: string
+  /** MCP / takeover: human must act before mutators continue */
+  needsHuman?: boolean
 }
 
 export function isToolName(v: string): v is ToolName {
   return TOOL_DEFS.some((t) => t.name === v)
 }
+
+/** Tools safe to run concurrently in one LLM turn (no DOM mutations). */
+export const PARALLEL_SAFE_TOOLS = new Set<ToolName>([
+  'observe',
+  'extract_text',
+  'extract_links',
+  'get_url',
+  'list_tabs',
+  'screenshot',
+  'think'
+])

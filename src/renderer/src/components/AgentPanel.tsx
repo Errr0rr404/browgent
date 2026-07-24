@@ -8,6 +8,8 @@ import {
 } from 'react'
 import {
   Bot,
+  ChevronDown,
+  ChevronUp,
   Download,
   Eraser,
   Eye,
@@ -20,11 +22,15 @@ import {
   Search,
   Send,
   Settings2,
+  Sparkles,
   Square,
   Zap,
   X
 } from 'lucide-react'
 import type { AgentSessionState } from '@shared/types'
+import { AGENT_RECIPES } from '@shared/recipes'
+import { HERO_DEMO_MODE, HERO_DEMO_PROMPT } from '@shared/demo'
+import type { AgentMode } from '@shared/policies'
 import { useVoiceInput } from '../hooks/useVoiceInput'
 import { useRovingTablist } from '../hooks/useRovingTablist'
 import { useChromePrefs } from '../stores/chromePrefs'
@@ -38,26 +44,32 @@ interface Props {
   state: AgentSessionState | null
   onClose: () => void
   onOpenSettings?: () => void
+  /** Optional toast for export / actions */
+  onToast?: (kind: 'success' | 'info' | 'error', text: string) => void
 }
 
-const SUGGESTIONS = [
-  'go to github.com',
-  'search playwright docs',
-  'summarize this page',
-  'click the first result'
-]
+const RECIPE_PREVIEW = 4
 
 const TEXTAREA_MAX_LENGTH = 20000
 
 type AgentTab = 'chat' | 'trajectory' | 'policy'
 
-export function AgentPanel({ open, state, onClose, onOpenSettings }: Props): React.JSX.Element {
+export function AgentPanel({
+  open,
+  state,
+  onClose,
+  onOpenSettings,
+  onToast
+}: Props): React.JSX.Element {
   const [draft, setDraft] = useState('')
   const draftRef = useRef('')
   const [tab, setTab] = useState<AgentTab>('chat')
   const [sendError, setSendError] = useState<string | null>(null)
   const [sending, setSending] = useState(false)
+  const [recipesExpanded, setRecipesExpanded] = useState(false)
+  const [exporting, setExporting] = useState(false)
   const listRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
   const prefs = useChromePrefs()
   const density = prefs.agentDensity
   const busy =
@@ -73,6 +85,9 @@ export function AgentPanel({ open, state, onClose, onOpenSettings }: Props): Rea
   const showSuggestions = (state?.messages?.length ?? 0) <= 1 && !busy
   const provider = state?.provider ?? 'heuristic'
   const model = state?.model
+  const status = state?.status ?? 'idle'
+  const draftLen = draft.length
+  const nearLimit = draftLen > TEXTAREA_MAX_LENGTH * 0.9
 
   const userTypingRef = useRef(false)
   const panelTabsRef = useRef<HTMLDivElement>(null)
@@ -219,8 +234,42 @@ export function AgentPanel({ open, state, onClose, onOpenSettings }: Props): Rea
     first?.focus()
   }, [open, state?.pendingConfirmation?.id])
 
+  // Focus composer when agent asks for human input
+  useEffect(() => {
+    if (!open || !state?.waitingQuestion) return
+    const t = window.setTimeout(() => inputRef.current?.focus(), 80)
+    return () => window.clearTimeout(t)
+  }, [open, state?.waitingQuestion])
+
+  const doExport = useCallback((): void => {
+    if (exporting) return
+    setExporting(true)
+    void exportTrajectoryFile()
+      .then(() => onToast?.('success', 'Trajectory exported (eval pack JSON)'))
+      .catch((e) => {
+        console.error('Export failed', e)
+        onToast?.('error', 'Export failed')
+      })
+      .finally(() => setExporting(false))
+  }, [exporting, onToast])
+
+  const runHeroDemo = (): void => {
+    if (sending || busy) {
+      onToast?.('info', 'Stop the current task before running the demo')
+      return
+    }
+    void window.browgent.setAgentMode(HERO_DEMO_MODE)
+    void window.browgent.recordDemoRun?.().catch(() => undefined)
+    void window.browgent.recordRecipeRun?.().catch(() => undefined)
+    send(HERO_DEMO_PROMPT)
+    onToast?.('success', 'Hero demo started — watch the agent on example.com')
+  }
+
   const showModeBar = prefs.agentShowModeBar
   const showControls = canStop || state?.status === 'paused' || busy
+  const visibleRecipes = recipesExpanded
+    ? AGENT_RECIPES
+    : AGENT_RECIPES.slice(0, RECIPE_PREVIEW)
 
   return (
     <aside
@@ -230,15 +279,19 @@ export function AgentPanel({ open, state, onClose, onOpenSettings }: Props): Rea
     >
       <header className="agent-header">
         <div className="agent-identity">
-          <div className={`agent-avatar${busy ? ' live' : ''}`} aria-hidden>
+          <div
+            className={`agent-avatar${busy ? ' live' : ''}${status === 'paused' ? ' paused' : ''}${status === 'error' ? ' error' : ''}`}
+            aria-hidden
+          >
             <Bot size={16} strokeWidth={1.75} />
+            <span className={`agent-status-dot status-${status}`} />
           </div>
           <div>
             <h2>Browsing agent</h2>
-            <div className={`agent-status ${state?.status ?? 'idle'}`}>
-              {state?.status ?? 'idle'}
+            <div className={`agent-status ${status}`}>
+              <span className="agent-status-label">{formatStatus(status)}</span>
               {typeof state?.stepCount === 'number' && (
-                <span>
+                <span className="agent-step-count">
                   {' '}
                   · {state.stepCount}/{state.maxSteps}
                 </span>
@@ -271,9 +324,10 @@ export function AgentPanel({ open, state, onClose, onOpenSettings }: Props): Rea
           <button
             type="button"
             className="icon-btn"
-            title="Export trajectory"
+            title="Export trajectory eval JSON"
             aria-label="Export trajectory"
-            onClick={() => void exportTrajectoryFile().catch((e) => console.error('Export failed', e))}
+            disabled={exporting}
+            onClick={doExport}
           >
             <Download size={15} strokeWidth={1.75} />
           </button>
@@ -390,14 +444,17 @@ export function AgentPanel({ open, state, onClose, onOpenSettings }: Props): Rea
       {state?.pendingConfirmation && (
         <div
           ref={confirmDialogRef}
-          className="confirm-banner"
+          className="confirm-banner confirm-banner-policy"
           role="alertdialog"
           aria-modal="false"
           aria-labelledby={confirmTitleId}
           aria-describedby={confirmDescId}
         >
           <p id={confirmTitleId} className="confirm-title">
-            Allow this action?
+            Policy gate
+            {state.pendingConfirmation.tool ? (
+              <span className="confirm-tool">{state.pendingConfirmation.tool}</span>
+            ) : null}
           </p>
           <p id={confirmDescId}>{state.pendingConfirmation.reason}</p>
           <div className="confirm-actions">
@@ -415,15 +472,38 @@ export function AgentPanel({ open, state, onClose, onOpenSettings }: Props): Rea
             >
               Deny
             </button>
+            <button
+              type="button"
+              className="ctrl-btn"
+              title="Pause agent and take the browser"
+              onClick={() => void window.browgent.takeover()}
+            >
+              <Hand size={13} /> Takeover
+            </button>
           </div>
         </div>
       )}
 
       {state?.waitingQuestion && (
         <div className="confirm-banner info" role="status" aria-live="polite">
-          <p>
-            <strong>Agent needs you:</strong> {state.waitingQuestion}
-          </p>
+          <p className="confirm-title">Agent needs you</p>
+          <p>{state.waitingQuestion}</p>
+          <div className="confirm-actions">
+            <button
+              type="button"
+              className="ctrl-btn"
+              onClick={() => void window.browgent.takeover()}
+            >
+              <Hand size={13} /> Takeover
+            </button>
+            <button
+              type="button"
+              className="ctrl-btn accent"
+              onClick={() => inputRef.current?.focus()}
+            >
+              Type answer
+            </button>
+          </div>
         </div>
       )}
 
@@ -490,12 +570,55 @@ export function AgentPanel({ open, state, onClose, onOpenSettings }: Props): Rea
         </div>
 
         {showSuggestions && (
-          <div className="agent-suggestions">
-            {SUGGESTIONS.map((s) => (
-              <button key={s} type="button" className="suggestion-chip" onClick={() => send(s)}>
-                {s}
+          <div className="agent-suggestions" aria-label="Recipes">
+            <div className="agent-suggestions-head">
+              <div className="agent-suggestions-label">Recipes</div>
+              <button
+                type="button"
+                className="suggestion-chip suggestion-demo"
+                title="60s co-browse demo on example.com (YC recording)"
+                disabled={sending || busy}
+                onClick={runHeroDemo}
+              >
+                <Sparkles size={12} /> Run demo
               </button>
-            ))}
+            </div>
+            <div className="agent-suggestions-row">
+              {visibleRecipes.map((r) => (
+                <button
+                  key={r.id}
+                  type="button"
+                  className="suggestion-chip"
+                  title={r.blurb}
+                  onClick={() => {
+                    void window.browgent.setAgentMode(r.mode as AgentMode)
+                    void window.browgent.recordRecipeRun?.().catch(() => undefined)
+                    send(r.prompt)
+                  }}
+                >
+                  <span className={`recipe-mode-tag mode-${r.mode}`}>{r.mode}</span>
+                  {r.title}
+                </button>
+              ))}
+              {AGENT_RECIPES.length > RECIPE_PREVIEW && (
+                <button
+                  type="button"
+                  className="suggestion-chip suggestion-more"
+                  onClick={() => setRecipesExpanded((v) => !v)}
+                  aria-expanded={recipesExpanded}
+                >
+                  {recipesExpanded ? (
+                    <>
+                      <ChevronUp size={12} /> Less
+                    </>
+                  ) : (
+                    <>
+                      <ChevronDown size={12} /> +{AGENT_RECIPES.length - RECIPE_PREVIEW} more
+                    </>
+                  )}
+                </button>
+              )}
+            </div>
           </div>
         )}
       </div>
@@ -509,8 +632,24 @@ export function AgentPanel({ open, state, onClose, onOpenSettings }: Props): Rea
         className="agent-tabpanel trajectory-list"
       >
         {(state?.trajectory ?? []).length === 0 && (
-          <p className="empty-hint">Tool calls and observations appear here — export anytime.</p>
+          <p className="empty-hint">
+            Tool calls and observations appear here. Export produces an eval pack (schema v1) for
+            offline grading — no screenshot bytes.
+          </p>
         )}
+        <div className="trajectory-export-bar">
+          <button
+            type="button"
+            className="ctrl-btn accent"
+            disabled={exporting || (state?.trajectory?.length ?? 0) === 0}
+            onClick={doExport}
+          >
+            <Download size={13} /> {exporting ? 'Exporting…' : 'Export eval JSON'}
+          </button>
+          <span className="empty-hint" style={{ margin: 0 }}>
+            {state?.trajectory?.length ?? 0} events · schema v1
+          </span>
+        </div>
         {[...(state?.trajectory ?? [])].reverse().map((step) => (
           <TrajectoryRow key={step.id} step={step} collapseLong={prefs.agentCollapseLong} />
         ))}
@@ -529,6 +668,7 @@ export function AgentPanel({ open, state, onClose, onOpenSettings }: Props): Rea
 
       <div className="agent-composer">
         <textarea
+          ref={inputRef}
           className="agent-input"
           value={draft}
           maxLength={TEXTAREA_MAX_LENGTH}
@@ -559,6 +699,11 @@ export function AgentPanel({ open, state, onClose, onOpenSettings }: Props): Rea
             }
           }}
         />
+        {nearLimit && (
+          <div className="composer-char-count" aria-live="polite">
+            {draftLen.toLocaleString()} / {TEXTAREA_MAX_LENGTH.toLocaleString()}
+          </div>
+        )}
         {sendError && (
           <div id="agent-send-error" className="voice-error" role="alert">
             {sendError}
@@ -651,4 +796,21 @@ function ModeBtn({
       {label}
     </button>
   )
+}
+
+function formatStatus(status: string): string {
+  switch (status) {
+    case 'waiting_human':
+      return 'needs you'
+    case 'thinking':
+      return 'thinking'
+    case 'acting':
+      return 'acting'
+    case 'paused':
+      return 'paused'
+    case 'error':
+      return 'error'
+    default:
+      return status
+  }
 }

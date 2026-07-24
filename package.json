@@ -27,20 +27,32 @@
     "local-first",
     "co-browse"
   ],
+  "bin": {
+    "browgent-mcp": "./scripts/browgent-mcp.mjs"
+  },
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "playwright:example": "node examples/playwright-connect.mjs",
+    "mcp": "node scripts/browgent-mcp.mjs",
+    "mcp:smoke": "node scripts/mcp-bridge-smoke.mjs",
+    "test:unit": "node scripts/test-tool-schema.mjs",
+    "test:identity": "node scripts/test-identity-checklist.mjs",
+    "demo:hero": "node scripts/demo-hero.mjs",
+    "yc:packet": "node scripts/yc-packet.mjs",
     "dev:agent": "BROWGENT_AGENT_ONLY=1 electron-vite dev",
     "dev:headless": "BROWGENT_HEADLESS=1 BROWGENT_AGENT_ONLY=1 electron-vite dev",
     "dist": "npm run build && electron-builder",
     "dist:mac": "npm run build && electron-builder --mac dmg --arm64",
+    "dist:win": "npm run build && electron-builder --win nsis --x64",
+    "dist:linux": "npm run build && electron-builder --linux AppImage --x64",
     "dist:dir": "npm run build && electron-builder --dir",
     "postinstall": "electron-builder install-app-deps"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "lucide-react": "^0.511.0",
     "zustand": "^5.0.5"
   },

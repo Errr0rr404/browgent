@@ -1,21 +1,13 @@
 ---
 name: Feature request
-about: Suggest an idea for Browgent
-title: '[feat] '
+about: Improve the co-browse runtime wedge
 labels: enhancement
-assignees: ''
 ---
 
-## Problem
+**Problem**
 
-What user problem or gap does this address?
+**Proposal**
 
-## Proposed solution
+**Who benefits** (builders / HITL / eval / consumer)
 
-How should it work?
-
-## Alternatives considered
-
-## Additional context
-
-Links, mockups, related tools (browser-use, Stagehand, etc.) welcome.
+**Related recipes or MCP tools**

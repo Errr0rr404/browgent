@@ -36,3 +36,6 @@ Thumbs.db
 
 # AI Meta Controller runtime metadata
 .amc/
+
+# Local agent / tooling caches
+.claude-flow/

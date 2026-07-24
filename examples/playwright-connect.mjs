@@ -27,15 +27,32 @@ async function main() {
     throw new Error('No browser contexts — is Browgent running with CDP enabled?')
   }
 
-  // Prefer a real page tab (guest content), not empty placeholders
-  let page = contexts.flatMap((c) => c.pages()).find((p) => {
+  // Prefer guest http(s) pages — skip chrome UI, devtools, about:blank
+  const allPages = contexts.flatMap((c) => c.pages())
+  let page = allPages.find((p) => {
     const u = p.url()
-    return u && u !== 'about:blank' && !u.startsWith('chrome://') && !u.startsWith('devtools://')
+    return u.startsWith('http://') || u.startsWith('https://')
   })
 
   if (!page) {
-    page = contexts[0].pages()[0] ?? (await contexts[0].newPage())
+    page =
+      allPages.find((p) => {
+        const u = p.url()
+        return (
+          u &&
+          u !== 'about:blank' &&
+          !u.startsWith('chrome://') &&
+          !u.startsWith('devtools://') &&
+          !u.startsWith('file://')
+        )
+      }) ??
+      allPages[0] ??
+      (await contexts[0].newPage())
   }
+
+  console.log(
+    `Contexts: ${contexts.length}, pages: ${allPages.length} → attached: ${page.url() || '(blank)'}`
+  )
 
   console.log('Attached to page:', page.url() || '(blank)')
   await page.goto('https://example.com', { waitUntil: 'domcontentloaded' })

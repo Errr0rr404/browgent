@@ -274,15 +274,17 @@ export class ToolExecutor {
         case 'screenshot': {
           const buf = await this.tabs.screenshotActive(str(args.tabId))
           if (!buf) return fail(name, 'Screenshot failed')
+          // Avoid base64 allocation when vision is off (large string for metadata only).
+          if (!ctx.vision) {
+            return ok(name, { bytes: buf.length }, `Screenshot ${buf.length} bytes`)
+          }
           const base64 = buf.toString('base64')
-          // Trajectory keeps only metadata; the image (if any) rides a transient
-          // field the session consumes for the vision model and never persists.
           const result = ok(
             name,
             { bytes: buf.length, base64Length: base64.length },
             `Screenshot ${buf.length} bytes`
           )
-          if (ctx.vision) result.image = base64
+          result.image = base64
           return result
         }
 
@@ -291,8 +293,13 @@ export class ToolExecutor {
 
           const usesSelector = typeof args.selector === 'string' && args.selector.length > 0
           const clickTabId = str(args.tabId) ?? this.tabs.getActiveTabId() ?? null
+          // Prefer tabId stamped on the observation (MCP multi-tab); fall back to active-tab match
           const observationMatchesTarget =
-            clickTabId !== null && clickTabId === this.tabs.getActiveTabId()
+            clickTabId !== null &&
+            !!ctx.lastObservation &&
+            (ctx.lastObservation.tabId
+              ? ctx.lastObservation.tabId === clickTabId
+              : clickTabId === this.tabs.getActiveTabId())
           let cachedEl: ObserveElement | null = null
           if (
             observationMatchesTarget &&
@@ -404,6 +411,20 @@ export class ToolExecutor {
           if (!args.ref && !args.selector) return fail(name, 'ref or selector required')
           const resolved = ctx.resolver ? ctx.resolver(rawText) : rawText
           const safeArgs: ToolArgs = { ...args, text: resolved }
+
+          // Sensitive field gate (password/otp) — same confirm path as sensitive clicks
+          if (ctx.requestConfirm && typeof args.ref === 'string' && args.ref && ctx.lastObservation) {
+            const el = ctx.lastObservation.elements.find((e) => e.ref === args.ref)
+            if (el && looksLikePasswordField(el)) {
+              const allowed = await ctx.requestConfirm(
+                `Type into sensitive field "${el.name || el.role || args.ref}" — allow?`,
+                name,
+                args
+              )
+              if (!allowed) return fail(name, 'Type into sensitive field rejected by human')
+            }
+          }
+
           const r = await this.tabs.domAction('type', safeArgs, str(args.tabId), ctx.signal)
           return r.ok
             ? ok(name, r, `Typed into ${args.ref ?? args.selector ?? 'field'}`)
@@ -535,6 +556,14 @@ function abortSleep(ms: number, signal?: AbortSignal): Promise<void> {
     }
     signal.addEventListener('abort', onAbort, { once: true })
   })
+}
+
+function looksLikePasswordField(el: ObserveElement): boolean {
+  const blob = `${el.role ?? ''} ${el.name ?? ''} ${el.tag ?? ''} ${el.placeholder ?? ''}`.toLowerCase()
+  if (el.role === 'textbox' && /password|passcode|otp|one[- ]?time|2fa|totp|pin code/.test(blob)) {
+    return true
+  }
+  return /password|passcode|otp|one[- ]?time|2fa|totp/.test(blob)
 }
 
 function parseHref(href: string, baseHost: string): { url: string; host: string } | null {

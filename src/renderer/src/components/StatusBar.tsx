@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { AgentSessionState, TabState } from '@shared/types'
 import type { CdpEndpointStatus, DriverMode } from '@shared/driver'
+import type { McpStatus } from '@shared/mcp'
 import { providerLabel } from '../lib/providers'
 
 interface Props {
@@ -13,6 +14,7 @@ interface Props {
   onZoomIn?: () => void
   onZoomOut?: () => void
   onZoomReset?: () => void
+  onToast?: (kind: 'success' | 'info' | 'error', text: string) => void
 }
 
 const APP_VERSION_FALLBACK = 'dev'
@@ -25,13 +27,15 @@ export function StatusBar({
   statusLabel,
   onZoomIn,
   onZoomOut,
-  onZoomReset
+  onZoomReset,
+  onToast
 }: Props): React.JSX.Element {
   const host = statusLabel ?? safeHost(activeTab?.url)
   const status = agent?.status ?? 'idle'
   const live = status !== 'idle'
   const mode = agent?.mode ?? 'act'
   const [driver, setDriver] = useState<CdpEndpointStatus | null>(null)
+  const [mcp, setMcp] = useState<McpStatus | null>(null)
   const [appVersion, setAppVersion] = useState<string>(APP_VERSION_LOADING)
   const zoomFactor = activeTab?.zoomFactor ?? 1
   const zoomPct = Math.round(zoomFactor * 100)
@@ -43,11 +47,23 @@ export function StatusBar({
     })
   }, [])
 
+  const refreshMcp = useCallback(() => {
+    if (!window.browgent?.getMcpStatus) return
+    window.browgent.getMcpStatus().then(setMcp).catch(() => {
+      /* ignore */
+    })
+  }, [])
+
   useEffect(() => {
     refreshDriver()
-    const t = window.setInterval(refreshDriver, 5000)
+    refreshMcp()
+    // CDP probe is cached in main; still no need to hammer IPC
+    const t = window.setInterval(() => {
+      refreshDriver()
+      refreshMcp()
+    }, 15_000)
     return () => window.clearInterval(t)
-  }, [refreshDriver])
+  }, [refreshDriver, refreshMcp])
 
   useEffect(() => {
     let alive = true
@@ -76,6 +92,17 @@ export function StatusBar({
       })
   }, [driver?.driverMode, refreshDriver])
 
+  const copyMcp = useCallback(() => {
+    if (!mcp?.enabled || !mcp.baseUrl) {
+      onToast?.('info', 'MCP bridge is off (BROWGENT_MCP=0)')
+      return
+    }
+    void navigator.clipboard.writeText(mcp.baseUrl).then(
+      () => onToast?.('success', `Copied ${mcp.baseUrl}`),
+      () => onToast?.('error', 'Could not copy MCP URL')
+    )
+  }, [mcp, onToast])
+
   const brain =
     agent?.provider && agent.provider !== 'heuristic'
       ? agent.model || providerLabel(agent.provider)
@@ -83,21 +110,22 @@ export function StatusBar({
 
   return (
     <footer className="statusbar" aria-label="Browser status">
-      <span aria-label={`${tabCount} open tabs`}>
+      <span className="statusbar-pill" aria-label={`${tabCount} open tabs`}>
         {tabCount} tab{tabCount === 1 ? '' : 's'}
       </span>
       <span className="statusbar-sep" />
       <span
-        className={live ? 'live' : undefined}
+        className={`statusbar-pill statusbar-agent${live ? ' live' : ''}`}
         aria-live="polite"
         aria-label={`Agent ${status}, mode ${mode}`}
       >
-        agent <strong>{status}</strong>
+        <span className={`agent-status-dot status-${status}`} aria-hidden />
+        <strong>{formatStatus(status)}</strong>
         <span className="statusbar-muted"> · {mode}</span>
       </span>
       <span className="statusbar-sep" />
       <span
-        className={agent?.provider && agent.provider !== 'heuristic' ? 'live' : undefined}
+        className={`statusbar-pill${agent?.provider && agent.provider !== 'heuristic' ? ' live' : ''}`}
         aria-label={`Brain: ${brain}`}
         title={
           agent?.provider && agent.provider !== 'heuristic'
@@ -112,7 +140,7 @@ export function StatusBar({
           <span className="statusbar-sep" />
           <button
             type="button"
-            className="statusbar-btn"
+            className={`statusbar-btn statusbar-pill${driver.enabled ? ' live' : ''}`}
             title={
               driver.enabled
                 ? `${driver.note}\nClick to toggle in-app driver (dom ↔ cdp)`
@@ -121,7 +149,7 @@ export function StatusBar({
             aria-label={`Driver ${driver.driverMode}, ${driver.enabled ? `CDP on port ${driver.port}` : 'CDP off'}. Click to toggle.`}
             onClick={cycleDriver}
           >
-            {driver.driverMode}
+            drive {driver.driverMode}
             {driver.enabled ? (
               <span className="live"> · :{driver.port}</span>
             ) : (
@@ -130,12 +158,48 @@ export function StatusBar({
           </button>
         </>
       )}
+      {mcp && (
+        <>
+          <span className="statusbar-sep" />
+          <button
+            type="button"
+            className={`statusbar-btn statusbar-pill${mcp.enabled ? ' live' : ''}`}
+            title={
+              mcp.enabled
+                ? `${mcp.note}\nClick to copy bridge URL`
+                : 'MCP bridge off'
+            }
+            aria-label={
+              mcp.enabled
+                ? `MCP bridge on port ${mcp.port}, ${mcp.callCount} calls. Click to copy URL.`
+                : 'MCP bridge off'
+            }
+            onClick={copyMcp}
+          >
+            mcp
+            {mcp.enabled ? (
+              <span>
+                {' '}
+                · :{mcp.port}
+                {mcp.callCount > 0 ? ` · ${mcp.callCount}` : ''}
+              </span>
+            ) : (
+              <span className="statusbar-muted"> · off</span>
+            )}
+          </button>
+        </>
+      )}
       {activeTab?.owner && (
         <>
           <span className="statusbar-sep" />
           <span
-            className={activeTab.owner === 'agent' ? 'live' : undefined}
+            className={`statusbar-owner owner-${activeTab.owner}`}
             aria-label={`Tab owner: ${activeTab.owner}`}
+            title={
+              activeTab.owner === 'agent'
+                ? 'Agent currently owns this tab'
+                : 'You own this tab'
+            }
           >
             {activeTab.owner}
           </span>
@@ -203,4 +267,9 @@ function safeHost(url?: string): string {
   } catch {
     return url
   }
+}
+
+function formatStatus(status: string): string {
+  if (status === 'waiting_human') return 'needs you'
+  return status
 }

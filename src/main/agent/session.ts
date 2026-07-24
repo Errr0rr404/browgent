@@ -39,7 +39,14 @@ import type {
   TabId,
   TrajectoryStep
 } from '../../shared/types'
-import { isToolName, type ToolArgs, type ToolCall, type ToolName } from '../../shared/tools'
+import {
+  isToolName,
+  type ToolArgs,
+  type ToolCall,
+  type ToolName,
+  type ToolResult
+} from '../../shared/tools'
+import { MCP_READ_TOOLS } from '../../shared/mcp'
 
 export class AgentSession {
   private status: AgentSessionStatus = 'idle'
@@ -79,7 +86,8 @@ export class AgentSession {
 
   constructor(
     private tabs: TabManager,
-    private onChange: (state: AgentSessionState) => void
+    private onChange: (state: AgentSessionState) => void,
+    private onAgentRunStarted?: () => void
   ) {
     this.executor = new ToolExecutor(tabs)
     this.refreshProvider()
@@ -88,7 +96,7 @@ export class AgentSession {
         ? `Powered by **${getProviderDisplayName()}** (\`${this.model}\`) with live browser tools.`
         : 'Running in **heuristic** mode (no API key). Set `XAI_API_KEY` for Grok (default), or any OpenAI-compatible provider via `BROWGENT_PROVIDER` / `BROWGENT_API_KEY` / `BROWGENT_BASE_URL`.'
     this.pushSystem(
-      `Browgent agent online. ${brain}\nModes: **act** · **research** · **watch**. Shared tabs — take over anytime.`
+      `Browgent agent online. ${brain}\nModes: **act** · **research** · **watch**. Shared tabs — take over anytime. Try a **recipe** or wire **MCP** (\`npm run mcp\`).`
     )
     this.trace('system', 'Agent session started', this.provider)
     this.emit()
@@ -254,6 +262,144 @@ export class AgentSession {
     this.emit()
   }
 
+  /**
+   * Execute a single tool for external clients (MCP bridge / STDIO proxy).
+   * Uses the same ToolExecutor + policy + mode as the chat agent on shared tabs.
+   * Policy confirmations cannot be clicked over MCP — they fail with needsHuman.
+   * Mutators are blocked during Takeover/pause and while a chat task is in flight.
+   */
+  async executeMcpTool(name: string, args: ToolArgs = {}): Promise<ToolResult & { needsHuman?: boolean }> {
+    if (!isToolName(name)) {
+      return {
+        ok: false,
+        tool: 'think',
+        error: `Unknown tool: ${name}`,
+        summary: `Unknown tool: ${name}`
+      }
+    }
+
+    const isRead = MCP_READ_TOOLS.has(name)
+
+    // Takeover / pause: only non-mutating tools (human owns the wheel)
+    if ((this.paused || this.status === 'paused') && !isRead) {
+      return {
+        ok: false,
+        tool: name,
+        error: 'Session paused (takeover) — Resume in Browgent before MCP mutators',
+        summary: 'Blocked: takeover/pause active',
+        needsHuman: true
+      }
+    }
+
+    // Chat agent running: do not race mutators on the same tabs
+    if (
+      (this.taskInFlight ||
+        this.status === 'thinking' ||
+        this.status === 'acting' ||
+        this.status === 'waiting_human') &&
+      !isRead
+    ) {
+      return {
+        ok: false,
+        tool: name,
+        error: 'Chat agent busy — Stop or wait, or use read-only tools (observe, list_tabs, …)',
+        summary: 'Blocked: agent task in flight'
+      }
+    }
+
+    if (this.pendingConfirmation && !isRead) {
+      return {
+        ok: false,
+        tool: name,
+        error: 'Human confirmation pending in Browgent UI — approve or reject first',
+        summary: 'Blocked: confirmation pending',
+        needsHuman: true
+      }
+    }
+
+    let deniedReason: string | null = null
+    const call: ToolCall = { id: randomUUID(), name, args }
+    try {
+      const result = await this.executor.execute(call, {
+        policy: this.policy,
+        mode: this.mode,
+        lastObservation: this.lastObservation,
+        requestConfirm: async (reason: string) => {
+          deniedReason = reason
+          return false
+        }
+      })
+
+      // Cache observe snapshot so subsequent MCP click/type refs resolve (stamp tabId)
+      if (name === 'observe' && result.ok && result.data && typeof result.data === 'object') {
+        const d = result.data as {
+          url?: string
+          title?: string
+          elements?: ObserveSnapshot['elements']
+          textPreview?: string
+        }
+        if (Array.isArray(d.elements)) {
+          const obsTabId =
+            typeof args.tabId === 'string' && args.tabId
+              ? args.tabId
+              : this.tabs.getActiveTabId() ?? undefined
+          this.lastObservation = {
+            url: d.url ?? '',
+            title: d.title ?? '',
+            elements: d.elements,
+            textPreview: d.textPreview ?? '',
+            tabId: obsTabId
+          }
+        }
+      }
+
+      if (!result.ok && deniedReason) {
+        this.trace('tool', `mcp:${name}`, deniedReason, name, false)
+        this.emit()
+        return {
+          ...result,
+          error: `Confirmation required in Browgent UI: ${deniedReason}`,
+          summary: `Needs human: ${deniedReason}`,
+          needsHuman: true
+        }
+      }
+
+      if (name === 'ask_human' && result.ok) {
+        const q = String(args.question ?? result.summary ?? 'Agent needs help')
+        this.waitingQuestion = q
+        this.status = 'waiting_human'
+        this.transferOwnershipToHumanIfSafe('MCP ask_human')
+        this.trace('tool', 'mcp:ask_human', q, name, true)
+        this.emit()
+        return {
+          ...result,
+          needsHuman: true,
+          summary: result.summary || 'Ask the human in Browgent (takeover / answer)'
+        }
+      }
+
+      this.trace(
+        'tool',
+        `mcp:${name}`,
+        result.ok ? result.summary : result.error,
+        name,
+        result.ok
+      )
+      this.emit()
+      return result
+    } finally {
+      // MCP is fire-and-forget vs chat loops: release ownership so human browsing
+      // is not stuck behind agent tab guards after a lone navigate/click.
+      if (!this.taskInFlight && !this.paused && !this.pendingConfirmation) {
+        try {
+          this.tabs.releaseAgentTabs()
+        } catch {
+          // ignore
+        }
+      }
+    }
+  }
+
   private transferOwnershipToHumanIfSafe(traceLabel: string): void {
     this.pendingOwnershipTransfer = false
     if (!this.mutationInFlight) {
@@ -303,13 +449,34 @@ export class AgentSession {
   }
 
   exportTrajectory(): string {
+    const steps = this.trajectory.map(sanitizeTrajectoryStepForExport)
+    const toolSteps = steps.filter((s) => s.kind === 'tool' || s.tool)
     const payload = {
+      schemaVersion: 1,
+      format: 'browgent.trajectory.eval',
       exportedAt: new Date().toISOString(),
       mode: this.mode,
       provider: this.provider,
       model: this.model,
+      goal: this.currentGoal ? redactTextForTrajectory(this.currentGoal).slice(0, 500) : null,
       policy: sanitizePolicyForExport(this.policy),
-      steps: this.trajectory.map(sanitizeTrajectoryStepForExport),
+      stats: {
+        stepCount: this.stepCount,
+        trajectoryLength: steps.length,
+        toolCalls: toolSteps.length,
+        okTools: toolSteps.filter((s) => s.ok === true).length,
+        failedTools: toolSteps.filter((s) => s.ok === false).length
+      },
+      /** Compact eval pack — preferred for offline grading */
+      evalSteps: toolSteps.map((s, i) => ({
+        i,
+        ts: s.ts,
+        tool: s.tool ?? null,
+        ok: s.ok ?? null,
+        title: s.title,
+        detail: s.detail ?? null
+      })),
+      steps,
       messages: this.messages.map(sanitizeMessageForExport)
     }
     return JSON.stringify(payload, null, 2)
@@ -347,6 +514,11 @@ export class AgentSession {
     this.cancelled = false
     this.paused = false
     this.taskInFlight = true
+    try {
+      this.onAgentRunStarted?.()
+    } catch {
+      // metrics must never break the agent
+    }
     this.currentGoal = text
     this.stepCount = 0
     this.lastToolNotes = []
@@ -639,23 +811,27 @@ export class AgentSession {
       if (gen === undefined || this.isActiveRun(gen)) this.pushAssistant(reply)
       return
     }
-    msg.content = ''
-    for (const chunk of chunkText(reply, 36)) {
-      if (gen !== undefined && !this.isActiveRun(gen)) return
-      if (this.cancelled) return
-      msg.content += chunk
-      this.emit()
-      await sleep(8)
-    }
+    // Single emit — fake per-chunk streaming was multi-KB IPC storms over full agent state
+    if (gen !== undefined && !this.isActiveRun(gen)) return
+    if (this.cancelled) return
+    msg.content = reply
+    this.trimMessages()
+    this.emit()
   }
 
   private trimMessages(): void {
-    const MAX = 120
-    if (this.messages.length <= MAX) return
-    // Keep the first system welcome + the newest messages
-    const head = this.messages[0]
-    const tail = this.messages.slice(-(MAX - 1))
-    this.messages = head?.role === 'system' ? [head, ...tail.filter((m) => m.id !== head.id)] : tail
+    const MAX = 80
+    if (this.messages.length > MAX) {
+      const head = this.messages[0]
+      const tail = this.messages.slice(-(MAX - 1))
+      this.messages = head?.role === 'system' ? [head, ...tail.filter((m) => m.id !== head.id)] : tail
+    }
+    // Cap actions arrays so long tool loops don't bloat IPC
+    for (const m of this.messages) {
+      if (m.actions && m.actions.length > 40) {
+        m.actions = m.actions.slice(-40)
+      }
+    }
   }
 
   private waitForConfirm(
@@ -1170,12 +1346,6 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms))
 }
 
-function chunkText(text: string, size: number): string[] {
-  const chunks: string[] = []
-  for (let i = 0; i < text.length; i += size) chunks.push(text.slice(i, i + size))
-  return chunks
-}
-
 function messageHasImage(m: ChatMessage): boolean {
   return Array.isArray(m.content) && m.content.some((p) => p.type === 'image_url')
 }
@@ -1386,3 +1556,5 @@ function isMutatingTool(name: ToolName): boolean {
       return false
   }
 }
+
+

@@ -24,6 +24,9 @@ import { platformCssToken } from './lib/platform'
 import { isBlankUrl } from './lib/urls'
 import { moodFromAgent } from './components/agent/AgentPet'
 import { FloatingAgentPet } from './components/agent/AgentPet/FloatingAgentPet'
+import { FirstRunModal } from './components/FirstRunModal'
+import { Toast, type ToastMessage } from './components/Toast'
+import type { AgentMode } from '@shared/policies'
 import './styles/app.css'
 
 export default function App(): React.JSX.Element {
@@ -44,8 +47,14 @@ export default function App(): React.JSX.Element {
   const agentPetVisible = useChromePrefs((s) => s.agentPetVisible)
   const agentPetX = useChromePrefs((s) => s.agentPetX)
   const agentPetY = useChromePrefs((s) => s.agentPetY)
+  const agentPetForm = useChromePrefs((s) => s.agentPetForm)
   const setAgentPetVisible = useChromePrefs((s) => s.setAgentPetVisible)
   const setAgentPetPosition = useChromePrefs((s) => s.setAgentPetPosition)
+  const onboardingDismissed = useChromePrefs((s) => s.onboardingDismissed)
+  const setOnboardingDismissed = useChromePrefs((s) => s.setOnboardingDismissed)
+  const telemetryOptIn = useChromePrefs((s) => s.telemetryOptIn)
+  const [prefsHydrated, setPrefsHydrated] = useState(() => useChromePrefs.persist.hasHydrated())
+  const [toast, setToast] = useState<ToastMessage | null>(null)
   const platform = platformCssToken(window.browgent?.platform)
   const contentRef = useRef<HTMLDivElement>(null)
   const creatingRef = useRef(false)
@@ -106,6 +115,10 @@ export default function App(): React.JSX.Element {
 
   const createTabOnce = useCallback(async (url?: string) => {
     if (creatingRef.current) return
+    if (!window.browgent?.createTab) {
+      console.error('[browgent] createTab unavailable — preload failed to load')
+      return
+    }
     creatingRef.current = true
     try {
       await window.browgent.createTab(url)
@@ -133,7 +146,7 @@ export default function App(): React.JSX.Element {
         return
       }
       const active = tabs.find((t) => t.isActive)
-      if (active?.id) {
+      if (active?.id && window.browgent?.navigate) {
         void window.browgent
           .navigate({ tabId: active.id, input: target })
           .then((ok) => {
@@ -206,10 +219,53 @@ export default function App(): React.JSX.Element {
       if (!t) return
       setAgentOpen(true)
       setSettingsOpen(false)
-      void window.browgent.sendAgentMessage(t, tabs.find((x) => x.isActive)?.id)
+      if (!window.browgent?.sendAgentMessage) {
+        console.error('[browgent] sendAgentMessage unavailable — preload failed to load')
+        return
+      }
+      void window.browgent
+        .sendAgentMessage(t, tabs.find((x) => x.isActive)?.id)
+        .catch((err) => {
+          console.error('[browgent] sendAgentMessage failed', err)
+        })
     },
     [tabs]
   )
+
+  const runRecipe = useCallback(
+    (prompt: string, mode: AgentMode) => {
+      setAgentOpen(true)
+      setSettingsOpen(false)
+      void window.browgent?.setAgentMode?.(mode)
+      void window.browgent
+        ?.sendAgentMessage?.(prompt, tabs.find((x) => x.isActive)?.id)
+        .catch((err) => console.error('[browgent] recipe send failed', err))
+    },
+    [tabs]
+  )
+
+  const pushToast = useCallback((kind: ToastMessage['kind'], text: string) => {
+    setToast({ id: `${Date.now()}`, kind, text })
+  }, [])
+
+  const dismissToast = useCallback(() => setToast(null), [])
+
+  // Avoid first-run modal flash before zustand rehydrates localStorage
+  useEffect(() => {
+    if (useChromePrefs.persist.hasHydrated()) {
+      setPrefsHydrated(true)
+      return
+    }
+    return useChromePrefs.persist.onFinishHydration(() => setPrefsHydrated(true))
+  }, [])
+
+  // Sync renderer telemetry preference → main metrics store
+  useEffect(() => {
+    if (!window.browgent?.setTelemetryOptIn) return
+    void window.browgent.setTelemetryOptIn(telemetryOptIn).catch(() => {
+      /* ignore */
+    })
+  }, [telemetryOptIn])
 
   useAppShortcuts({
     tabs,
@@ -265,6 +321,7 @@ export default function App(): React.JSX.Element {
       visible: show,
       theme,
       mood,
+      form: agentPetForm,
       ...(agentPetX >= 0 ? { x: agentPetX } : {}),
       ...(agentPetY >= 0 ? { y: agentPetY } : {})
     })
@@ -274,6 +331,7 @@ export default function App(): React.JSX.Element {
     guestCoveringPage,
     theme,
     agent?.status,
+    agentPetForm,
     agentPetX,
     agentPetY
   ])
@@ -426,6 +484,7 @@ export default function App(): React.JSX.Element {
           state={agent}
           onClose={() => setAgentOpen(false)}
           onOpenSettings={() => openSettings('agent')}
+          onToast={pushToast}
         />
       </div>
 
@@ -443,6 +502,7 @@ export default function App(): React.JSX.Element {
         onZoomIn={() => void window.browgent.zoomIn?.(activeTab?.id)}
         onZoomOut={() => void window.browgent.zoomOut?.(activeTab?.id)}
         onZoomReset={() => void window.browgent.zoomReset?.(activeTab?.id)}
+        onToast={pushToast}
       />
 
       {showReactPet && (
@@ -453,6 +513,15 @@ export default function App(): React.JSX.Element {
           onToggle={() => setAgentOpen((v) => !v)}
         />
       )}
+
+      <FirstRunModal
+        open={prefsHydrated && !onboardingDismissed}
+        onDismiss={() => setOnboardingDismissed(true)}
+        onOpenAgent={() => setAgentOpen(true)}
+        onPickRecipe={runRecipe}
+      />
+
+      <Toast toast={toast} onDismiss={dismissToast} />
     </div>
   )
 }

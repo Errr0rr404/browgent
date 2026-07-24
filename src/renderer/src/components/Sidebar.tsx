@@ -22,11 +22,56 @@ import {
   X
 } from 'lucide-react'
 import type { TabState } from '@shared/types'
-import type { BookmarkFolder, BookmarkId, BookmarkItem } from '@shared/bookmarks'
+import {
+  MAX_FAVORITES,
+  type BookmarkFolder,
+  type BookmarkId,
+  type BookmarkItem
+} from '@shared/bookmarks'
 import { isBlankUrl, tabDisplayTitle } from '../lib/urls'
 import { useBookmarks } from '../stores/bookmarks'
 import { useRovingTablist } from '../hooks/useRovingTablist'
 import { Favicon } from './Favicon'
+
+/** HTML5 DnD payload for pinning to the favorites board */
+const FAV_DND_MIME = 'application/x-browgent-favorite'
+
+type FavDragPayload =
+  | { kind: 'bookmark'; id: BookmarkId }
+  | { kind: 'tab'; title: string; url: string; favicon?: string }
+
+function writeFavDrag(e: React.DragEvent, payload: FavDragPayload): void {
+  const json = JSON.stringify(payload)
+  e.dataTransfer.setData(FAV_DND_MIME, json)
+  // Fallback so some environments still expose a type we can detect on dragover
+  e.dataTransfer.setData('text/plain', json)
+  e.dataTransfer.effectAllowed = 'copy'
+}
+
+function readFavDrag(e: React.DragEvent): FavDragPayload | null {
+  const raw =
+    e.dataTransfer.getData(FAV_DND_MIME) || e.dataTransfer.getData('text/plain')
+  if (!raw) return null
+  try {
+    const data = JSON.parse(raw) as FavDragPayload
+    if (data?.kind === 'bookmark' && typeof data.id === 'string') return data
+    if (
+      data?.kind === 'tab' &&
+      typeof data.url === 'string' &&
+      data.url.trim()
+    ) {
+      return data
+    }
+  } catch {
+    /* ignore */
+  }
+  return null
+}
+
+function isFavDrag(e: React.DragEvent): boolean {
+  // Custom MIME is listed in `types` during dragover in Chromium/Electron
+  return Array.from(e.dataTransfer.types).includes(FAV_DND_MIME)
+}
 
 function tabLabel(tab: TabState): string {
   return tabDisplayTitle(tab.title, tab.url)
@@ -84,16 +129,19 @@ export function Sidebar({
     removeBookmark,
     toggleFavorite,
     isFavorite,
-    renameSpace
+    renameSpace,
+    pinCurrentAsFavorite
   } = useBookmarks()
 
   const [menu, setMenu] = useState<MenuState | null>(null)
   const [editingSpace, setEditingSpace] = useState(false)
   const [spaceName, setSpaceName] = useState('')
+  const [favDropActive, setFavDropActive] = useState(false)
   const cancelledRef = useRef(false)
   const menuRef = useRef<HTMLDivElement>(null)
   const spaceInputRef = useRef<HTMLInputElement>(null)
   const spaceNameBtnRef = useRef<HTMLButtonElement>(null)
+  const favDragDepth = useRef(0)
 
   const sidebarTablistRef = useRef<HTMLDivElement>(null)
   const menuListId = useId()
@@ -109,10 +157,19 @@ export function Sidebar({
       (space?.favoriteIds ?? [])
         .map((id) => items[id])
         .filter((x): x is BookmarkItem => Boolean(x))
-        .slice(0, 8),
+        .slice(0, MAX_FAVORITES),
     [space, items]
   )
-  const favoriteSlots = Math.max(0, 8 - favorites.length)
+  const canAddFavorite = favorites.length < MAX_FAVORITES
+  /** Empty dashed cells after favorites (+ optional + tile) */
+  const favoriteEmptySlots = Math.max(
+    0,
+    MAX_FAVORITES - favorites.length - (canAddFavorite ? 1 : 0)
+  )
+  const activeLiveTab = useMemo(
+    () => tabs.find((t) => t.isActive && !isBlankUrl(t.url)) ?? null,
+    [tabs]
+  )
 
   const spaceFolders = useMemo(
     () =>
@@ -237,6 +294,79 @@ export function Sidebar({
       if (!id) return
       setMenu({ kind, id, anchor, openerId })
     }
+  }
+
+  const pinFromPayload = useCallback(
+    (payload: FavDragPayload): boolean => {
+      if (!canAddFavorite) return false
+      if (payload.kind === 'bookmark') {
+        if (isFavorite(payload.id)) return true
+        toggleFavorite(payload.id)
+        return true
+      }
+      const url = payload.url.trim()
+      if (!url || isBlankUrl(url)) return false
+      pinCurrentAsFavorite(
+        payload.title || tabDisplayTitle(payload.title, url),
+        url,
+        payload.favicon
+      )
+      return true
+    },
+    [canAddFavorite, isFavorite, toggleFavorite, pinCurrentAsFavorite]
+  )
+
+  const onFavoritesDragEnter = (e: React.DragEvent): void => {
+    if (!isFavDrag(e) || !canAddFavorite) return
+    e.preventDefault()
+    e.stopPropagation()
+    favDragDepth.current += 1
+    setFavDropActive(true)
+  }
+
+  const onFavoritesDragOver = (e: React.DragEvent): void => {
+    if (!isFavDrag(e) || !canAddFavorite) return
+    e.preventDefault()
+    e.stopPropagation()
+    e.dataTransfer.dropEffect = 'copy'
+  }
+
+  const onFavoritesDragLeave = (e: React.DragEvent): void => {
+    if (!isFavDrag(e)) return
+    e.preventDefault()
+    e.stopPropagation()
+    favDragDepth.current = Math.max(0, favDragDepth.current - 1)
+    if (favDragDepth.current === 0) setFavDropActive(false)
+  }
+
+  const onFavoritesDrop = (e: React.DragEvent): void => {
+    e.preventDefault()
+    e.stopPropagation()
+    favDragDepth.current = 0
+    setFavDropActive(false)
+    if (!canAddFavorite) return
+    const payload = readFavDrag(e)
+    if (payload) pinFromPayload(payload)
+  }
+
+  /** + tile: pin the active tab when possible, otherwise ask for a URL */
+  const onAddFavoriteClick = (): void => {
+    if (!canAddFavorite) return
+    if (activeLiveTab) {
+      pinCurrentAsFavorite(
+        tabLabel(activeLiveTab),
+        activeLiveTab.url,
+        activeLiveTab.favicon
+      )
+      return
+    }
+    const raw = window.prompt('Add favorite — enter a URL')
+    if (!raw?.trim()) return
+    let url = raw.trim()
+    if (!/^https?:\/\//i.test(url) && !url.startsWith('//')) {
+      url = `https://${url}`
+    }
+    pinCurrentAsFavorite(tabDisplayTitle(null, url), url)
   }
 
   const startRenameSpace = (): void => {
@@ -438,8 +568,16 @@ export function Sidebar({
         </button>
       </div>
 
-      {/* Favorites grid — 4×2 pin board */}
-      <div className="arc-favorites" role="list" aria-label="Favorites">
+      {/* Favorites grid — 4×2 pin board (drop tabs/bookmarks here) */}
+      <div
+        className={`arc-favorites${favDropActive ? ' is-drop-target' : ''}`}
+        role="list"
+        aria-label="Favorites"
+        onDragEnter={onFavoritesDragEnter}
+        onDragOver={onFavoritesDragOver}
+        onDragLeave={onFavoritesDragLeave}
+        onDrop={onFavoritesDrop}
+      >
         {favorites.map((fav) => (
           <button
             key={fav.id}
@@ -475,19 +613,33 @@ export function Sidebar({
             </span>
           </button>
         ))}
-        {favorites.length === 0 && (
-          <p className="arc-favorites-empty">
-            Pin sites here — star a page or right-click a tab.
-          </p>
+        {canAddFavorite && (
+          <button
+            type="button"
+            className="arc-favorite-tile arc-favorite-add"
+            title={
+              activeLiveTab
+                ? `Pin “${tabLabel(activeLiveTab)}” to Favorites`
+                : 'Add favorite (or drag a tab/bookmark here)'
+            }
+            aria-label={
+              activeLiveTab
+                ? `Pin ${tabLabel(activeLiveTab)} to Favorites`
+                : 'Add favorite'
+            }
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+              onAddFavoriteClick()
+            }}
+          >
+            <Plus size={18} strokeWidth={1.75} aria-hidden />
+          </button>
         )}
-        {favorites.length > 0 &&
-          Array.from({ length: favoriteSlots }, (_, i) => (
-            <div
-              key={`slot-${i}`}
-              className="arc-favorite-slot"
-              aria-hidden
-            />
-          ))}
+        {Array.from({ length: favoriteEmptySlots }, (_, i) => (
+          <div key={`slot-${i}`} className="arc-favorite-slot" aria-hidden />
+        ))}
       </div>
 
       <div className="arc-space-header">
@@ -560,11 +712,20 @@ export function Sidebar({
                     type="button"
                     id={`sidebar-bookmark-${item.id}`}
                     className="arc-row arc-bookmark-row"
+                    draggable
                     aria-haspopup="menu"
+                    onDragStart={(e) => {
+                      writeFavDrag(e, { kind: 'bookmark', id: item.id })
+                      e.dataTransfer.setDragImage(
+                        e.currentTarget,
+                        12,
+                        12
+                      )
+                    }}
                     onClick={() => onOpenUrl(item.url)}
                     onContextMenu={(e) => openCtxFromMouse(e, 'item', item.id)}
                     onKeyDown={(e) => openCtxFromKey(e, 'item', item.id)}
-                    title={item.url}
+                    title={`${item.url} — drag to Favorites`}
                   >
                     <span className="arc-row-indent" />
                     <Favicon src={item.favicon} title={item.title} size={14} small />
@@ -582,11 +743,16 @@ export function Sidebar({
             type="button"
             id={`sidebar-bookmark-${item.id}`}
             className="arc-row arc-bookmark-row"
+            draggable
             aria-haspopup="menu"
+            onDragStart={(e) => {
+              writeFavDrag(e, { kind: 'bookmark', id: item.id })
+              e.dataTransfer.setDragImage(e.currentTarget, 12, 12)
+            }}
             onClick={() => onOpenUrl(item.url)}
             onContextMenu={(e) => openCtxFromMouse(e, 'item', item.id)}
             onKeyDown={(e) => openCtxFromKey(e, 'item', item.id)}
-            title={item.url}
+            title={`${item.url} — drag to Favorites`}
           >
             <Favicon src={item.favicon} title={item.title} size={14} small />
             <span className="arc-row-title">{item.title}</span>
@@ -610,6 +776,7 @@ export function Sidebar({
         >
           {tabs.map((tab, i) => {
             const tp = tabRoving.tabPropsFor(tab, i)
+            const blank = isBlankUrl(tab.url)
             return (
               <div
                 key={tab.id}
@@ -617,19 +784,37 @@ export function Sidebar({
                 aria-selected={tab.isActive}
                 className={`arc-row arc-tab-row${tab.isActive ? ' active' : ''}`}
                 tabIndex={tp.tabIndex}
+                draggable={!blank}
                 onFocus={tp.onFocus}
                 onKeyDown={tp.onKeyDown}
                 onClick={tp.onClick}
+                onDragStart={(e) => {
+                  if (blank) {
+                    e.preventDefault()
+                    return
+                  }
+                  writeFavDrag(e, {
+                    kind: 'tab',
+                    title: tabLabel(tab),
+                    url: tab.url,
+                    favicon: tab.favicon
+                  })
+                  e.dataTransfer.setDragImage(e.currentTarget, 12, 12)
+                }}
                 onAuxClick={(e) => {
                   if (e.button === 1) {
                     e.preventDefault()
                     onCloseTab(tab.id)
                   }
                 }}
-                title={isBlankUrl(tab.url) ? 'New Tab' : tab.url}
+                title={
+                  blank
+                    ? 'New Tab'
+                    : `${tab.url} — drag to Favorites`
+                }
               >
                 <Favicon
-                  src={isBlankUrl(tab.url) ? undefined : tab.favicon}
+                  src={blank ? undefined : tab.favicon}
                   title={tabLabel(tab)}
                   size={14}
                   small
@@ -641,6 +826,7 @@ export function Sidebar({
                   type="button"
                   className="arc-tab-close"
                   aria-label={`Close ${tabLabel(tab)}`}
+                  draggable={false}
                   onClick={(e) => {
                     e.stopPropagation()
                     onCloseTab(tab.id)

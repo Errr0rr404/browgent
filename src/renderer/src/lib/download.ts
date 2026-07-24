@@ -20,3 +20,8 @@ export async function exportTrajectoryFile(): Promise<void> {
   const json = await window.browgent.exportTrajectory()
   downloadTextFile(json, `browgent-trajectory-${Date.now()}.json`)
 }
+
+export async function exportTractionPacketFile(): Promise<void> {
+  const json = await window.browgent.exportTractionPacket()
+  downloadTextFile(json, `browgent-traction-${Date.now()}.json`)
+}

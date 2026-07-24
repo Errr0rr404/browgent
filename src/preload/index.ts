@@ -61,8 +61,18 @@ const api = {
   rejectAction: (id: string): Promise<void> => ipcRenderer.invoke(IPC.AGENT_REJECT, id),
   answerHuman: (text: string): Promise<void> => ipcRenderer.invoke(IPC.AGENT_ANSWER, text),
   exportTrajectory: (): Promise<string> => ipcRenderer.invoke(IPC.AGENT_EXPORT),
-  getMcpStatus: (): Promise<{ enabled: boolean; tools: string[]; note: string }> =>
+  getMcpStatus: (): Promise<import('../shared/mcp').McpStatus> =>
     ipcRenderer.invoke(IPC.MCP_STATUS),
+  getMetrics: (): Promise<import('../shared/metrics').LocalMetrics> =>
+    ipcRenderer.invoke(IPC.METRICS_GET),
+  setTelemetryOptIn: (on: boolean): Promise<import('../shared/metrics').LocalMetrics> =>
+    ipcRenderer.invoke(IPC.METRICS_SET_TELEMETRY, on),
+  exportTractionPacket: (): Promise<string> =>
+    ipcRenderer.invoke(IPC.METRICS_EXPORT_TRACTION),
+  recordDemoRun: (): Promise<import('../shared/metrics').LocalMetrics> =>
+    ipcRenderer.invoke(IPC.METRICS_RECORD_DEMO),
+  recordRecipeRun: (): Promise<import('../shared/metrics').LocalMetrics> =>
+    ipcRenderer.invoke(IPC.METRICS_RECORD_RECIPE),
   getDriverStatus: (): Promise<CdpEndpointStatus> => ipcRenderer.invoke(IPC.DRIVER_STATUS),
   setDriverMode: (mode: DriverMode): Promise<DriverMode> =>
     ipcRenderer.invoke(IPC.DRIVER_SET_MODE, mode),
@@ -77,6 +87,7 @@ const api = {
     visible?: boolean
     theme?: string
     mood?: 'idle' | 'busy' | 'attention'
+    form?: string
     x?: number
     y?: number
   }): Promise<void> => ipcRenderer.invoke(IPC.PET_CONFIGURE, config),

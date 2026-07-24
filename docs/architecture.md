@@ -5,24 +5,26 @@ Browgent is an **Electron** desktop app: the main process owns real Chromium tab
 ## Process model
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│  Main process                                           │
-│  ├─ BrowserWindow (chrome shell)                        │
-│  ├─ TabManager → WebContentsView per tab                │
-│  │    partition: persist:browgent-pages                 │
-│  │    dual driver: DOM inject | CDP debugger            │
-│  ├─ CDP endpoint → remote-debugging-port (Playwright)   │
-│  ├─ AgentSession → planner / LLM (Grok default) / tools │
-│  └─ IPC (tabs, agent, driver, window, chrome metrics)   │
-├─────────────────────────────────────────────────────────┤
-│  Preload (contextBridge → window.browgent)              │
-├─────────────────────────────────────────────────────────┤
-│  Renderer (React) — chrome only                         │
-│  TitleBar · Tabs · Toolbar · Sidebar · Agent · Status   │
-└─────────────────────────────────────────────────────────┘
-          │ chrome layout (top/right/bottom/left)
-          ▼
-   WebContentsView bounds sit in the “content hole”
+┌─────────────────────────────────────────────────────────────┐
+│  Main process                                               │
+│  ├─ BrowserWindow (chrome shell)                            │
+│  ├─ TabManager → WebContentsView per tab                    │
+│  │    partition: persist:browgent-pages                     │
+│  │    dual driver: DOM inject | CDP debugger                │
+│  ├─ CDP endpoint → remote-debugging-port (Playwright)       │
+│  ├─ AgentSession → planner / LLM / tools / trajectory       │
+│  ├─ McpBridge → localhost HTTP :17342 (token required)      │
+│  ├─ Metrics store → privacy-safe counters (userData)        │
+│  └─ IPC (tabs, agent, driver, metrics, window)              │
+├─────────────────────────────────────────────────────────────┤
+│  Preload (contextBridge → window.browgent)                  │
+├─────────────────────────────────────────────────────────────┤
+│  Renderer (React) — chrome only                             │
+│  Tabs · Toolbar · Sidebar · Agent · Status · First-run      │
+└─────────────────────────────────────────────────────────────┘
+          │
+          ├─ STDIO: scripts/browgent-mcp.mjs → bridge
+          └─ Playwright: connectOverCDP → same guest tabs
 ```
 
 **Important Electron detail:** native `WebContentsView` paints **above** HTML in the content region. Dropdowns that overlap the page get clipped. UI that must stay fully visible (e.g. theme picker) is rendered **in-flow inside chrome** so the page view is pushed down.
@@ -49,20 +51,20 @@ src/
       llm.ts              OpenAI-compatible LLM (Grok default)
       env.ts              .env loader
     mcp/
-      server.ts           Tool catalog / MCP status (STDIO MCP is roadmap)
+      bridge.ts           Localhost HTTP MCP bridge (token auth)
+      tool-schema.ts      TOOL_DEFS → JSON Schema
+      server.ts           getMcpStatus re-export
+    metrics/
+      store.ts            Local counters + traction packet
   preload/
-    index.ts              Safe API surface for renderer
-  renderer/
-    src/                  React chrome UI, themes, bookmarks
+    index.ts · guest.ts · pet.ts
+  renderer/src/           React chrome only
   shared/
-    tools.ts              Canonical tool definitions
-    policies.ts           Allow/block hosts, confirm rules, mode tool sets
-    sites.ts              Aliases + browse-intent parsing
-    types.ts              Tab/agent IPC types
-    driver.ts             DriverMode + CdpEndpointStatus
-    bookmarks.ts          Arc-style bookmark model
-examples/
-  playwright-connect.mjs  connectOverCDP sample (repo root, not under src/)
+    tools · policies · policy-presets · recipes · demo
+    mcp · metrics · sites · types · driver · bookmarks
+scripts/                  browgent-mcp, smoke, demo-hero, yc-packet
+examples/                 playwright-connect, sample trajectory
+recipes/README.md         Index (canonical prompts in shared/recipes.ts)
 ```
 
 ## Dual driver
@@ -105,7 +107,8 @@ Exposed as `window.browgent` (see `src/preload/index.ts`):
 - Chrome layout (top/right/bottom/left) for view bounds
 - Agent: send, getState, stop, clear, pause, resume, takeover, mode, policy, confirm, reject, answerHuman, export
 - Driver: status (CDP URL when enabled, mode), setMode (`dom` | `cdp`)
-- MCP: getMcpStatus (tool catalog stub; full STDIO server roadmap)
+- MCP: getMcpStatus; metrics get/export/demo/recipe  
+- STDIO adapter: `scripts/browgent-mcp.mjs`
 - Window controls (non-macOS)
 
 ## Related
