@@ -46,4 +46,4 @@ Claude Code / Cursor can drive the same tabs; use assert tools from the shared t
 
 ## Privacy while testing
 
-Ads/trackers/cookie banners: **Settings → Privacy**. Allowlist your app’s hosts if a CDN is misclassified.
+Ads/trackers/cookie banners: **Settings → Privacy & data**. Allowlist your app’s hosts if a CDN is misclassified.
