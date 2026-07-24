@@ -50,6 +50,8 @@ export function useVoiceInput(opts: {
   const wantListen = useRef(false)
   const startingRef = useRef(false)
   const committedRef = useRef('')
+  // Set by onerror; read by onend so a surfaced 'error' status is not reset to 'idle'.
+  const erroredRef = useRef(false)
   const onFinalRef = useRef(opts.onFinal)
   const onInterimRef = useRef(opts.onInterim)
   onFinalRef.current = opts.onFinal
@@ -64,6 +66,7 @@ export function useVoiceInput(opts: {
   const stop = useCallback(() => {
     wantListen.current = false
     startingRef.current = false
+    erroredRef.current = false
     try {
       recRef.current?.abort()
     } catch {
@@ -87,6 +90,7 @@ export function useVoiceInput(opts: {
     startingRef.current = true
     wantListen.current = true
     committedRef.current = ''
+    erroredRef.current = false
     setError(null)
     setInterim('')
     setEngine('webspeech')
@@ -131,6 +135,7 @@ export function useVoiceInput(opts: {
             : `Speech error: ${ev.error}`
       setError(msg)
       setStatus('error')
+      erroredRef.current = true
       wantListen.current = false
       startingRef.current = false
     }
@@ -146,13 +151,13 @@ export function useVoiceInput(opts: {
           return
         } catch {
           wantListen.current = false
-          setStatus('idle')
-          setInterim('')
         }
-      } else {
-        setStatus('idle')
-        setInterim('')
       }
+      // Web Speech fires onend right after onerror — don't clobber the 'error' status
+      // back to 'idle', or the error is never observable to the UI.
+      if (erroredRef.current) return
+      setStatus('idle')
+      setInterim('')
     }
 
     rec.continuous = true

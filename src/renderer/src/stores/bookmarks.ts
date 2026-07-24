@@ -161,24 +161,19 @@ export const useBookmarks = create<BookmarksStore>()(
             }
           }
 
-          // Unpin — if the item lives nowhere else, delete it entirely
+          // Un-favorite = DEMOTE, never delete. "Remove from Favorites" only unpins;
+          // the item stays in state.items. If it has no other home (folder / loose
+          // list) drop it into the active space's loose list so it survives — this
+          // is why the seeded favorite-only defaults are no longer erased on unpin.
+          // Actual deletion is reserved for removeBookmark (the "Delete" action).
           const inFolder = Object.values(state.folders).some((f) => f.itemIds.includes(id))
           const inLoose = space.itemIds.includes(id)
-          if (!inFolder && !inLoose) {
-            const { [id]: _removed, ...items } = state.items
-            return {
-              items,
-              spaces: patchActiveSpace(state, (s) => ({
-                ...s,
-                favoriteIds: s.favoriteIds.filter((x) => x !== id)
-              }))
-            }
-          }
-
+          const needsHome = !inFolder && !inLoose
           return {
             spaces: patchActiveSpace(state, (s) => ({
               ...s,
-              favoriteIds: s.favoriteIds.filter((x) => x !== id)
+              favoriteIds: s.favoriteIds.filter((x) => x !== id),
+              itemIds: needsHome ? [...s.itemIds, id] : s.itemIds
             }))
           }
         })

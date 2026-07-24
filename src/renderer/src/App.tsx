@@ -53,7 +53,10 @@ export default function App(): React.JSX.Element {
   const setOnboardingDismissed = useChromePrefs((s) => s.setOnboardingDismissed)
   const telemetryOptIn = useChromePrefs((s) => s.telemetryOptIn)
   const [prefsHydrated, setPrefsHydrated] = useState(() => useChromePrefs.persist.hasHydrated())
-  const [toast, setToast] = useState<ToastMessage | null>(null)
+  // Toast queue: show one at a time and advance on dismiss so rapid messages are not
+  // silently dropped. A monotonic counter supplies ids (Date.now() could collide).
+  const [toastQueue, setToastQueue] = useState<ToastMessage[]>([])
+  const toastIdRef = useRef(0)
   const platform = platformCssToken(window.browgent?.platform)
   const contentRef = useRef<HTMLDivElement>(null)
   const creatingRef = useRef(false)
@@ -95,20 +98,23 @@ export default function App(): React.JSX.Element {
   }, [])
 
   useEffect(() => {
-    if (!window.browgent?.onPetClick) return
-    const unsubClick = window.browgent.onPetClick(() => {
+    if (!window.browgent) return
+    // All three pet listeners are optional on the preload surface — subscribe and
+    // unsubscribe consistently so a missing method never throws mid-effect (before,
+    // only onPetClick was guarded while onPetHide/onPetMoved were called directly).
+    const unsubClick = window.browgent.onPetClick?.(() => {
       setAgentOpen((v) => !v)
     })
-    const unsubHide = window.browgent.onPetHide(() => {
+    const unsubHide = window.browgent.onPetHide?.(() => {
       setAgentPetVisible(false)
     })
-    const unsubMoved = window.browgent.onPetMoved(({ x, y }) => {
+    const unsubMoved = window.browgent.onPetMoved?.(({ x, y }) => {
       setAgentPetPosition(x, y)
     })
     return () => {
-      unsubClick()
-      unsubHide()
-      unsubMoved()
+      unsubClick?.()
+      unsubHide?.()
+      unsubMoved?.()
     }
   }, [setAgentPetVisible, setAgentPetPosition])
 
@@ -213,10 +219,16 @@ export default function App(): React.JSX.Element {
   }, [])
 
   const pushToast = useCallback((kind: ToastMessage['kind'], text: string) => {
-    setToast({ id: `${Date.now()}`, kind, text })
+    const id = `toast-${(toastIdRef.current += 1)}`
+    setToastQueue((q) => [...q, { id, kind, text }])
   }, [])
 
-  const dismissToast = useCallback(() => setToast(null), [])
+  // Drop the head; the next queued message (if any) surfaces on the next render.
+  const dismissToast = useCallback(() => {
+    setToastQueue((q) => q.slice(1))
+  }, [])
+
+  const currentToast = toastQueue[0] ?? null
 
   const askAgent = useCallback(
     (text: string): Promise<void> => {
@@ -448,6 +460,10 @@ export default function App(): React.JSX.Element {
           tabId={activeTab?.id}
           onClose={() => setFindOpen(false)}
         />
+        {/* Toast mounts inside .chrome-top (the chrome band) so it paints above the
+            native WebContentsView, which otherwise covers the content hole on live
+            pages and would hide a toast rendered at the app-shell root. */}
+        <Toast toast={currentToast} onDismiss={dismissToast} />
       </div>
 
       <div className="body">
@@ -548,8 +564,6 @@ export default function App(): React.JSX.Element {
         onOpenAgent={() => setAgentOpen(true)}
         onPickRecipe={runRecipe}
       />
-
-      <Toast toast={toast} onDismiss={dismissToast} />
     </div>
   )
 }

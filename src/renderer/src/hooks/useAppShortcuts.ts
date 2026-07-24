@@ -56,6 +56,9 @@ export function useAppShortcuts({
   onSummarizePage
 }: Options): void {
   useEffect(() => {
+    // ⌘ on macOS vs Ctrl elsewhere. On macOS, Ctrl+W / Ctrl+R are readline / text-edit
+    // bindings, so destructive chrome shortcuts require ⌘ specifically (see below).
+    const isMac = window.browgent?.platform === 'darwin'
     const onKey = (e: KeyboardEvent): void => {
       const mod = e.metaKey || e.ctrlKey
       const target = e.target as HTMLElement | null
@@ -111,6 +114,12 @@ export function useAppShortcuts({
 
       if (!mod) return
 
+      // Guard EVERY modifier shortcut below while the user is typing in the agent
+      // composer or the sidebar rename input — otherwise ⌘W closes the tab and ⌘R
+      // reloads it mid-sentence. Escape (handled above) and the zoom / back-forward
+      // branches keep their own explicit `!typing` rules.
+      if (typing) return
+
       // With Shift, Chromium reports e.key as "J"/"S" — always compare lowercased.
       const key = e.key.length === 1 ? e.key.toLowerCase() : e.key
 
@@ -118,7 +127,8 @@ export function useAppShortcuts({
         e.preventDefault()
         void createTabOnce()
       }
-      if (key === 'w') {
+      // Destructive: require ⌘ on macOS so Ctrl+W (delete-word) never closes a tab.
+      if (key === 'w' && (!isMac || e.metaKey)) {
         e.preventDefault()
         if (historyOpen) {
           setHistoryOpen?.(false)
@@ -164,7 +174,8 @@ export function useAppShortcuts({
         if (existing) toggleFavorite(existing)
         else pinCurrentAsFavorite(active.title, active.url, active.favicon)
       }
-      if (key === 'r' && !e.shiftKey) {
+      // Destructive: require ⌘ on macOS so Ctrl+R (reverse-search) never reloads.
+      if (key === 'r' && !e.shiftKey && (!isMac || e.metaKey)) {
         e.preventDefault()
         if (settingsOpen || historyOpen) return
         const active = tabs.find((t) => t.isActive)

@@ -66,6 +66,9 @@ export function AgentPanel({
   const [tab, setTab] = useState<AgentTab>('chat')
   const [sendError, setSendError] = useState<string | null>(null)
   const [sending, setSending] = useState(false)
+  // Synchronous double-submit guard: `sending` state updates asynchronously, so two
+  // fast send()/retry() calls could both clear the `sending` check before a re-render.
+  const sendingRef = useRef(false)
   const [recipesExpanded, setRecipesExpanded] = useState(false)
   const [exporting, setExporting] = useState(false)
   const listRef = useRef<HTMLDivElement>(null)
@@ -144,9 +147,10 @@ export function AgentPanel({
   const send = (text?: string): void => {
     const submitted = text ?? draftRef.current
     if (!submitted.trim()) return
-    if (sending) return
+    if (sendingRef.current || sending) return
     if (busy && !(state?.status === 'waiting_human' && state.waitingQuestion)) return
     if (voice.status === 'listening') voice.stop()
+    sendingRef.current = true
     setSending(true)
     setSendError(null)
     // Optimistic clear — AGENT_SEND awaits the full agent run
@@ -165,6 +169,7 @@ export function AgentPanel({
         )
       })
       .finally(() => {
+        sendingRef.current = false
         setSending(false)
       })
   }
@@ -173,9 +178,10 @@ export function AgentPanel({
     if (sendError) setSendError(null)
     const value = draftRef.current
     if (!value.trim()) return
-    if (sending) return
+    if (sendingRef.current || sending) return
     if (busy && !(state?.status === 'waiting_human' && state.waitingQuestion)) return
     if (voice.status === 'listening') voice.stop()
+    sendingRef.current = true
     setSending(true)
     draftRef.current = ''
     setDraft('')
@@ -192,6 +198,7 @@ export function AgentPanel({
         )
       })
       .finally(() => {
+        sendingRef.current = false
         setSending(false)
       })
   }
