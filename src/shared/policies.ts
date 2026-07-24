@@ -119,7 +119,9 @@ export function isHttpOrHttpsOrAboutBlank(url: string): boolean {
  *  `about:blank` is the only `about:` value allowed. */
 export function looksLikeForbiddenScheme(input: string): boolean {
   if (typeof input !== 'string') return false
-  const s = input.trim().toLowerCase()
+  // Strip ASCII tab/CR/LF first: WHATWG URL parsing removes these anywhere, so
+  // `java\tscript:alert(1)` parses as javascript: and must be caught here too. [scheme-evasion fix]
+  const s = input.replace(/[\t\r\n]/g, '').trim().toLowerCase()
   if (!s) return false
   if (s === 'about:blank') return false
   return /^(?:file|data|javascript|vbscript|jar|chrome|devtools|view-source|blob|ftp|ws|wss|about):/i.test(s)
@@ -149,42 +151,94 @@ export function isPrivateOrMetadataHost(host: string): boolean {
   if (h === 'metadata' || h === 'instance-data') return true
 
   // IPv4
-  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h)
-  if (m) {
-    const a = Number(m[1])
-    const b = Number(m[2])
-    if ([a, b, Number(m[3]), Number(m[4])].some((n) => n > 255)) return true
-    if (a === 127 || a === 0 || a === 10) return true
-    if (a === 169 && b === 254) return true // link-local + AWS metadata 169.254.169.254
-    if (a === 172 && b >= 16 && b <= 31) return true
-    if (a === 192 && b === 168) return true
-    if (a === 100 && b >= 64 && b <= 127) return true // CGNAT
-    return false
-  }
+  if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(h)) return isBlockedIPv4(h)
 
-  // IPv6 unique-local / link-local (simplified)
-  if (h.startsWith('fc') || h.startsWith('fd') || h.startsWith('fe80')) return true
+  // IPv4-mapped IPv6 (e.g. ::ffff:169.254.169.254 / the ::ffff:0:… variant, plus Node's
+  // hex-normalized ::ffff:a9fe:a9fe serialization) — unwrap to the embedded IPv4 and apply
+  // the same range checks so mapped loopback/metadata can't slip past the gate. [SSRF fix]
+  const mappedV4 = unwrapMappedIPv4(h)
+  if (mappedV4) return isBlockedIPv4(mappedV4)
+
+  // IPv6 unique-local / link-local (simplified) — only for real IPv6 literals (must contain
+  // a colon), so plain DNS names like fdic.gov / fcc.gov / fda.gov are not blocked. [false-positive fix]
+  if (h.includes(':') && (h.startsWith('fc') || h.startsWith('fd') || h.startsWith('fe80'))) {
+    return true
+  }
 
   return false
 }
 
+/** IPv4 dotted-quad → true when it lands in a blocked range (loopback 127/8, link-local +
+ *  metadata 169.254/16, RFC1918 10/8, 172.16/12, 192.168/16, CGNAT 100.64/10, 0.0.0.0).
+ *  Shared by the plain-IPv4 path and the IPv4-mapped-IPv6 unwrap path. */
+function isBlockedIPv4(dotted: string): boolean {
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(dotted)
+  if (!m) return false
+  const a = Number(m[1])
+  const b = Number(m[2])
+  if ([a, b, Number(m[3]), Number(m[4])].some((n) => n > 255)) return true
+  if (a === 127 || a === 0 || a === 10) return true
+  if (a === 169 && b === 254) return true // link-local + AWS metadata 169.254.169.254
+  if (a === 172 && b >= 16 && b <= 31) return true
+  if (a === 192 && b === 168) return true
+  if (a === 100 && b >= 64 && b <= 127) return true // CGNAT
+  return false
+}
+
+/** Extract the embedded IPv4 from an IPv4-mapped IPv6 host, else null. Handles the textual
+ *  form (::ffff:1.2.3.4), the ::ffff:0:… variant, and Node's hex-compressed serialization
+ *  (::ffff:a9fe:a9fe). `h` is expected already bracket-stripped + lowercased. */
+function unwrapMappedIPv4(h: string): string | null {
+  const m = /^::ffff:(?:0:)?(.+)$/i.exec(h)
+  if (!m) return null
+  const tail = m[1]
+  if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(tail)) return tail
+  const hex = /^([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i.exec(tail)
+  if (hex) {
+    const hi = parseInt(hex[1], 16)
+    const lo = parseInt(hex[2], 16)
+    return `${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`
+  }
+  return null
+}
+
+/** Canonicalize a host for allow/block comparison: trim, lowercase, strip trailing dot(s).
+ *  `new URL().hostname` preserves a trailing dot (`google.com.`) which would otherwise slip
+ *  past exact/suffix matching against a `google.com` list entry (and a mixed-case entry like
+ *  `Google.com` would likewise miss). Apply to BOTH the host and every list entry. [block-bypass fix] */
+export function canonicalHost(h: string): string {
+  return String(h ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/\.+$/, '')
+}
+
 export function isHostAllowed(host: string, policy: AgentPolicy): boolean {
-  if (!host) return false
-  if (policy.blockHosts.some((b) => host === b || host.endsWith(`.${b}`))) return false
+  const h = canonicalHost(host)
+  if (!h) return false
+  // Canonicalize the host AND every block entry so trailing-dot / mixed-case can't bypass.
+  if (
+    policy.blockHosts.some((b) => {
+      const entry = canonicalHost(b)
+      return entry !== '' && (h === entry || h.endsWith(`.${entry}`))
+    })
+  ) {
+    return false
+  }
   if (policy.allowHosts.length === 0) {
     // Default: block private/metadata unless explicitly allowed later via allowHosts
     if (
       process.env.BROWGENT_ALLOW_PRIVATE_HOSTS !== '1' &&
-      isPrivateOrMetadataHost(host)
+      isPrivateOrMetadataHost(h)
     ) {
       return false
     }
     return true
   }
   return policy.allowHosts.some((a) => {
-    const entry = a.toLowerCase().trim()
+    const entry = canonicalHost(a)
     if (!entry || entry.length < 2) return false
-    return host === entry || host.endsWith(`.${entry}`)
+    return h === entry || h.endsWith(`.${entry}`)
   })
 }
 

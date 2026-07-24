@@ -18,6 +18,7 @@ import type { DriverMode } from '../../shared/driver'
 import { getRuntimeFlags, setDriverMode as setRuntimeDriverMode } from './runtime-flags'
 import { detachDebugger, runPageAction, type DomActionKind } from './page-driver'
 import {
+  canonicalHost,
   isHttpOrHttpsOrAboutBlank,
   isPrivateOrMetadataHost,
   looksLikeForbiddenScheme
@@ -890,14 +891,22 @@ export class TabManager {
   }
 
   private hostAllowedByPolicy(host: string, policy: AgentGuardPolicy): boolean {
-    const h = host.toLowerCase()
+    // Canonicalize the host AND every list entry (lowercase, strip trailing dot) so a trailing-dot
+    // host (google.com.) or mixed-case block entry (Google.com) can't bypass the block-list.
+    // Mirrors isHostAllowed in shared/policies. [block-bypass fix]
+    const h = canonicalHost(host)
     if (!h) return false
-    if (policy.blockHosts.some((b) => b && (h === b || h.endsWith(`.${b.toLowerCase()}`)))) {
+    if (
+      policy.blockHosts.some((b) => {
+        const entry = canonicalHost(b)
+        return entry !== '' && (h === entry || h.endsWith(`.${entry}`))
+      })
+    ) {
       return false
     }
     if (policy.allowHosts.length === 0) return true
     return policy.allowHosts.some((a) => {
-      const entry = String(a).toLowerCase().trim()
+      const entry = canonicalHost(a)
       if (!entry || entry.length < 2) return false
       return h === entry || h.endsWith(`.${entry}`)
     })

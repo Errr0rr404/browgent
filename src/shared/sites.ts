@@ -4,6 +4,8 @@
  * instead of a Google search for "fb and sign up".
  */
 
+import { looksLikeForbiddenScheme } from './policies'
+
 /** Common short names / brand tokens → host */
 export const SITE_ALIASES: Record<string, string> = {
   // Social
@@ -580,14 +582,17 @@ export function resolveNavigableTarget(input: string): string {
   const trimmed = input.trim()
   if (!trimmed) return 'about:blank'
 
-  if (
-    trimmed.startsWith('http://') ||
-    trimmed.startsWith('https://') ||
-    trimmed.startsWith('file://') ||
-    trimmed.startsWith('about:') ||
-    trimmed.startsWith('data:')
-  ) {
+  // Safe by construction: only http(s) and the exact about:blank literal may pass through
+  // verbatim. file:/data:/javascript:/blob:/non-blank about: (and any other forbidden scheme,
+  // incl. "open file:///…" which re-enters here) are routed to web search, never opened. [scheme-safety fix]
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
     return trimmed
+  }
+  if (trimmed === 'about:blank') {
+    return 'about:blank'
+  }
+  if (looksLikeForbiddenScheme(trimmed)) {
+    return buildAgentSearchUrl(trimmed)
   }
 
   // Intent path: "go to fb and sign up", "search electron", bare "yt"
