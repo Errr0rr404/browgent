@@ -57,8 +57,10 @@ export const DEFAULT_CHROME_PREFS: ChromePrefs = {
   ntClock: true,
   ntFavs: true,
   ntChips: true,
-  // DuckDuckGo default — Google reCAPTCHA is common on fresh Electron profiles
-  searchEngine: 'DuckDuckGo',
+  // Google for omnibox / new tab (matches Chrome expectations).
+  // Agent web-search still uses DuckDuckGo by default (see buildAgentSearchUrl)
+  // to avoid reCAPTCHA walls during automated multi-step runs.
+  searchEngine: 'Google',
   agentPetVisible: true,
   agentPetX: -1,
   agentPetY: -1,
@@ -149,7 +151,7 @@ export const useChromePrefs = create<ChromePrefsStore>()(
     }),
     {
       name: 'browgent.chromePrefs',
-      version: 7,
+      version: 8,
       partialize: (state) => ({
         greetingName: state.greetingName,
         ntClock: state.ntClock,
@@ -209,19 +211,26 @@ export const useChromePrefs = create<ChromePrefsStore>()(
             ),
             onboardingDismissed: pickBool(p.onboardingDismissed, false),
             telemetryOptIn: pickBool(p.telemetryOptIn, false),
-            // v7: prefer DDG so New Tab search avoids Google reCAPTCHA
-            searchEngine: 'DuckDuckGo'
+            searchEngine: 'Google'
           }
         }
         if (version < 7) {
-          // One-time switch off Google default — Google reCAPTCHA on Electron is too common.
-          // Users can re-select Google in Settings if they prefer.
+          // Historical: briefly forced DDG for captcha; superseded by v8 → Google.
+          const engine = p.searchEngine
+          return {
+            ...p,
+            searchEngine: isSearchEngine(engine ?? '') ? engine! : 'Google'
+          } as ChromePrefs
+        }
+        if (version < 8) {
+          // Restore Google as the user-facing default (omnibox / new tab).
+          // Users who deliberately picked Brave/Kagi keep their choice.
           const engine = p.searchEngine
           return {
             ...p,
             searchEngine:
-              engine === 'Google' || !isSearchEngine(engine ?? '')
-                ? 'DuckDuckGo'
+              engine === 'DuckDuckGo' || !isSearchEngine(engine ?? '')
+                ? 'Google'
                 : engine
           } as ChromePrefs
         }

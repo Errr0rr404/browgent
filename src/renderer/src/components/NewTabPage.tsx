@@ -21,7 +21,7 @@ export interface NewTabFavorite {
 
 interface Props {
   onNavigate: (url: string) => void
-  onAskAgent: (text: string) => void
+  onAskAgent: (text: string) => void | Promise<void>
   favorites: NewTabFavorite[]
 }
 
@@ -132,8 +132,11 @@ export function NewTabPage({
   const submitAgent = useCallback(() => {
     const raw = currentQuery()
     if (!raw) return
-    onAskAgent(raw)
+    // Clear optimistically; restore if main rejects (agent busy / confirm pending).
     setQuery('')
+    void Promise.resolve(onAskAgent(raw)).catch(() => {
+      setQuery(raw)
+    })
   }, [currentQuery, onAskAgent])
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>): void => {
@@ -197,7 +200,7 @@ export function NewTabPage({
         )}
 
         <form className="newtab-search newtab-enter newtab-enter-3" onSubmit={onSubmit}>
-          <Search size={15} strokeWidth={1.75} className="newtab-search-icon" aria-hidden />
+          <Search size={16} strokeWidth={1.75} className="newtab-search-icon" aria-hidden />
           <input
             ref={inputRef}
             type="text"

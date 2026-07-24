@@ -149,15 +149,14 @@ export function AgentPanel({
     if (voice.status === 'listening') voice.stop()
     setSending(true)
     setSendError(null)
+    // Optimistic clear — AGENT_SEND awaits the full agent run
+    draftRef.current = ''
+    setDraft('')
+    userTypingRef.current = false
     submitDraft(submitted)
-      .then(() => {
-        if (draftRef.current === submitted) {
-          draftRef.current = ''
-          setDraft('')
-        }
-        userTypingRef.current = false
-      })
       .catch((err: unknown) => {
+        draftRef.current = submitted
+        setDraft(submitted)
         const msg = err instanceof Error ? err.message : 'Send failed'
         setSendError(
           state?.status === 'waiting_human' && state.waitingQuestion
@@ -178,15 +177,13 @@ export function AgentPanel({
     if (busy && !(state?.status === 'waiting_human' && state.waitingQuestion)) return
     if (voice.status === 'listening') voice.stop()
     setSending(true)
+    draftRef.current = ''
+    setDraft('')
+    userTypingRef.current = false
     submitDraft(value)
-      .then(() => {
-        if (draftRef.current === value) {
-          draftRef.current = ''
-          setDraft('')
-        }
-        userTypingRef.current = false
-      })
       .catch((err: unknown) => {
+        draftRef.current = value
+        setDraft(value)
         const m = err instanceof Error ? err.message : 'Send failed'
         setSendError(
           state?.status === 'waiting_human' && state.waitingQuestion
@@ -258,11 +255,17 @@ export function AgentPanel({
       onToast?.('info', 'Stop the current task before running the demo')
       return
     }
-    void window.browgent.setAgentMode(HERO_DEMO_MODE)
-    void window.browgent.recordDemoRun?.().catch(() => undefined)
-    void window.browgent.recordRecipeRun?.().catch(() => undefined)
-    send(HERO_DEMO_PROMPT)
-    onToast?.('success', 'Hero demo started — watch the agent on example.com')
+    void (async () => {
+      try {
+        await window.browgent.setAgentMode(HERO_DEMO_MODE)
+        void window.browgent.recordDemoRun?.().catch(() => undefined)
+        void window.browgent.recordRecipeRun?.().catch(() => undefined)
+        send(HERO_DEMO_PROMPT)
+        onToast?.('success', 'Hero demo started — watch the agent on example.com')
+      } catch {
+        onToast?.('error', 'Could not start demo')
+      }
+    })()
   }
 
   const showModeBar = prefs.agentShowModeBar
@@ -591,9 +594,15 @@ export function AgentPanel({
                   className="suggestion-chip"
                   title={r.blurb}
                   onClick={() => {
-                    void window.browgent.setAgentMode(r.mode as AgentMode)
-                    void window.browgent.recordRecipeRun?.().catch(() => undefined)
-                    send(r.prompt)
+                    void (async () => {
+                      try {
+                        await window.browgent.setAgentMode(r.mode as AgentMode)
+                        void window.browgent.recordRecipeRun?.().catch(() => undefined)
+                        send(r.prompt)
+                      } catch {
+                        onToast?.('error', 'Could not start recipe')
+                      }
+                    })()
                   }}
                 >
                   <span className={`recipe-mode-tag mode-${r.mode}`}>{r.mode}</span>

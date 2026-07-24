@@ -12,7 +12,6 @@ import type { SettingsSection } from './lib/settings'
 import { LibraryManager } from './components/LibraryManager'
 import { FindBar } from './components/FindBar'
 import { HistoryPage } from './components/HistoryPage'
-import { DownloadsPanel } from './components/DownloadsPanel'
 import type { DownloadItemState } from '@shared/types'
 import { useChromeMetrics } from './hooks/useChromeMetrics'
 import { useAppShortcuts } from './hooks/useAppShortcuts'
@@ -213,42 +212,54 @@ export default function App(): React.JSX.Element {
     setDownloadsOpen((v) => !v)
   }, [])
 
+  const pushToast = useCallback((kind: ToastMessage['kind'], text: string) => {
+    setToast({ id: `${Date.now()}`, kind, text })
+  }, [])
+
+  const dismissToast = useCallback(() => setToast(null), [])
+
   const askAgent = useCallback(
-    (text: string) => {
+    (text: string): Promise<void> => {
       const t = text.trim()
-      if (!t) return
+      if (!t) return Promise.resolve()
       setAgentOpen(true)
       setSettingsOpen(false)
       if (!window.browgent?.sendAgentMessage) {
         console.error('[browgent] sendAgentMessage unavailable — preload failed to load')
-        return
+        return Promise.reject(new Error('sendAgentMessage unavailable'))
       }
-      void window.browgent
+      return window.browgent
         .sendAgentMessage(t, tabs.find((x) => x.isActive)?.id)
         .catch((err) => {
           console.error('[browgent] sendAgentMessage failed', err)
+          const msg = err instanceof Error ? err.message : 'Agent send failed'
+          pushToast('error', msg)
+          throw err
         })
     },
-    [tabs]
+    [tabs, pushToast]
   )
 
   const runRecipe = useCallback(
     (prompt: string, mode: AgentMode) => {
       setAgentOpen(true)
       setSettingsOpen(false)
-      void window.browgent?.setAgentMode?.(mode)
-      void window.browgent
-        ?.sendAgentMessage?.(prompt, tabs.find((x) => x.isActive)?.id)
-        .catch((err) => console.error('[browgent] recipe send failed', err))
+      void (async () => {
+        try {
+          await window.browgent?.setAgentMode?.(mode)
+          await window.browgent?.sendAgentMessage?.(
+            prompt,
+            tabs.find((x) => x.isActive)?.id
+          )
+        } catch (err) {
+          console.error('[browgent] recipe send failed', err)
+          const msg = err instanceof Error ? err.message : 'Recipe send failed'
+          pushToast('error', msg)
+        }
+      })()
     },
-    [tabs]
+    [tabs, pushToast]
   )
-
-  const pushToast = useCallback((kind: ToastMessage['kind'], text: string) => {
-    setToast({ id: `${Date.now()}`, kind, text })
-  }, [])
-
-  const dismissToast = useCallback(() => setToast(null), [])
 
   // Avoid first-run modal flash before zustand rehydrates localStorage
   useEffect(() => {
@@ -259,13 +270,14 @@ export default function App(): React.JSX.Element {
     return useChromePrefs.persist.onFinishHydration(() => setPrefsHydrated(true))
   }, [])
 
-  // Sync renderer telemetry preference → main metrics store
+  // Sync renderer telemetry preference → main metrics store (wait for zustand rehydrate
+  // so cold start does not overwrite main with the pre-hydrate default false).
   useEffect(() => {
-    if (!window.browgent?.setTelemetryOptIn) return
+    if (!prefsHydrated || !window.browgent?.setTelemetryOptIn) return
     void window.browgent.setTelemetryOptIn(telemetryOptIn).catch(() => {
       /* ignore */
     })
-  }, [telemetryOptIn])
+  }, [prefsHydrated, telemetryOptIn])
 
   useAppShortcuts({
     tabs,
@@ -300,11 +312,14 @@ export default function App(): React.JSX.Element {
 
   const bookmarkedId = activeTab?.url ? isBookmarkedUrl(activeTab.url) : null
   const favorited = bookmarkedId ? isFavorite(bookmarkedId) : false
+  const firstRunOpen = prefsHydrated && !onboardingDismissed
   const chromeOverlay = settingsOpen || historyOpen
+  // First-run is a full-window HTML modal — guest view would cover it if a real page is showing
+  const guestMustHide = chromeOverlay || firstRunOpen
   const showNewTab = !chromeOverlay && isBlankUrl(activeTab?.url)
   // Guest WebContentsView covers the content hole on real pages — native overlay there.
   // On New Tab / Settings the guest is hidden — React float is reliable.
-  const guestCoveringPage = !chromeOverlay && !showNewTab
+  const guestCoveringPage = !guestMustHide && !showNewTab
   // Hide React pet on Settings/History (chrome overlays) so it does not steal clicks
   const showReactPet = agentPetVisible && !agentOpen && !guestCoveringPage && !chromeOverlay
   const downloadActiveCount = useMemo(
@@ -336,11 +351,11 @@ export default function App(): React.JSX.Element {
     agentPetY
   ])
 
-  // Settings / History sit over a live page — force-hide guest. New Tab uses about:blank.
+  // Settings / History / First-run sit over a live page — force-hide guest. New Tab uses about:blank.
   useEffect(() => {
     if (!window.browgent?.setGuestVisible) return
-    void window.browgent.setGuestVisible(!chromeOverlay)
-  }, [chromeOverlay])
+    void window.browgent.setGuestVisible(!guestMustHide)
+  }, [guestMustHide])
 
   useEffect(() => {
     if (chromeOverlay || showNewTab) setFindOpen(false)
@@ -413,13 +428,13 @@ export default function App(): React.JSX.Element {
           onOpenHistory={openHistory}
           onToggleDownloads={toggleDownloads}
           onOpenDownloads={openDownloads}
+          onDownloadsOpenChange={setDownloadsOpen}
         />
         <FindBar
           open={findOpen && !chromeOverlay && !showNewTab}
           tabId={activeTab?.id}
           onClose={() => setFindOpen(false)}
         />
-        <DownloadsPanel open={downloadsOpen} onClose={() => setDownloadsOpen(false)} />
       </div>
 
       <div className="body">

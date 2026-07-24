@@ -13,8 +13,12 @@ import {
   type AgentMode,
   type AgentPolicy
 } from '../../shared/policies'
+import { buildAgentSearchUrl } from '../../shared/sites'
 import { normalizeUrl } from '../../shared/types'
 import type { ObserveElement, ObserveSnapshot } from '../../shared/types'
+import { getProfileStore } from '../browser/profile-store'
+import { getPasswordVault } from '../browser/password-vault'
+import { profileToAgentMap } from '../../shared/profile'
 
 export interface ExecuteContext {
   policy: AgentPolicy
@@ -33,6 +37,7 @@ export interface ExecuteContext {
 
 const GUARDED_TAB_TOOLS = new Set<ToolName>([
   'navigate',
+  'search',
   'back',
   'forward',
   'click',
@@ -79,6 +84,79 @@ export class ToolExecutor {
 
         case 'ask_human':
           return ok(name, { question: args.question }, `Asked human: ${String(args.question ?? '')}`)
+
+        case 'get_profile': {
+          const profile = getProfileStore().get()
+          if (!profile.agentMayUse) {
+            return fail(
+              name,
+              'User disabled agent access to profile (Settings → User Hub → Allow agent)'
+            )
+          }
+          const map = profileToAgentMap(profile)
+          const keys = Object.keys(map)
+          return ok(
+            name,
+            { fields: map, agentMayUse: true },
+            keys.length
+              ? `Profile fields: ${keys.join(', ')}`
+              : 'Profile is empty — ask the user for missing contact details'
+          )
+        }
+
+        case 'get_credentials': {
+          if (!ctx.requestConfirm) {
+            return fail(name, 'Credential access requires human confirmation')
+          }
+          // Bind lookup to the active tab when possible to avoid confused-deputy URL injection.
+          const activeUrl = this.tabs.getState().find((t) => t.isActive)?.url || ''
+          const argUrl = str(args.url) || ''
+          let url = activeUrl
+          if (argUrl) {
+            const activeHost = hostFromUrl(activeUrl)
+            const argHost = hostFromUrl(argUrl)
+            // Allow agent-supplied URL only when same host (or subdomain) as the visible tab.
+            if (
+              !activeHost ||
+              !argHost ||
+              argHost === activeHost ||
+              argHost.endsWith(`.${activeHost}`) ||
+              activeHost.endsWith(`.${argHost}`)
+            ) {
+              url = argUrl
+            } else {
+              return fail(
+                name,
+                `Credential URL host (${argHost}) does not match active tab (${activeHost})`
+              )
+            }
+          }
+          if (!url || !/^https?:\/\//i.test(url)) {
+            return fail(name, 'No http(s) tab URL for credential lookup')
+          }
+          const vault = getPasswordVault()
+          const meta = vault.findMetaForUrl(url)
+          if (!meta) {
+            return fail(name, 'No saved credentials for this site')
+          }
+          const userLabel = meta.username ? ` user “${meta.username}”` : ''
+          const allowed = await ctx.requestConfirm(
+            `Allow reading vault password for ${meta.origin}${userLabel}?`,
+            name,
+            { ...args, url, origin: meta.origin, username: meta.username }
+          )
+          if (!allowed) return fail(name, 'Credential access rejected by human')
+          const hit = vault.getPassword(meta.id)
+          if (!hit) {
+            return fail(name, 'Could not decrypt saved password')
+          }
+          // Password returned only to the agent tool loop (local); trajectory redaction should scrub
+          return ok(
+            name,
+            { username: hit.username, password: hit.password, id: meta.id, origin: hit.origin },
+            `Found credentials for user ${hit.username || '(blank)'} on ${hit.origin}`
+          )
+        }
 
         case 'list_tabs':
           return ok(name, { tabs: this.tabs.getState() }, `Listed ${this.tabs.count()} tabs`)
@@ -138,12 +216,53 @@ export class ToolExecutor {
           return activated ? ok(name, { tabId: id }, 'Switched tab') : fail(name, 'Cannot switch tab')
         }
 
+        case 'search': {
+          if (ctx.signal?.aborted) return fail(name, 'Aborted')
+          const query = String(args.query ?? '').trim()
+          if (!query) return fail(name, 'query required')
+          const searchUrl = buildAgentSearchUrl(query)
+          const tabId = str(args.tabId)
+          const navResult = await this.execute(
+            { id: randomUUID(), name: 'navigate', args: { url: searchUrl, tabId } },
+            ctx
+          )
+          if (!navResult.ok) {
+            return fail(name, navResult.error ?? 'Search navigation failed')
+          }
+          if (ctx.signal?.aborted) return fail(name, 'Aborted')
+          // Settle SPA results pages briefly, then pull content (BrowserOS-style)
+          await abortSleep(350, ctx.signal)
+          if (ctx.signal?.aborted) return fail(name, 'Aborted')
+          const text = await this.tabs.extractText(tabId, 3500)
+          const linksRaw = await this.tabs.extractLinks(tabId, 12)
+          if (ctx.signal?.aborted) return fail(name, 'Aborted')
+          // extractLinks returns { url, links: [...] } — unwrap for the model/UI
+          const linkList = unwrapLinkList(linksRaw)
+          const baseData =
+            navResult.data && typeof navResult.data === 'object'
+              ? (navResult.data as Record<string, unknown>)
+              : {}
+          return ok(
+            name,
+            {
+              ...baseData,
+              query,
+              searchUrl,
+              text: text ?? null,
+              links: linkList
+            },
+            `Searched “${query.slice(0, 80)}”`
+          )
+        }
+
         case 'navigate': {
           if (ctx.signal?.aborted) return fail(name, 'Aborted')
-          const input = String(args.url ?? '')
-          if (!input) return fail(name, 'url required')
-          if (looksLikeForbiddenScheme(input)) return fail(name, 'URL blocked: forbidden scheme')
-          const url = normalizeUrl(input)
+          const rawInput = String(args.url ?? '').trim()
+          if (!rawInput) return fail(name, 'url required')
+          if (looksLikeForbiddenScheme(rawInput)) return fail(name, 'URL blocked: forbidden scheme')
+          // Free text / hosts → real URL or DuckDuckGo (BrowserOS-style smart navigate)
+          // normalizeUrl already runs resolveNavigableTarget
+          const url = normalizeUrl(rawInput)
           if (!isAgentNavigableUrl(url)) {
             return fail(name, 'URL blocked: only http/https/about:blank allowed')
           }
@@ -166,7 +285,7 @@ export class ToolExecutor {
             const allowed = await ctx.requestConfirm(reason, name, args)
             if (!allowed) return fail(name, 'Navigation rejected by human')
           }
-          const started = this.tabs.navigate(resolvedId, input)
+          const started = this.tabs.navigate(resolvedId, url)
           if (!started) {
             return fail(name, 'Navigation rejected: URL blocked by tab manager')
           }
@@ -196,7 +315,11 @@ export class ToolExecutor {
           ) {
             return fail(name, `Navigation ended on unexpected host: ${hostFromUrl(finalUrl)}`)
           }
-          return ok(name, { url, finalUrl }, `Navigated to ${finalUrl || url}`)
+          return this.withAutoSnapshot(
+            ok(name, { url, finalUrl }, `Navigated to ${finalUrl || url}`),
+            resolvedId,
+            ctx.signal
+          )
         }
 
         case 'back': {
@@ -208,7 +331,7 @@ export class ToolExecutor {
           if (!moved) return fail(name, 'Cannot go back')
           await abortSleep(400, ctx.signal)
           if (ctx.signal?.aborted) return fail(name, 'Aborted')
-          return ok(name, {}, 'Went back')
+          return this.withAutoSnapshot(ok(name, {}, 'Went back'), targetId, ctx.signal)
         }
 
         case 'forward': {
@@ -220,16 +343,17 @@ export class ToolExecutor {
           if (!moved) return fail(name, 'Cannot go forward')
           await abortSleep(400, ctx.signal)
           if (ctx.signal?.aborted) return fail(name, 'Aborted')
-          return ok(name, {}, 'Went forward')
+          return this.withAutoSnapshot(ok(name, {}, 'Went forward'), targetId, ctx.signal)
         }
 
         case 'reload': {
-          const reloaded = this.tabs.reload(str(args.tabId))
+          const reloadId = str(args.tabId)
+          const reloaded = this.tabs.reload(reloadId)
           if (!reloaded) return fail(name, 'Cannot reload')
-          const loaded = await this.tabs.waitForLoad(str(args.tabId), 15000, ctx.signal)
+          const loaded = await this.tabs.waitForLoad(reloadId, 15000, ctx.signal)
           if (!loaded && ctx.signal?.aborted) return fail(name, 'Aborted')
           if (!loaded) return fail(name, 'Reload timeout')
-          return ok(name, {}, 'Reloaded')
+          return this.withAutoSnapshot(ok(name, {}, 'Reloaded'), reloadId, ctx.signal)
         }
 
         case 'get_url': {
@@ -400,7 +524,11 @@ export class ToolExecutor {
               this.tabs.clearNavigationAttempt(cleanupTabId, cleanupAttemptId)
             }, 5000)
           }
-          return ok(name, r, `Clicked ${args.ref ?? args.selector ?? r.name ?? ''}`)
+          return this.withAutoSnapshot(
+            ok(name, r, `Clicked ${args.ref ?? args.selector ?? r.name ?? ''}`),
+            clickTabId ?? undefined,
+            ctx.signal
+          )
         }
 
         case 'type': {
@@ -412,23 +540,52 @@ export class ToolExecutor {
           const resolved = ctx.resolver ? ctx.resolver(rawText) : rawText
           const safeArgs: ToolArgs = { ...args, text: resolved }
 
-          // Sensitive field gate (password/otp) — same confirm path as sensitive clicks
-          if (ctx.requestConfirm && typeof args.ref === 'string' && args.ref && ctx.lastObservation) {
-            const el = ctx.lastObservation.elements.find((e) => e.ref === args.ref)
+          // Sensitive field gate (password/otp) — align with click path
+          if (ctx.requestConfirm) {
+            const usesSelector = typeof args.selector === 'string' && args.selector.length > 0
+            const ref = typeof args.ref === 'string' ? args.ref : ''
+            const el =
+              ref && ctx.lastObservation
+                ? ctx.lastObservation.elements.find((e) => e.ref === ref)
+                : undefined
+            const identityKnown = !!el
+
+            // Always confirm when we know the target is a password/OTP field
             if (el && looksLikePasswordField(el)) {
               const allowed = await ctx.requestConfirm(
-                `Type into sensitive field "${el.name || el.role || args.ref}" — allow?`,
+                `Type into sensitive field “${el.name || el.role || ref}” — allow?`,
                 name,
                 args
               )
               if (!allowed) return fail(name, 'Type into sensitive field rejected by human')
+            } else if (policy.confirmSensitiveClicks) {
+              // Opaque targets can reach password fields without snapshot identity
+              if (usesSelector) {
+                const allowed = await ctx.requestConfirm(
+                  'Type via CSS selector — element identity is opaque. Allow?',
+                  name,
+                  args
+                )
+                if (!allowed) return fail(name, 'Type rejected by human')
+              } else if (!identityKnown) {
+                const allowed = await ctx.requestConfirm(
+                  'Type into unknown / stale ref (re-observe first?). Allow?',
+                  name,
+                  args
+                )
+                if (!allowed) return fail(name, 'Type rejected by human')
+              }
             }
           }
 
-          const r = await this.tabs.domAction('type', safeArgs, str(args.tabId), ctx.signal)
-          return r.ok
-            ? ok(name, r, `Typed into ${args.ref ?? args.selector ?? 'field'}`)
-            : fail(name, r.error ?? 'Type failed')
+          const typeTab = str(args.tabId)
+          const r = await this.tabs.domAction('type', safeArgs, typeTab, ctx.signal)
+          if (!r.ok) return fail(name, r.error ?? 'Type failed')
+          return this.withAutoSnapshot(
+            ok(name, r, `Typed into ${args.ref ?? args.selector ?? 'field'}`),
+            typeTab,
+            ctx.signal
+          )
         }
 
         case 'hover': {
@@ -438,20 +595,32 @@ export class ToolExecutor {
 
         case 'select_option': {
           if (args.value == null && args.label == null) return fail(name, 'value or label required')
-          const r = await this.tabs.domAction('select', args, str(args.tabId), ctx.signal)
-          return r.ok ? ok(name, r, 'Selected option') : fail(name, r.error ?? 'Select failed')
+          const selectTab = str(args.tabId)
+          const r = await this.tabs.domAction('select', args, selectTab, ctx.signal)
+          if (!r.ok) return fail(name, r.error ?? 'Select failed')
+          return this.withAutoSnapshot(ok(name, r, 'Selected option'), selectTab, ctx.signal)
         }
 
         case 'press_key': {
-          const r = await this.tabs.domAction('press', args, str(args.tabId), ctx.signal)
-          return r.ok
-            ? ok(name, r, `Pressed ${args.key}`)
-            : fail(name, r.error ?? 'Key failed')
+          const keyTab = str(args.tabId)
+          const r = await this.tabs.domAction('press', args, keyTab, ctx.signal)
+          if (!r.ok) return fail(name, r.error ?? 'Key failed')
+          // Enter often navigates — short settle then snapshot
+          if (String(args.key ?? '').toLowerCase() === 'enter') {
+            await abortSleep(400, ctx.signal)
+          }
+          return this.withAutoSnapshot(ok(name, r, `Pressed ${args.key}`), keyTab, ctx.signal)
         }
 
         case 'scroll': {
-          const r = await this.tabs.domAction('scroll', args, str(args.tabId), ctx.signal)
-          return r.ok ? ok(name, r, `Scrolled ${args.direction ?? 'down'}`) : fail(name, r.error ?? 'Scroll failed')
+          const scrollTab = str(args.tabId)
+          const r = await this.tabs.domAction('scroll', args, scrollTab, ctx.signal)
+          if (!r.ok) return fail(name, r.error ?? 'Scroll failed')
+          return this.withAutoSnapshot(
+            ok(name, r, `Scrolled ${args.direction ?? 'down'}`),
+            scrollTab,
+            ctx.signal
+          )
         }
 
         case 'wait': {
@@ -477,6 +646,53 @@ export class ToolExecutor {
       }
     } catch (e) {
       return fail(name, e instanceof Error ? e.message : 'Tool error')
+    }
+  }
+
+  /**
+   * BrowserOS / browser-use pattern: after each mutation, return a fresh
+   * accessibility snapshot so the model does not spend a round on observe.
+   */
+  private async withAutoSnapshot(
+    result: ToolResult,
+    tabId: string | undefined,
+    signal?: AbortSignal
+  ): Promise<ToolResult> {
+    if (!result.ok || signal?.aborted) return result
+    try {
+      await abortSleep(120, signal)
+      if (signal?.aborted) return result
+      const snap = await this.tabs.observe(tabId)
+      if (!snap) return result
+      const compact = snap.elements
+        .slice(0, 36)
+        .map(
+          (e) =>
+            `[${e.ref}] ${e.role}: ${e.name || e.tag}${e.href ? ` → ${e.href}` : ''}`
+        )
+        .join('\n')
+      const base =
+        result.data && typeof result.data === 'object' && !Array.isArray(result.data)
+          ? (result.data as Record<string, unknown>)
+          : { value: result.data }
+      return {
+        ...result,
+        data: {
+          ...base,
+          snapshot: {
+            url: snap.url,
+            title: snap.title,
+            textPreview: (snap.textPreview ?? '').slice(0, 700),
+            compact,
+            elementCount: snap.elements.length,
+            elements: snap.elements,
+            tabId: tabId ?? this.tabs.getActiveTabId() ?? undefined
+          }
+        },
+        summary: `${result.summary} · ${snap.elements.length} els`
+      }
+    } catch {
+      return result
     }
   }
 
@@ -521,6 +737,27 @@ function ok(tool: ToolName, data: unknown, summary: string): ToolResult {
 
 function fail(tool: ToolName, error: string): ToolResult {
   return { ok: false, tool, error, summary: error }
+}
+
+/** Normalize extractLinks payload → flat array of { text, href }. */
+function unwrapLinkList(raw: unknown): Array<{ text?: string; href?: string }> {
+  if (!raw) return []
+  if (Array.isArray(raw)) {
+    return raw.filter((x) => x && typeof x === 'object') as Array<{
+      text?: string
+      href?: string
+    }>
+  }
+  if (typeof raw === 'object') {
+    const links = (raw as { links?: unknown }).links
+    if (Array.isArray(links)) {
+      return links.filter((x) => x && typeof x === 'object') as Array<{
+        text?: string
+        href?: string
+      }>
+    }
+  }
+  return []
 }
 
 function str(v: unknown): string | undefined {

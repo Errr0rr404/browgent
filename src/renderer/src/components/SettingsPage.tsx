@@ -8,11 +8,13 @@ import {
 import {
   Brain,
   Check,
+  Download,
   Eye,
   Keyboard,
   Palette,
   Search,
   Shield,
+  UserRound,
   X,
   Zap
 } from 'lucide-react'
@@ -34,6 +36,8 @@ import { providerLabel } from '../lib/providers'
 import { exportTractionPacketFile } from '../lib/download'
 import type { SettingsSection } from '../lib/settings'
 import { ToggleRow } from './ui/ToggleRow'
+import { ImportSettings } from './ImportSettings'
+import { ProfileHub } from './ProfileHub'
 import '../styles/chrome-pages.css'
 
 export type { SettingsSection }
@@ -58,6 +62,8 @@ const NAV: NavItem[] = [
   { id: 'appearance', label: 'Appearance', icon: <Palette size={15} strokeWidth={1.6} /> },
   { id: 'agent', label: 'Agent & policy', icon: <Zap size={15} strokeWidth={1.6} /> },
   { id: 'brain', label: 'Brain', icon: <Brain size={15} strokeWidth={1.6} /> },
+  { id: 'import', label: 'Import', icon: <Download size={15} strokeWidth={1.6} /> },
+  { id: 'profile', label: 'User Hub', icon: <UserRound size={15} strokeWidth={1.6} /> },
   { id: 'privacy', label: 'Privacy & data', icon: <Shield size={15} strokeWidth={1.6} /> },
   { id: 'search', label: 'Search & new tab', icon: <Search size={15} strokeWidth={1.6} /> },
   { id: 'shortcuts', label: 'Shortcuts', icon: <Keyboard size={15} strokeWidth={1.6} /> }
@@ -545,6 +551,10 @@ export function SettingsPage({
               </section>
             )}
 
+            {section === 'import' && <ImportSettings />}
+
+            {section === 'profile' && <ProfileHub />}
+
             {section === 'privacy' && (
               <section className="settings-section settings-section-stack">
                 <div>
@@ -654,7 +664,9 @@ export function SettingsPage({
                 <div>
                   <h2>Search &amp; new tab</h2>
                   <p className="settings-lead">
-                    What the omnibox does, and what greets you on a fresh tab.
+                    What the omnibox does, and what greets you on a fresh tab. Default is Google.
+                    The agent’s automated web search still uses DuckDuckGo so multi-step agent runs
+                    hit fewer reCAPTCHA walls.
                   </p>
                 </div>
                 <div className="settings-card settings-card-fields">
@@ -673,6 +685,10 @@ export function SettingsPage({
                       ))}
                     </select>
                   </label>
+                  <p className="settings-toggle-sub" style={{ marginTop: 4 }}>
+                    Google may still show captcha on a fresh profile or unusual network — that is
+                    Google’s risk scoring, not something a restart can fully turn off.
+                  </p>
                   <label className="settings-field">
                     Greeting name (optional)
                     <input

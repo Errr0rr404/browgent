@@ -473,8 +473,14 @@ export function resolveSiteToken(
 }
 
 /**
- * Build a web-search URL for agent / omnibox fallbacks.
- * DuckDuckGo by default — Google reCAPTCHA is common on fresh Electron profiles.
+ * Build a web-search URL for the **agent** `search` tool.
+ *
+ * DuckDuckGo by design — automated multi-step agent runs trip Google reCAPTCHA
+ * far more often than a human using the omnibox. User-facing search (new tab /
+ * address bar) defaults to Google via chromePrefs.searchEngine.
+ *
+ * There is no reliable way to guarantee Google never shows captcha after a
+ * “server restart” — risk scoring is IP + cookie + behavior based.
  */
 export function buildAgentSearchUrl(query: string): string {
   const q = query.trim()
@@ -510,7 +516,14 @@ export function extractBrowserSearchQuery(goal: string): string | null {
     /^(?:please\s+)?(?:can you\s+)?(?:could you\s+)?(?:search|find|look\s*up)\s+(?:for\s+)?(.+)/i
   )
   if (explicit?.[1]) {
-    return cleanSearchQuery(explicit[1])
+    const rest = explicit[1].trim()
+    // "find me on facebook" / "search github for issues" — prefer site when clear
+    const onSite = rest.match(/^(.+?)\s+on\s+([a-z0-9][\w.-]*)$/i)
+    if (onSite?.[2] && SITE_ALIASES[onSite[2].toLowerCase()]) {
+      // Not a pure web search — let parseBrowseIntent site path handle it
+      return null
+    }
+    return cleanSearchQuery(rest)
   }
 
   // "… find that on browser" / "… on the browser" / "using the browser"
@@ -518,9 +531,9 @@ export function extractBrowserSearchQuery(goal: string): string | null {
     return cleanSearchQuery(trimmed)
   }
 
-  // Price / product discovery questions
+  // Price / product discovery (avoid bare "buy" alone — too many false positives)
   if (
-    /\b(cheapest|best\s+price|lowest\s+price|most\s+affordable|how\s+much|price\s+of|shop\s+for|buy)\b/i.test(
+    /\b(cheapest|best\s+price|lowest\s+price|most\s+affordable|how\s+much\s+(?:is|are|does)|price\s+of|shop\s+for)\b/i.test(
       trimmed
     )
   ) {
@@ -549,8 +562,10 @@ function cleanSearchQuery(raw: string): string | null {
     )
     .replace(/\bwhat(?:'s|s)?\b/gi, ' ')
     .replace(/\bwhat\s+is\b/gi, ' ')
-    .replace(/\b(search|find|look\s*up)\s+(for\s+)?/gi, ' ')
+    .replace(/\b(search|find|look\s*up|shop)\s+(for\s+)?/gi, ' ')
+    .replace(/\b(price\s+of|how\s+much\s+(?:is|are|does))\b/gi, ' ')
     .replace(/^\s*me\s+/i, ' ')
+    .replace(/^\s*the\s+/i, ' ')
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 200)

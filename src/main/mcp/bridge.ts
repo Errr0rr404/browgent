@@ -25,8 +25,6 @@ import { recordMcpCall } from '../metrics/store'
 
 const MAX_BODY = 256 * 1024
 const HOST = '127.0.0.1'
-/** Serialize tool calls so concurrent MCP clients don't thrash the guest page. */
-const MAX_INFLIGHT_TOOLS = 1
 
 export interface McpBridgeDeps {
   getAgent: () => AgentSession | null
@@ -43,7 +41,8 @@ export class McpBridge {
   private deps: McpBridgeDeps | null = null
   private starting = false
   private toolChain: Promise<void> = Promise.resolve()
-  private inflightTools = 0
+  private queuedTools = 0
+  private static readonly MAX_QUEUED = 8
 
   attach(deps: McpBridgeDeps): void {
     this.deps = deps
@@ -217,12 +216,15 @@ export class McpBridge {
   }
 
   private enqueueTool<T>(fn: () => Promise<T>): Promise<T> {
+    if (this.queuedTools >= McpBridge.MAX_QUEUED) {
+      return Promise.reject(new Error('Too many queued tool calls — retry shortly'))
+    }
+    this.queuedTools += 1
     const run = this.toolChain.then(async () => {
-      this.inflightTools += 1
       try {
         return await fn()
       } finally {
-        this.inflightTools -= 1
+        this.queuedTools -= 1
       }
     })
     // Keep chain alive even if a tool rejects
@@ -300,18 +302,20 @@ export class McpBridge {
           return
         }
 
-        // Serialize tools (queue); reject pathological backlog
-        if (this.inflightTools >= MAX_INFLIGHT_TOOLS + 8) {
-          this.json(res, 429, {
+        let result
+        try {
+          result = await this.enqueueTool(() => agent.executeMcpTool(name, args))
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e)
+          const isBusy = /queued tool calls/i.test(msg)
+          this.json(res, isBusy ? 429 : 500, {
             ok: false,
             tool: name,
-            summary: 'MCP busy',
-            error: 'Too many queued tool calls — retry shortly'
+            summary: isBusy ? 'MCP busy' : 'Tool failed',
+            error: msg
           } satisfies McpToolCallResponse)
           return
         }
-
-        const result = await this.enqueueTool(() => agent.executeMcpTool(name, args))
         // Strip oversized data for HTTP clients (observe elements stay in-session only)
         let data = result.data
         if (data && typeof data === 'object' && !Array.isArray(data)) {

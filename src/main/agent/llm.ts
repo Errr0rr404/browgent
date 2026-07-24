@@ -372,39 +372,34 @@ export function buildSystemPrompt(
   vision = false
 ): string {
   const visionLine = vision
-    ? `\n\nVision: enabled. Call screenshot to SEE the current viewport when the accessibility tree is ambiguous — canvas/WebGL apps, icon-only or image buttons, visual layout, or verifying a click landed. Still use observe for element refs (e1, e2…); screenshots are for seeing, refs are for acting.`
+    ? `\nVision: on. Call screenshot only when the accessibility snapshot is ambiguous (canvas, icon-only buttons). Refs still come from snapshots.`
     : ''
-  return `You are Browgent — a general-purpose desktop browser agent. You share a real Chromium tab with a human and CONTROL it with tools. Whatever they ask (search, shop, sign up, fill a form, read a page, click through a flow), you do it by operating the browser — not by describing what they could do.
+  return `You are Browgent — a local agentic browser (like BrowserOS): you share a real Chromium tab with a human and complete goals by driving it with tools. Be fast, decisive, and accurate.
 
 Mode: ${mode}
-- act: full browser control (navigate, click, type, scroll, tabs, …) — USE TOOLS every step
-- research: read-mostly (navigate/observe/extract; no click/type)
-- watch: observation only; human drives
+- act: full control — call tools every turn until done
+- research: navigate/search/extract (no click/type)
+- watch: observe only; human drives
 
 Current page: ${pageTitle || 'unknown'} — ${pageUrl || 'none'}
 
-How you work (always):
-1. Understand the user's goal in natural language. There is no fixed script — plan steps dynamically from the live page.
-2. Control the browser with tools. Never answer with only prose, element lists, or "say click e4". Call navigate / observe / type / click / wait / done.
-3. Multi-step is normal: open the right site → observe → act → re-observe → continue until done or blocked.
-4. Site shortcuts → real hosts (never Google unless they asked to search):
-   fb/facebook → https://www.facebook.com/
-   ig/instagram → https://www.instagram.com/
-   yt/youtube → https://www.youtube.com/
-   gh/github → https://github.com/
-   x/twitter → https://x.com/
-   google → https://www.google.com/
-   gmail → https://mail.google.com/
-   Prefer https URLs to the real site over a search for the whole phrase.
-5. Only use a Google search URL when they explicitly want web search ("search for …", "google …").
-6. Always observe before click/type so you have element refs (e1, e2…). Never invent refs.
-7. After navigate or click, wait + observe again before the next act.
-8. Use any values they already gave (emails, passwords, names, quoted text, key:value). Type them with the type tool. ask_human only for missing secrets, CAPTCHA, SMS/email codes, or ambiguous choices — not for data already in the message.
-9. When the goal is complete or blocked on human-only steps, call done with what you actually did in the browser.
-10. Use think sparingly. Prefer tools over monologues.
-11. Be careful with purchases, deletes, and irreversible submits — ask_human if unsure.
+Speed rules (critical):
+1. Prefer few high-value tools. Mutating tools (navigate, search, click, type, press_key, scroll, …) already return a fresh element snapshot with refs e1… — do NOT call observe right after them unless the snapshot is empty/stale.
+2. Web research ("cheapest…", "find…", "what is…", "on the browser"): call search with a clean query first. It returns results text + links in one step.
+3. Then extract_text / extract_links only if you still need more body text, open the best result with click, and call done with a direct answer (prices, product names, links).
+4. Prefer real product sites when the user names one (apple.com, amazon.com). Otherwise search.
+5. Never invent refs. Only use refs from the latest snapshot in tool results or context.
+6. Skip long waits — navigate/search already wait for load. Use wait only for spinners (≤800ms) or wait_for a ref.
+7. Batch mentally: search → (optional click result) → answer with done. Do not monologue with think.
+8. Use credentials/values already in the user message. For forms, call get_profile (User Hub) instead of inventing email/phone/name. For site login, get_credentials when a vault entry may exist (user confirms). ask_human only for CAPTCHA, 2FA, missing secrets, or real choices.
+9. Site shortcuts: fb→facebook.com, ig→instagram.com, yt→youtube.com, gh→github.com, x→x.com, gmail→mail.google.com.
+10. Purchases / deletes / wire transfers: ask_human if irreversible.
 
-You and the human co-browse the same tabs. Takeover is always available.${visionLine}`
+Answer quality:
+- done.summary must answer the user (e.g. cheapest options with prices and sources), not "I searched for X".
+- If blocked (login wall, captcha), say so and ask_human or done with the blocker.
+
+You co-browse the same tabs; the human can Takeover anytime.${visionLine}`
 }
 
 /** Transient HTTP statuses worth retrying — rate limits + upstream/gateway blips. */
@@ -506,9 +501,9 @@ export async function completeWithTools(
       tools,
       tool_choice: 'auto'
     }
-    // Serialize tools so `done` / navigate order is reliable
-    if (!stripped.has('parallel_tool_calls')) payload.parallel_tool_calls = false
-    if (!stripped.has('temperature')) payload.temperature = 0.2
+    // Allow parallel read tools (extract_text + extract_links); session serializes mutators
+    if (!stripped.has('parallel_tool_calls')) payload.parallel_tool_calls = true
+    if (!stripped.has('temperature')) payload.temperature = 0.15
     if (cfg.maxTokens && !stripped.has('max_tokens')) payload[maxTokensKey] = cfg.maxTokens
     return JSON.stringify(payload)
   }
@@ -630,18 +625,10 @@ function detectParamFix(
 export function slimToolResultForLlm(data: unknown, max = 6000): string {
   try {
     let payload: unknown = data
-    // Observe: never ship full elements[] to the model (refs live in compact)
+    // Observe / auto-snapshot: never ship full elements[] (refs live in compact)
     if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
       const o = payload as Record<string, unknown>
-      if (Array.isArray(o.elements) && typeof o.compact === 'string') {
-        payload = {
-          url: o.url,
-          title: o.title,
-          textPreview: o.textPreview,
-          compact: o.compact,
-          elementCount: o.elements.length
-        }
-      }
+      payload = slimSnapshotFields(o)
     }
     const s = typeof payload === 'string' ? payload : JSON.stringify(payload, null, 0)
     if (s.length <= max) return s
@@ -649,4 +636,39 @@ export function slimToolResultForLlm(data: unknown, max = 6000): string {
   } catch {
     return String(data)
   }
+}
+
+function slimSnapshotFields(o: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...o }
+  // Always drop full elements[] — refs live in compact strings
+  if (Array.isArray(out.elements)) {
+    out.elementCount =
+      typeof out.elementCount === 'number' ? out.elementCount : out.elements.length
+    delete out.elements
+  }
+  if (out.snapshot && typeof out.snapshot === 'object' && !Array.isArray(out.snapshot)) {
+    const s = { ...(out.snapshot as Record<string, unknown>) }
+    if (Array.isArray(s.elements)) {
+      s.elementCount =
+        typeof s.elementCount === 'number' ? s.elementCount : s.elements.length
+      delete s.elements
+    }
+    if (typeof s.compact === 'string' && s.compact.length > 3500) {
+      s.compact = s.compact.slice(0, 3500) + '…'
+    }
+    out.snapshot = s
+  }
+  if (typeof out.compact === 'string' && out.compact.length > 3500) {
+    out.compact = out.compact.slice(0, 3500) + '…'
+  }
+  // Cap large text blobs from search/extract
+  if (out.text && typeof out.text === 'object') {
+    const t = out.text as Record<string, unknown>
+    if (typeof t.text === 'string' && t.text.length > 2800) {
+      out.text = { ...t, text: t.text.slice(0, 2800) + '…' }
+    }
+  } else if (typeof out.text === 'string' && out.text.length > 2800) {
+    out.text = out.text.slice(0, 2800) + '…'
+  }
+  return out
 }

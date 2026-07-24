@@ -29,18 +29,19 @@ Defined in `src/shared/tools.ts`, executed in `src/main/agent/executor.ts`:
 
 | Tool | Purpose |
 |------|---------|
-| `navigate` | URL, alias, or search query |
-| `back` / `forward` / `reload` | History |
-| `click` / `type` / `hover` / `select_option` / `press_key` | DOM actions via `eN` refs or CSS |
+| `navigate` | URL, host, or free text (auto search). Returns a **fresh element snapshot** after load |
+| `search` | DuckDuckGo web search + snapshot + result text/links in one step (price/find goals) |
+| `back` / `forward` / `reload` | History (with snapshot) |
+| `click` / `type` / `hover` / `select_option` / `press_key` | DOM actions via `eN` refs or CSS (mutators return snapshot) |
 | `scroll` / `wait` | Viewport timing |
-| `observe` | Interactive elements + text preview |
+| `observe` | Interactive elements + text preview (only when page changed without a tool) |
 | `extract_text` / `extract_links` | Page content |
 | `screenshot` | Viewport screenshot — returns size metadata only in the trajectory (image bytes are not stored) |
 | `get_url` / `list_tabs` / `new_tab` / `close_tab` / `switch_tab` | Tab control |
 | `ask_human` | Pause for credentials / CAPTCHA / choice |
 | `think` / `done` | Reasoning + completion |
 
-Always **observe** before inventing refs. Refs look like `e1`, `e2` from the last observe.
+**Speed model (BrowserOS-style):** mutators return accessibility snapshots with refs `e1`, `e2`… — skip a redundant `observe` after navigate/click/type. Prefer `search` for open-ended “find / cheapest / what is” goals.
 
 ## Site aliases & intent
 
@@ -48,7 +49,7 @@ Always **observe** before inventing refs. Refs look like `e1`, `e2` from the las
 
 - `go to fb and sign up` → `https://www.facebook.com/` + task “sign up”
 - `gh`, `yt`, `ig`, … → real hosts (not Google-by-default)
-- Explicit `search …` → Google search URL
+- Explicit `search …` / “cheapest … find on browser” → DuckDuckGo search (avoids Google captcha)
 
 ## Dual driver
 

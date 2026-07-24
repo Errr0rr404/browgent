@@ -4,7 +4,6 @@ import {
   ArrowRight,
   Bot,
   Clock,
-  Download,
   Lock,
   PanelLeft,
   RefreshCw,
@@ -19,6 +18,7 @@ import type { ThemeId } from '../themes/themes'
 import { isBlankUrl, omniboxDisplayUrl } from '../lib/urls'
 import { resolveOmniboxInput, useChromePrefs } from '../stores/chromePrefs'
 import { BrandMark } from './BrandMark'
+import { DownloadsPanel } from './DownloadsPanel'
 import { ThemePicker } from './ThemePicker'
 
 interface Props {
@@ -49,6 +49,7 @@ interface Props {
   onOpenHistory?: () => void
   onToggleDownloads?: () => void
   onOpenDownloads?: () => void
+  onDownloadsOpenChange?: (open: boolean) => void
 }
 
 export function Toolbar({
@@ -74,7 +75,8 @@ export function Toolbar({
   onToggleHistory,
   onOpenHistory,
   onToggleDownloads,
-  onOpenDownloads
+  onOpenDownloads,
+  onDownloadsOpenChange
 }: Props): React.JSX.Element {
   const searchEngine = useChromePrefs((s) => s.searchEngine)
   const setAgentPetVisible = useChromePrefs((s) => s.setAgentPetVisible)
@@ -216,7 +218,7 @@ export function Toolbar({
           {isLoading ? (
             <X size={16} strokeWidth={1.75} />
           ) : (
-            <RefreshCw size={15} strokeWidth={1.75} />
+            <RefreshCw size={16} strokeWidth={1.75} />
           )}
         </button>
       </div>
@@ -287,22 +289,20 @@ export function Toolbar({
             <Clock size={16} strokeWidth={1.75} />
           </button>
         )}
-        {onToggleDownloads && (
-          <button
-            type="button"
-            className={`icon-btn downloads-btn${downloadsOpen ? ' active' : ''}`}
-            aria-label="Downloads"
-            title="Downloads (⌘⇧J)"
-            aria-pressed={downloadsOpen}
-            onClick={onToggleDownloads}
-          >
-            <Download size={16} strokeWidth={1.75} />
-            {downloadActiveCount > 0 && (
-              <span className="downloads-badge" aria-hidden>
-                {downloadActiveCount > 9 ? '9+' : downloadActiveCount}
-              </span>
-            )}
-          </button>
+        {(onToggleDownloads || onDownloadsOpenChange) && (
+          <DownloadsPanel
+            open={downloadsOpen}
+            onOpenChange={(next) => {
+              if (onDownloadsOpenChange) {
+                onDownloadsOpenChange(next)
+                return
+              }
+              if (next) onOpenDownloads?.()
+              else if (downloadsOpen) onToggleDownloads?.()
+            }}
+            overlaySafe={themeOverlaySafe}
+            activeCount={downloadActiveCount}
+          />
         )}
         <ThemePicker
           theme={theme}
@@ -343,7 +343,7 @@ export function Toolbar({
               title="Toggle agent panel (⌘J) · right-click to show companion"
             >
               <span className="agent-dot" aria-hidden />
-              <Bot size={14} strokeWidth={1.75} />
+              <Bot size={16} strokeWidth={1.75} />
               Agent
             </button>
             {agentMenuOpen && (

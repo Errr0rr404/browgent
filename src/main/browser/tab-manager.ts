@@ -60,7 +60,8 @@ export interface VisitRecord {
 const HOME_URL = 'about:blank'
 const MAX_TABS = 24
 export const PAGE_PARTITION = 'persist:browgent-pages'
-const ATTEMPT_MAX_AGE_MS = 5000
+// Align with waitForLoad (~15s) + multi-hop OAuth redirects; 5s was too short.
+const ATTEMPT_MAX_AGE_MS = 20_000
 
 function resolveAndGate(rawInput: string): { ok: true; url: string } | { ok: false } {
   if (typeof rawInput !== 'string') return { ok: false }
@@ -860,7 +861,6 @@ export class TabManager {
     isMainFrame: boolean
   ): boolean {
     if (!isMainFrame) return true
-    if (tab.owner !== 'agent' || !tab.guardPolicy) return true
 
     let parsed: URL
     try {
@@ -870,12 +870,34 @@ export class TabManager {
       this.markNavBlocked(tab, targetUrl, 'Bad URL')
       return false
     }
-    const targetHost = parsed.hostname.toLowerCase()
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:' && targetUrl !== 'about:blank') {
+
+    // Universal dangerous-scheme gate for all guest tabs (human and agent).
+    // Allow chrome-error / about:blank so real error pages still render; block file/js/data.
+    const proto = parsed.protocol
+    const dangerous =
+      proto === 'file:' ||
+      proto === 'javascript:' ||
+      proto === 'vbscript:' ||
+      proto === 'data:' ||
+      proto === 'blob:' ||
+      proto === 'jar:'
+    if (dangerous) {
       event.preventDefault()
       this.markNavBlocked(tab, targetUrl, 'Blocked URL scheme')
       return false
     }
+
+    // Host / cross-host policy only applies while the agent owns the tab.
+    if (tab.owner !== 'agent' || !tab.guardPolicy) return true
+
+    // Agent tabs: only http(s) / about:blank top-level navigations
+    if (proto !== 'http:' && proto !== 'https:' && targetUrl !== 'about:blank') {
+      event.preventDefault()
+      this.markNavBlocked(tab, targetUrl, 'Blocked URL scheme')
+      return false
+    }
+
+    const targetHost = parsed.hostname.toLowerCase()
 
     if (!this.hostAllowedByPolicy(targetHost, tab.guardPolicy)) {
       event.preventDefault()
@@ -891,10 +913,15 @@ export class TabManager {
     const attempt = tab.activeAttempt
     if (attempt && this.isAttemptFresh(attempt)) {
       if (targetHost === attempt.approvedHost && attempt.approvedHost) {
+        // Refresh TTL on each approved hop so multi-redirect OAuth chains stay valid
+        attempt.ts = Date.now()
         attempt.baseHost = targetHost
         return true
       }
-      if (targetHost === attempt.baseHost && attempt.baseHost) return true
+      if (targetHost === attempt.baseHost && attempt.baseHost) {
+        attempt.ts = Date.now()
+        return true
+      }
     }
 
     event.preventDefault()

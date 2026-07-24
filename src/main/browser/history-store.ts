@@ -46,6 +46,21 @@ export class HistoryStore {
       if (!Array.isArray(data.entries)) return
       for (const e of data.entries) {
         if (!e?.url || !e.id) continue
+        if (this.entries.has(e.url)) {
+          // De-dupe corrupted history.json: keep the more recent visit
+          const prev = this.entries.get(e.url)!
+          const visitCount = Math.max(1, Number(e.visitCount) || 1)
+          const lastVisit = Number(e.lastVisit) || Date.now()
+          this.entries.set(e.url, {
+            id: prev.id,
+            url: e.url,
+            title: e.title || prev.title || e.url,
+            favicon: e.favicon ?? prev.favicon,
+            visitCount: Math.max(prev.visitCount, visitCount),
+            lastVisit: Math.max(prev.lastVisit, lastVisit)
+          })
+          continue
+        }
         this.entries.set(e.url, {
           id: e.id,
           url: e.url,
@@ -121,6 +136,44 @@ export class HistoryStore {
     this.scheduleSave()
   }
 
+  /** Bulk import from another browser (does not double-count when URL exists — merges max). */
+  importEntry(input: {
+    url: string
+    title?: string
+    visitCount?: number
+    lastVisit?: number
+    favicon?: string
+  }): void {
+    if (!isRecordableUrl(input.url)) return
+    const url = input.url
+    const visitCount = Math.max(1, Number(input.visitCount) || 1)
+    const lastVisit = Number(input.lastVisit) || Date.now()
+    const title = (input.title || '').trim() || url
+    const existing = this.entries.get(url)
+    if (existing) {
+      existing.visitCount = Math.max(existing.visitCount, visitCount)
+      existing.lastVisit = Math.max(existing.lastVisit, lastVisit)
+      if (title && title !== url) existing.title = title
+      if (input.favicon) existing.favicon = input.favicon
+      this.order = [url, ...this.order.filter((u) => u !== url)]
+    } else {
+      this.entries.set(url, {
+        id: randomUUID(),
+        url,
+        title,
+        favicon: input.favicon,
+        visitCount,
+        lastVisit
+      })
+      this.order = [url, ...this.order]
+    }
+    while (this.order.length > MAX_ENTRIES) {
+      const drop = this.order.pop()
+      if (drop) this.entries.delete(drop)
+    }
+    this.scheduleSave()
+  }
+
   /** Update title/favicon for a URL without counting a new visit. */
   touchMeta(url: string, title?: string, favicon?: string): void {
     const e = this.entries.get(url)
@@ -171,6 +224,14 @@ export class HistoryStore {
   clear(): void {
     this.entries.clear()
     this.order = []
+    this.scheduleSave()
+  }
+
+  /** Call after bulk import so newest visits appear first. */
+  reindexByRecency(): void {
+    this.order.sort(
+      (a, b) => (this.entries.get(b)?.lastVisit ?? 0) - (this.entries.get(a)?.lastVisit ?? 0)
+    )
     this.scheduleSave()
   }
 }

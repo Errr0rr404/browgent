@@ -17,6 +17,11 @@ import {
   recordTrajectoryExport,
   setTelemetryOptIn
 } from './metrics/store'
+import { listDetectedBrowsers, importFromBrowser } from './browser/browser-import'
+import { getPasswordVault } from './browser/password-vault'
+import { getProfileStore } from './browser/profile-store'
+import { isBrowserId, type ImportOptions } from '../shared/import-types'
+import type { UserProfile } from '../shared/profile'
 import { applyCdpCommandLine, getCdpStatus } from './browser/cdp-endpoint'
 import { applyGuestIdentityEarly, applyGuestPageSessionIdentity } from './browser/guest-identity'
 import { getRuntimeFlags } from './browser/runtime-flags'
@@ -609,6 +614,64 @@ function registerIpcOnce(): void {
     return getMetrics()
   })
 
+  // ── Browser import ──────────────────────────────────────────
+  ipcMain.handle(IPC.IMPORT_DETECT, (e) => {
+    assertChromeSender(e)
+    return listDetectedBrowsers()
+  })
+  ipcMain.handle(IPC.IMPORT_RUN, async (e, options: unknown) => {
+    assertChromeSender(e)
+    if (!options || typeof options !== 'object') throw new Error('Invalid import options')
+    const o = options as Record<string, unknown>
+    const browserIdRaw = ensureString(o['browserId'], 'import.browserId', 32)
+    if (!isBrowserId(browserIdRaw)) throw new Error(`Unknown browser: ${browserIdRaw}`)
+    const opts: ImportOptions = {
+      browserId: browserIdRaw,
+      history: o['history'] !== false,
+      bookmarks: o['bookmarks'] !== false,
+      passwords: o['passwords'] === true,
+      historyLimit:
+        typeof o['historyLimit'] === 'number' && Number.isFinite(o['historyLimit'])
+          ? Math.min(5000, Math.max(100, Math.round(o['historyLimit'] as number)))
+          : 2000
+    }
+    if (!historyStore) historyStore = new HistoryStore()
+    let pendingBookmarks: { title: string; url: string }[] = []
+    const result = await importFromBrowser(opts, {
+      history: historyStore,
+      onBookmarks: (items) => {
+        pendingBookmarks = items.slice(0, 2000)
+      }
+    })
+    return { ...result, bookmarks: pendingBookmarks }
+  })
+
+  // ── Vault (metadata only) ───────────────────────────────────
+  ipcMain.handle(IPC.VAULT_LIST, (e) => {
+    assertChromeSender(e)
+    return getPasswordVault().listMeta()
+  })
+  ipcMain.handle(IPC.VAULT_REMOVE, (e, id: unknown) => {
+    assertChromeSender(e)
+    return getPasswordVault().remove(ensureString(id, 'vault.id', 64))
+  })
+  ipcMain.handle(IPC.VAULT_CLEAR, (e) => {
+    assertChromeSender(e)
+    getPasswordVault().clear()
+    return true
+  })
+
+  // ── User Hub ────────────────────────────────────────────────
+  ipcMain.handle(IPC.PROFILE_GET, (e) => {
+    assertChromeSender(e)
+    return getProfileStore().get()
+  })
+  ipcMain.handle(IPC.PROFILE_SET, (e, partial: unknown) => {
+    assertChromeSender(e)
+    if (!partial || typeof partial !== 'object') throw new Error('Invalid profile')
+    return getProfileStore().set(partial as Partial<UserProfile>)
+  })
+
   ipcMain.handle(IPC.DRIVER_STATUS, async (e) => {
     assertChromeSender(e)
     const mode = tabs?.getDriverMode() ?? getRuntimeFlags().driverMode
@@ -745,6 +808,7 @@ app.whenReady().then(() => {
   if (!historyStore) historyStore = new HistoryStore()
   // Guest page tabs: deny mic/camera/notifications by default (agent browses untrusted sites)
   pageSession.setPermissionRequestHandler((_wc, _permission, callback) => callback(false))
+  pageSession.setPermissionCheckHandler(() => false)
   // Chrome UI (agent voice): allow media (mic) for speech recognition
   session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
     if (permission === 'media') {

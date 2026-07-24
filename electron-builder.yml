@@ -14,6 +14,8 @@ files:
   - 'package.json'
   - 'scripts/browgent-mcp.mjs'
   - 'recipes/README.md'
+  # sql.js is externalized from the main bundle (runtime require)
+  - 'node_modules/sql.js/**/*'
   - '!**/.vscode/*'
   - '!src/*'
   - '!docs/*'

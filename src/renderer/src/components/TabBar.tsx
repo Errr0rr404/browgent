@@ -66,7 +66,7 @@ export function TabBar({ tabs, onActivate, onClose, onNew }: Props): React.JSX.E
               <Favicon
                 src={isBlankUrl(tab.url) ? undefined : tab.favicon}
                 title={tabLabel(tab)}
-                size={11}
+                size={14}
                 className="tab-favicon"
               />
               <span className="tab-title">{tabLabel(tab)}</span>

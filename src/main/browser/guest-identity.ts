@@ -1,14 +1,16 @@
 /**
  * Guest-page browser identity — always on for every install.
  *
- * Electron’s default UA / client hints include “Electron”, which Google reCAPTCHA,
- * Akamai Bot Manager (GoDaddy, etc.), and similar products treat as automation.
- * Guest tabs must look like stock Chrome matching this build’s Chromium version.
+ * Electron’s default UA / client hints include “Electron” or Chromium-only brands,
+ * which Google OAuth (“This browser or app may not be secure”), reCAPTCHA, and
+ * Akamai treat as automation / non-Chrome. Guest tabs must look like stock Chrome
+ * matching this build’s Chromium version.
  *
  * Applied for all users (dev + packaged DMG). Do not gate behind flags.
  */
 
 import { app, type Session, type WebContents } from 'electron'
+import { release } from 'os'
 import { join } from 'path'
 
 const GUEST_PRELOAD_ID = 'browgent-guest-identity'
@@ -31,6 +33,7 @@ export function buildChromeUserAgent(): string {
   const chrome = getChromeVersion()
   switch (process.platform) {
     case 'darwin':
+      // Chrome still freezes the UA token at 10_15_7 while Client Hints carry the real OS.
       return `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chrome} Safari/537.36`
     case 'win32':
       return `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chrome} Safari/537.36`
@@ -69,26 +72,51 @@ function platformClientHint(): string {
   }
 }
 
+/**
+ * Realistic GREASE-style brand list (Chrome puts a “Not.A/Brand” grease token first).
+ * Order matters for some Google checks.
+ */
 function brandList(major: string): string {
-  return `"Google Chrome";v="${major}", "Chromium";v="${major}", "Not.A/Brand";v="99"`
+  return `"Not.A/Brand";v="99", "Google Chrome";v="${major}", "Chromium";v="${major}"`
 }
 
 function brandFullList(full: string): string {
-  return `"Google Chrome";v="${full}", "Chromium";v="${full}", "Not.A/Brand";v="10.0.1.4"`
+  return `"Not.A/Brand";v="10.0.1.4", "Google Chrome";v="${full}", "Chromium";v="${full}"`
 }
 
 function archClientHint(): string {
   return process.arch === 'arm64' ? '"arm"' : '"x86"'
 }
 
+/** Best-effort real OS version for Client Hints (matches stock Chrome better than a hardcode). */
 function platformVersionHint(): string {
-  switch (process.platform) {
-    case 'darwin':
+  try {
+    const rel = release() // e.g. 23.6.0 on macOS, 10.0.22631 on Windows
+    if (process.platform === 'darwin') {
+      // Darwin 23 → macOS 14, 24 → 15, 22 → 13
+      const major = Number(rel.split('.')[0])
+      if (Number.isFinite(major) && major >= 20) {
+        const macos = major - 9
+        return `"${macos}.0.0"`
+      }
       return '"14.0.0"'
-    case 'win32':
+    }
+    if (process.platform === 'win32') {
+      // Windows 10/11 report 10.0.x
+      const parts = rel.split('.')
+      if (parts.length >= 3) return `"${parts[0]}.${parts[1]}.0"`
       return '"15.0.0"'
-    default:
-      return '"6.5.0"'
+    }
+    return `"${rel.split('.').slice(0, 3).join('.')}"`
+  } catch {
+    switch (process.platform) {
+      case 'darwin':
+        return '"14.0.0"'
+      case 'win32':
+        return '"15.0.0"'
+      default:
+        return '"6.5.0"'
+    }
   }
 }
 
@@ -145,6 +173,8 @@ export function applyGuestPageSessionIdentity(pageSession: Session): void {
   const secChUaFull = brandFullList(full)
   const platform = platformClientHint()
   const langs = acceptLanguages()
+  const platformVersion = platformVersionHint()
+  const arch = archClientHint()
 
   pageSession.setUserAgent(ua, langs)
 
@@ -163,13 +193,14 @@ export function applyGuestPageSessionIdentity(pageSession: Session): void {
     const headers: Record<string, string | string[]> = { ...details.requestHeaders }
 
     setHeader(headers, 'User-Agent', ua)
+    // Always force Chrome brands — never leave Electron’s Chromium-only sec-ch-ua
     setHeader(headers, 'sec-ch-ua', secChUa)
     setHeader(headers, 'sec-ch-ua-mobile', '?0')
     setHeader(headers, 'sec-ch-ua-platform', platform)
     setHeader(headers, 'sec-ch-ua-full-version', `"${full}"`)
     setHeader(headers, 'sec-ch-ua-full-version-list', secChUaFull)
-    setHeader(headers, 'sec-ch-ua-platform-version', platformVersionHint())
-    setHeader(headers, 'sec-ch-ua-arch', archClientHint())
+    setHeader(headers, 'sec-ch-ua-platform-version', platformVersion)
+    setHeader(headers, 'sec-ch-ua-arch', arch)
     setHeader(headers, 'sec-ch-ua-bitness', '"64"')
     setHeader(headers, 'sec-ch-ua-model', '""')
 
@@ -209,9 +240,11 @@ export function applyWebContentsUserAgent(wc: WebContents): void {
 }
 
 /**
- * Backup page-world patches if preload injection is delayed or CSP-blocked.
- * Idempotent with guest preload (`__browgentIdentityPatched`).
- * Includes Client Hints (userAgentData) so Google-style checks match stock Chrome.
+ * Main-world identity patches for Google OAuth / reCAPTCHA / Akamai.
+ * ALWAYS overrides userAgentData — Electron’s native brands omit “Google Chrome”
+ * and Google Sign-In treats that as “browser may not be secure”.
+ *
+ * Idempotent with guest preload (`__browgentIdentityFull`).
  */
 export function installGuestStealthPatches(wc: WebContents): void {
   if (wc.isDestroyed()) return
@@ -220,21 +253,19 @@ export function installGuestStealthPatches(wc: WebContents): void {
   const full = getChromeVersion()
   const platform =
     process.platform === 'darwin' ? 'macOS' : process.platform === 'win32' ? 'Windows' : 'Linux'
-  const platformVersion =
-    process.platform === 'darwin' ? '14.0.0' : process.platform === 'win32' ? '15.0.0' : '6.5.0'
+  const platformVersion = platformVersionHint().replace(/"/g, '')
   const architecture = process.arch === 'arm64' ? 'arm' : 'x86'
+  const ua = buildChromeUserAgent()
 
-  // Always upgrade version-accurate Client Hints (preload may have set a placeholder).
-  // Flag __browgentIdentityFull marks the full main-process patch.
   const script = `(() => {
-    if (globalThis.__browgentIdentityFull) return;
-    globalThis.__browgentIdentityFull = true;
-    globalThis.__browgentIdentityPatched = true;
+    // Re-apply on every navigation; full patch may already be present
     const major = ${JSON.stringify(major)};
     const full = ${JSON.stringify(full)};
     const platform = ${JSON.stringify(platform)};
     const platformVersion = ${JSON.stringify(platformVersion)};
     const architecture = ${JSON.stringify(architecture)};
+    const chromeUa = ${JSON.stringify(ua)};
+
     try {
       Object.defineProperty(Navigator.prototype, 'webdriver', {
         get: () => undefined,
@@ -249,23 +280,44 @@ export function installGuestStealthPatches(wc: WebContents): void {
         });
       }
     } catch (_) {}
+
     try {
-      if (!window.chrome) {
-        window.chrome = { runtime: {}, loadTimes: function(){}, csi: function(){}, app: {} };
-      } else if (window.chrome && typeof window.chrome === 'object') {
-        if (!window.chrome.runtime) window.chrome.runtime = {};
+      // Force UA string if anything rewrote it
+      if (typeof navigator.userAgent === 'string' && /Electron/i.test(navigator.userAgent)) {
+        Object.defineProperty(Navigator.prototype, 'userAgent', {
+          get: () => chromeUa,
+          configurable: true
+        });
       }
     } catch (_) {}
+
+    try {
+      if (!window.chrome || typeof window.chrome !== 'object') {
+        window.chrome = { runtime: {}, loadTimes: function(){}, csi: function(){}, app: {} };
+      } else {
+        if (!window.chrome.runtime) window.chrome.runtime = {};
+        if (typeof window.chrome.loadTimes !== 'function') {
+          window.chrome.loadTimes = function(){ return {}; };
+        }
+        if (typeof window.chrome.csi !== 'function') {
+          window.chrome.csi = function(){ return {}; };
+        }
+        if (!window.chrome.app) window.chrome.app = {};
+      }
+    } catch (_) {}
+
+    // CRITICAL: always override Client Hints. Electron’s native brands are
+    // Chromium-only (no “Google Chrome”) → Google OAuth “browser may not be secure”.
     try {
       const brands = [
+        { brand: 'Not.A/Brand', version: '99' },
         { brand: 'Google Chrome', version: major },
-        { brand: 'Chromium', version: major },
-        { brand: 'Not.A/Brand', version: '99' }
+        { brand: 'Chromium', version: major }
       ];
       const fullVersionList = [
+        { brand: 'Not.A/Brand', version: '10.0.1.4' },
         { brand: 'Google Chrome', version: full },
-        { brand: 'Chromium', version: full },
-        { brand: 'Not.A/Brand', version: '10.0.1.4' }
+        { brand: 'Chromium', version: full }
       ];
       const uad = {
         brands,
@@ -296,7 +348,16 @@ export function installGuestStealthPatches(wc: WebContents): void {
         get: () => uad,
         configurable: true
       });
+      try {
+        Object.defineProperty(navigator, 'userAgentData', {
+          get: () => uad,
+          configurable: true
+        });
+      } catch (_) {}
     } catch (_) {}
+
+    globalThis.__browgentIdentityFull = true;
+    globalThis.__browgentIdentityPatched = true;
   })();`
 
   const run = (): void => {
@@ -306,7 +367,10 @@ export function installGuestStealthPatches(wc: WebContents): void {
     })
   }
 
-  // Run as early as possible and again on each navigation
+  // As early as possible + every navigation (Google’s OAuth page checks on load)
   wc.on('dom-ready', run)
   wc.on('did-finish-load', run)
+  wc.on('did-navigate-in-page', run)
+  // First paint of a brand-new tab
+  run()
 }

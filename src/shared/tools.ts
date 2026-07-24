@@ -28,6 +28,8 @@ export type ToolName =
   | 'ask_human'
   | 'done'
   | 'think'
+  | 'get_profile'
+  | 'get_credentials'
 
 export interface ToolDef {
   name: ToolName
@@ -178,6 +180,19 @@ export const TOOL_DEFS: ToolDef[] = [
     name: 'think',
     description: 'Brief internal plan only — do not monologue. Prefer acting with tools.',
     params: { thought: 'string' }
+  },
+  {
+    name: 'get_profile',
+    description:
+      'Read the local User Hub profile (name, email, phone, address) for form fill. Never invent contact details.',
+    params: {}
+  },
+  {
+    name: 'get_credentials',
+    description:
+      'Look up a saved password for the current (or given) site from the local vault. Use only when logging in; returns password for local type only.',
+    params: { url: 'string?' },
+    sensitive: true
   }
 ]
 

@@ -90,9 +90,12 @@ See [playwright.md](./playwright.md).
 
 1. User message → `AgentSession.send`
 2. Provider: **LLM** if any supported API key is set (Grok preferred in auto), else **heuristic**
-3. Tool calls → `ToolExecutor` (policy, confirm, DOM/nav)
-4. Trajectory + chat messages stream to the renderer via IPC
-5. `done` / max steps / stop / ask_human ends or pauses the run
+3. LLM path seeds a live page snapshot (refs) when a real tab is open
+4. Tool calls → `ToolExecutor` (policy, confirm, DOM/nav). Mutators **auto-snapshot** after act (BrowserOS-style) so the model skips an extra observe round
+5. `search` tool = navigate + extract results in one step (DuckDuckGo)
+6. Read-only tools may run **in parallel** in one model turn
+7. Trajectory + chat messages stream to the renderer via IPC
+8. `done` / max steps / stop / ask_human ends or pauses the run
 
 Generation tokens invalidate in-flight work on **Stop** / **Clear** so sessions do not race.
 

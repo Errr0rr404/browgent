@@ -262,5 +262,18 @@ export const IPC = {
   METRICS_SET_TELEMETRY: 'metrics:setTelemetry',
   METRICS_EXPORT_TRACTION: 'metrics:exportTraction',
   METRICS_RECORD_DEMO: 'metrics:recordDemo',
-  METRICS_RECORD_RECIPE: 'metrics:recordRecipe'
+  METRICS_RECORD_RECIPE: 'metrics:recordRecipe',
+
+  /** Detect / import from installed browsers */
+  IMPORT_DETECT: 'import:detect',
+  IMPORT_RUN: 'import:run',
+
+  /** Password vault (metadata only over IPC) */
+  VAULT_LIST: 'vault:list',
+  VAULT_REMOVE: 'vault:remove',
+  VAULT_CLEAR: 'vault:clear',
+
+  /** User Hub profile */
+  PROFILE_GET: 'profile:get',
+  PROFILE_SET: 'profile:set'
 } as const

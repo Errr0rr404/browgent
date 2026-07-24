@@ -11,7 +11,6 @@ import type { AgentMode } from '../../shared/policies'
 import type { ObserveElement, ObserveSnapshot } from '../../shared/types'
 import type { ToolCall } from '../../shared/tools'
 import {
-  buildAgentSearchUrl,
   extractBrowserSearchQuery,
   extractCredentials,
   parseBrowseIntent
@@ -36,15 +35,21 @@ export function planNextActions(ctx: PlanContext): ToolCall[] {
 
   // ── Step 0: orient / navigate ──────────────────────────────
   if (ctx.step === 0) {
-    // Web-search goals first (incl. research mode — navigate is allowed)
+    // Web-search goals first (incl. research mode — search tool is allowed)
     // e.g. "whats the cheapest iphone find that on browser"
     if (searchQuery || intent.siteToken === 'search') {
       const q = searchQuery || intent.task || goal
-      const searchUrl =
-        intent.siteToken === 'search' && intent.navigateUrl
-          ? intent.navigateUrl
-          : buildAgentSearchUrl(q)
-      return planWebSearch(q, searchUrl)
+      return [
+        makeToolCall('think', { thought: `Search the web for “${q.slice(0, 100)}”` }),
+        makeToolCall('search', { query: q }),
+        makeToolCall('done', {
+          // Body text is appended by runHeuristic from the search tool result
+          summary:
+            `Web search for “${q.slice(0, 120)}” complete — highlights below. ` +
+            `Say “click the first result” or “click eN” to open a hit.` +
+            isHeuristicNote()
+        })
+      ]
     }
 
     if (intent.navigateUrl) {
@@ -564,28 +569,6 @@ function prettyHost(url: string): string {
   }
 }
 
-/** Navigate to a search engine, extract results, stop with guidance for next step. */
-function planWebSearch(query: string, searchUrl: string): ToolCall[] {
-  const q = query.trim().slice(0, 160)
-  return [
-    makeToolCall('think', {
-      thought: `Search the web for “${q}” and extract result text`
-    }),
-    makeToolCall('navigate', { url: searchUrl }),
-    makeToolCall('wait', { ms: 1200 }),
-    makeToolCall('observe', {}),
-    makeToolCall('extract_text', { maxChars: 4500 }),
-    makeToolCall('extract_links', { limit: 12 }),
-    makeToolCall('done', {
-      summary:
-        `Searched for “${q}” on ${prettyHost(searchUrl)}. ` +
-        `Check the trajectory for titles, prices, and links from the results page. ` +
-        `Say “click the first result” or “click eN” to open a hit.` +
-        isHeuristicNote()
-    })
-  ]
-}
-
 function buildResearchSummary(ctx: PlanContext): string {
   return `Research pass complete on ${ctx.pageTitle || ctx.pageUrl || 'the active tab'}. See extracted text and links in the trajectory.${isHeuristicNote()}`
 }
@@ -611,24 +594,68 @@ export function formatObservationForUser(data: unknown): string {
   const d = data as {
     title?: string
     url?: string
+    query?: string
+    searchUrl?: string
     compact?: string
     textPreview?: string
-    text?: string
+    text?: string | { title?: string; url?: string; text?: string }
+    links?: unknown
     elements?: unknown[]
+    snapshot?: {
+      title?: string
+      url?: string
+      textPreview?: string
+      elementCount?: number
+      elements?: unknown[]
+    }
   }
   const lines: string[] = []
-  if (d.title || d.url) lines.push(`**${d.title || 'Page'}**\n${d.url || ''}`)
-  const elCount = Array.isArray(d.elements) ? d.elements.length : 0
+
+  if (d.query) lines.push(`**Search:** ${d.query}`)
+
+  const title = d.title || d.snapshot?.title
+  const url = d.url || d.searchUrl || d.snapshot?.url
+  if (title || url) lines.push(`**${title || 'Page'}**\n${url || ''}`)
+
+  const elCount =
+    (Array.isArray(d.elements) ? d.elements.length : 0) ||
+    (typeof d.snapshot?.elementCount === 'number' ? d.snapshot.elementCount : 0) ||
+    (Array.isArray(d.snapshot?.elements) ? d.snapshot!.elements!.length : 0)
   if (elCount > 0) {
     lines.push(`Observed ${elCount} interactive element${elCount === 1 ? '' : 's'}.`)
   }
+
   // Keep chat short — full dumps live on the Trajectory tab
-  if (d.textPreview) {
-    const preview = d.textPreview.replace(/\s+/g, ' ').trim().slice(0, 180)
-    if (preview) lines.push(`Preview: ${preview}${d.textPreview.length > 180 ? '…' : ''}`)
-  } else if (d.text) {
-    const preview = d.text.replace(/\s+/g, ' ').trim().slice(0, 180)
-    if (preview) lines.push(preview + (d.text.length > 180 ? '…' : ''))
+  const previewSrc =
+    d.textPreview ||
+    d.snapshot?.textPreview ||
+    (typeof d.text === 'string' ? d.text : d.text?.text) ||
+    ''
+  if (previewSrc) {
+    const preview = String(previewSrc).replace(/\s+/g, ' ').trim().slice(0, 320)
+    if (preview) lines.push(`Preview: ${preview}${String(previewSrc).length > 320 ? '…' : ''}`)
   }
+
+  // Compact link list from search tool (array or { links: [...] })
+  const linkArr = Array.isArray(d.links)
+    ? d.links
+    : d.links && typeof d.links === 'object' && Array.isArray((d.links as { links?: unknown }).links)
+      ? ((d.links as { links: unknown[] }).links as unknown[])
+      : null
+  if (linkArr) {
+    const linkLines = linkArr
+      .slice(0, 6)
+      .map((l) => {
+        if (!l || typeof l !== 'object') return null
+        const item = l as { title?: string; text?: string; href?: string; url?: string }
+        const label = (item.title || item.text || '').trim().slice(0, 60)
+        const href = item.href || item.url || ''
+        if (!label && !href) return null
+        return `• ${label || href}${href && label ? ` — ${href}` : ''}`
+      })
+      .filter(Boolean)
+    if (linkLines.length) lines.push(linkLines.join('\n'))
+  }
+
   return lines.join('\n')
 }

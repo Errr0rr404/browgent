@@ -73,6 +73,25 @@ const api = {
     ipcRenderer.invoke(IPC.METRICS_RECORD_DEMO),
   recordRecipeRun: (): Promise<import('../shared/metrics').LocalMetrics> =>
     ipcRenderer.invoke(IPC.METRICS_RECORD_RECIPE),
+  detectBrowsers: (): Promise<import('../shared/import-types').DetectedBrowser[]> =>
+    ipcRenderer.invoke(IPC.IMPORT_DETECT),
+  importFromBrowser: (
+    options: import('../shared/import-types').ImportOptions
+  ): Promise<
+    import('../shared/import-types').ImportResult & {
+      bookmarks?: { title: string; url: string }[]
+    }
+  > => ipcRenderer.invoke(IPC.IMPORT_RUN, options),
+  listVault: (): Promise<import('../shared/profile').VaultCredentialMeta[]> =>
+    ipcRenderer.invoke(IPC.VAULT_LIST),
+  removeVaultItem: (id: string): Promise<boolean> => ipcRenderer.invoke(IPC.VAULT_REMOVE, id),
+  clearVault: (): Promise<boolean> => ipcRenderer.invoke(IPC.VAULT_CLEAR),
+  getUserProfile: (): Promise<import('../shared/profile').UserProfile> =>
+    ipcRenderer.invoke(IPC.PROFILE_GET),
+  setUserProfile: (
+    partial: Partial<import('../shared/profile').UserProfile>
+  ): Promise<import('../shared/profile').UserProfile> =>
+    ipcRenderer.invoke(IPC.PROFILE_SET, partial),
   getDriverStatus: (): Promise<CdpEndpointStatus> => ipcRenderer.invoke(IPC.DRIVER_STATUS),
   setDriverMode: (mode: DriverMode): Promise<DriverMode> =>
     ipcRenderer.invoke(IPC.DRIVER_SET_MODE, mode),

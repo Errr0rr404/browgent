@@ -432,10 +432,31 @@ export function Sidebar({
     }
   }
 
+  // Keep context menus inside the sidebar so items are not covered by WebContentsView
+  // in the content hole (Theme/Downloads already follow this overlay-safe discipline).
   const menuPos = (() => {
     if (!menu) return { left: 8, top: 48 }
     const a = menu.anchor
-    return { left: Math.round(a.left), top: Math.round(a.bottom + 4) }
+    const menuWidth = 200
+    const pad = 8
+    const sidebarRight = Math.min(
+      typeof window !== 'undefined' ? window.innerWidth : 268,
+      // sidebar is left chrome; prefer client rect if available
+      (() => {
+        try {
+          const el = document.querySelector('aside.arc-sidebar')
+          if (el) return el.getBoundingClientRect().right
+        } catch {
+          /* */
+        }
+        return 268
+      })()
+    )
+    let left = Math.round(a.left)
+    if (left + menuWidth > sidebarRight - pad) {
+      left = Math.max(pad, Math.round(sidebarRight - menuWidth - pad))
+    }
+    return { left, top: Math.round(a.bottom + 4) }
   })()
 
   const renderMenuItems = (): React.ReactNode => {
@@ -548,7 +569,7 @@ export function Sidebar({
             aria-pressed={libraryOpen}
             onClick={onToggleLibrary}
           >
-            <BookOpen size={15} strokeWidth={1.75} />
+            <BookOpen size={16} strokeWidth={1.75} />
           </button>
         )}
         <button
@@ -643,7 +664,7 @@ export function Sidebar({
       </div>
 
       <div className="arc-space-header">
-        <Orbit size={15} strokeWidth={1.75} className="arc-space-icon" />
+        <Orbit size={16} strokeWidth={1.75} className="arc-space-icon" />
         {editingSpace ? (
           <input
             ref={spaceInputRef}
@@ -702,7 +723,7 @@ export function Sidebar({
                     <ChevronDown size={14} strokeWidth={1.75} />
                   )}
                 </span>
-                <Folder size={15} strokeWidth={1.75} className="arc-row-icon" />
+                <Folder size={16} strokeWidth={1.75} className="arc-row-icon" />
                 <span className="arc-row-title">{folder.title}</span>
               </button>
               {!collapsed &&

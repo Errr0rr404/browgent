@@ -247,7 +247,7 @@ export function ThemePicker({
         title={`Theme: ${current?.name ?? theme}`}
         onClick={() => setOpen((v) => !v)}
       >
-        <Palette size={14} strokeWidth={1.75} />
+        <Palette size={16} strokeWidth={1.75} />
       </button>
 
       {menu &&

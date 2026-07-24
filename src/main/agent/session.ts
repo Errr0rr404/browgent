@@ -17,6 +17,7 @@ import {
   type LlmToolCall
 } from './llm'
 import {
+  extractBrowserSearchQuery,
   extractCredentials,
   parseBrowseIntent,
   redactSecrets,
@@ -41,6 +42,7 @@ import type {
 } from '../../shared/types'
 import {
   isToolName,
+  PARALLEL_SAFE_TOOLS,
   type ToolArgs,
   type ToolCall,
   type ToolName,
@@ -330,8 +332,21 @@ export class AgentSession {
         }
       })
 
-      // Cache observe snapshot so subsequent MCP click/type refs resolve (stamp tabId)
-      if (name === 'observe' && result.ok && result.data && typeof result.data === 'object') {
+      // Cache observe snapshot so subsequent MCP click/type refs resolve (stamp tabId).
+      // Do not overwrite the chat agent's snapshot while a run is in flight — concurrent
+      // MCP observe renumbers refs and breaks sensitive gates / click identity.
+      const chatBusy =
+        this.taskInFlight ||
+        this.status === 'thinking' ||
+        this.status === 'acting' ||
+        this.status === 'waiting_human'
+      if (
+        name === 'observe' &&
+        result.ok &&
+        result.data &&
+        typeof result.data === 'object' &&
+        !chatBusy
+      ) {
         const d = result.data as {
           url?: string
           title?: string
@@ -390,12 +405,17 @@ export class AgentSession {
     } finally {
       // MCP is fire-and-forget vs chat loops: release ownership so human browsing
       // is not stuck behind agent tab guards after a lone navigate/click.
+      // Defer release so in-flight loadURL / redirects keep agent scheme+host guards
+      // (new_tab returns before load finishes).
       if (!this.taskInFlight && !this.paused && !this.pendingConfirmation) {
-        try {
-          this.tabs.releaseAgentTabs()
-        } catch {
-          // ignore
-        }
+        setTimeout(() => {
+          if (this.taskInFlight || this.paused || this.pendingConfirmation) return
+          try {
+            this.tabs.releaseAgentTabs()
+          } catch {
+            // ignore
+          }
+        }, 2500)
       }
     }
   }
@@ -489,16 +509,17 @@ export class AgentSession {
       this.answerHuman(text)
       return
     }
-    // Reject concurrent tasks (pending confirmation is also human-gated)
+    // Reject concurrent tasks (pending confirmation is also human-gated).
+    // Throw so renderer can restore drafts (soft return looked like success over IPC).
     if (this.status === 'waiting_human' && this.pendingConfirmation) {
       this.pushSystem('Confirm or deny the pending action before sending a new instruction.')
       this.emit()
-      return
+      throw new Error('Confirm or deny the pending action before sending a new instruction.')
     }
     if (this.taskInFlight || this.status === 'thinking' || this.status === 'acting') {
       this.pushSystem('Agent is busy — Stop first, or wait for the current task to finish.')
       this.emit()
-      return
+      throw new Error('Agent is busy — Stop first, or wait for the current task to finish.')
     }
     await this.runTask(text, tabId, { skipUserMessage: false })
   }
@@ -605,6 +626,45 @@ export class AgentSession {
     return !this.cancelled && gen === this.runGeneration
   }
 
+  /** Keep lastObservation in sync with observe + mutator auto-snapshots. */
+  private ingestToolObservation(result: ToolResult): void {
+    if (!result.ok || !result.data || typeof result.data !== 'object') return
+    const data = result.data as {
+      snapshot?: {
+        url?: string
+        title?: string
+        elements?: ObserveSnapshot['elements']
+        textPreview?: string
+        tabId?: string
+      }
+      elements?: ObserveSnapshot['elements']
+      url?: string
+      title?: string
+      textPreview?: string
+      tabId?: string
+    }
+    const snap = data.snapshot
+    if (snap?.elements && Array.isArray(snap.elements)) {
+      this.lastObservation = {
+        url: safeUrlForLlm(snap.url ?? '', 200),
+        title: snap.title ?? '',
+        elements: snap.elements,
+        textPreview: (snap.textPreview ?? '').slice(0, 800),
+        tabId: snap.tabId
+      }
+      return
+    }
+    if (Array.isArray(data.elements)) {
+      this.lastObservation = {
+        url: safeUrlForLlm(data.url ?? '', 200),
+        title: data.title ?? '',
+        elements: data.elements,
+        textPreview: (data.textPreview ?? '').slice(0, 800),
+        tabId: data.tabId
+      }
+    }
+  }
+
   /** Multi-turn OpenAI-compatible tool-calling loop (Grok default, any provider) */
   private async runWithLlm(goal: string, gen: number): Promise<void> {
     const visionEnabled = isVisionEnabled()
@@ -616,7 +676,13 @@ export class AgentSession {
 
     // Light hints only — the model owns planning for any goal (not a fixed auth script)
     let intentHint = ''
-    if (intent.navigateUrl) {
+    const searchQ = extractBrowserSearchQuery(goal)
+    if (searchQ || intent.siteToken === 'search') {
+      const q = searchQ || intent.task || goal
+      intentHint +=
+        `\n\n(Hint) Web-search goal — call search with query “${q.slice(0, 120)}” immediately, ` +
+        `then answer from results (extract_text if needed) and done. Do not only summarize the current tab.`
+    } else if (intent.navigateUrl) {
       intentHint +=
         `\n\n(Hint) A site was recognized — navigate there and complete the user's full request:\n` +
         `- Suggested start URL: ${safeUrlForLlm(intent.navigateUrl)}\n` +
@@ -645,14 +711,113 @@ export class AgentSession {
       { role: 'user', content: redactedGoal + intentHint }
     ]
 
-    // Seed with a light page orientation so the model doesn't guess
-    if (active?.url && active.url !== 'about:blank') {
-      llmMessages.push({
-        role: 'user',
-        content: `(Context) Active tab: ${active.title || 'untitled'} — ${safeActiveUrl}`
-      })
+    // Fast path: clear web-search goals → run search before the model thinks
+    // (saves 1–2 LLM rounds for "cheapest X" / "find Y on browser")
+    let preSearched = false
+    if (
+      this.isActiveRun(gen) &&
+      this.mode !== 'watch' &&
+      (searchQ || intent.siteToken === 'search')
+    ) {
+      const q = (searchQ || intent.task || goal).trim().slice(0, 200)
+      if (q) {
+        try {
+          this.status = 'acting'
+          this.emit()
+          const result = await this.executor.execute(
+            { id: randomUUID(), name: 'search', args: { query: q } },
+            {
+              policy: this.policy,
+              mode: this.mode,
+              requestConfirm: (reason, tool, args) => this.waitForConfirm(reason, tool, args),
+              lastObservation: this.lastObservation,
+              signal: this.abort?.signal,
+              vision: visionEnabled
+            }
+          )
+          if (this.isActiveRun(gen) && result.ok) {
+            this.stepCount++
+            preSearched = true
+            this.ingestToolObservation(result)
+            this.trace(
+              'tool',
+              redactTextForTrajectory(result.summary ?? `Searched “${q}”`),
+              undefined,
+              'search',
+              true,
+              scrubDataForTrajectory(result.data)
+            )
+            const slim = slimToolResultForLlm(
+              scrubSensitiveUrlFields({
+                ok: true,
+                summary: result.summary,
+                data: scrubDataForTrajectory(result.data)
+              })
+            )
+            llmMessages.push({
+              role: 'user',
+              content:
+                `(Pre-search already executed for “${q}”.)\n` +
+                `Tool result:\n${slim}\n\n` +
+                `Continue: answer from these results with done, or click a result ref if you need a deeper page. Do not search again unless results are empty/useless.`
+            })
+          }
+        } catch (e) {
+          if (this.isActiveRun(gen)) {
+            this.trace(
+              'system',
+              'Pre-search failed — model will retry',
+              e instanceof Error ? e.message : String(e)
+            )
+          }
+        }
+      }
     }
 
+    // Seed with a live snapshot when we did not already open search results
+    if (!preSearched) {
+      const liveUrl = active?.url ?? ''
+      if (liveUrl && liveUrl !== 'about:blank' && !/^about:/i.test(liveUrl)) {
+        try {
+          const snap = await this.tabs.observe(active?.id)
+          if (snap) {
+            this.lastObservation = {
+              url: safeUrlForLlm(snap.url ?? '', 200),
+              title: snap.title ?? '',
+              elements: snap.elements ?? [],
+              textPreview: (snap.textPreview ?? '').slice(0, 800),
+              tabId: active?.id
+            }
+            const compact = (snap.elements ?? [])
+              .slice(0, 28)
+              .map(
+                (e) =>
+                  `[${e.ref}] ${e.role}: ${e.name || e.tag}${e.href ? ` → ${e.href}` : ''}`
+              )
+              .join('\n')
+            llmMessages.push({
+              role: 'user',
+              content:
+                `(Live snapshot) ${snap.title || 'Page'} — ${safeUrlForLlm(snap.url ?? '', 200)}\n` +
+                `${(snap.textPreview ?? '').replace(/\s+/g, ' ').trim().slice(0, 400)}\n` +
+                (compact ? `Interactive:\n${compact}` : '')
+            })
+          } else {
+            llmMessages.push({
+              role: 'user',
+              content: `(Context) Active tab: ${active?.title || 'untitled'} — ${safeActiveUrl}`
+            })
+          }
+        } catch {
+          llmMessages.push({
+            role: 'user',
+            content: `(Context) Active tab: ${active?.title || 'untitled'} — ${safeActiveUrl}`
+          })
+        }
+      }
+    }
+
+    if (!this.isActiveRun(gen)) return
     await this.continueLlmLoop(llmMessages, map, visionEnabled, gen)
   }
 
@@ -762,19 +927,15 @@ export class AgentSession {
         if (this.lastToolNotes.length > 40) this.lastToolNotes = this.lastToolNotes.slice(-30)
         this.trace('tool', summaryText, undefined, call.name, result.ok, scrubDataForTrajectory(result.data))
 
-        if (call.name === 'observe' && result.ok && result.data) {
-          const d = result.data as ObserveSnapshot & { compact?: string }
-          this.lastObservation = {
-            url: safeUrlForLlm(d.url ?? '', 200),
-            title: d.title ?? '',
-            elements: d.elements ?? [],
-            textPreview: (d.textPreview ?? '').slice(0, 800)
+        this.ingestToolObservation(result)
+        if (result.ok && result.data) {
+          if (call.name === 'observe' || call.name === 'navigate') {
+            observationDump += `\n\n${formatObservationForUser(
+              (result.data as { snapshot?: unknown }).snapshot ?? result.data
+            )}`
+          } else if (call.name === 'search' || call.name === 'extract_text') {
+            observationDump += `\n\n${formatObservationForUser(result.data)}`
           }
-          observationDump += `\n\n${formatObservationForUser(result.data)}`
-        }
-
-        if (call.name === 'extract_text' && result.ok) {
-          observationDump += `\n\n${formatObservationForUser(result.data)}`
         }
 
         action.status = result.ok ? 'done' : 'error'
@@ -783,6 +944,16 @@ export class AgentSession {
 
         if (call.name === 'done' && result.ok) {
           finalSummary = String(call.args.summary ?? summaryText)
+          finished = true
+          break
+        }
+
+        // Do not keep running a success-framed plan after a real tool failure
+        // (avoids heuristic "Web search complete" after a blocked navigate/search).
+        if (!result.ok && call.name !== 'think' && call.name !== 'done') {
+          finalSummary =
+            finalSummary ||
+            `Stopped after ${call.name} failed: ${result.error ?? summaryText}`
           finished = true
           break
         }
@@ -797,8 +968,9 @@ export class AgentSession {
     let reply =
       finalSummary ||
       'Finished this step. Check the trajectory for tool results.'
-    if (observationDump.trim() && !/opened |searched /i.test(reply)) {
-      reply = `${reply}\n${observationDump.slice(0, 2200)}`
+    // Always surface extracts/search previews in chat (was wrongly skipped for "Searched for…")
+    if (observationDump.trim()) {
+      reply = `${reply}\n${observationDump.slice(0, 2800)}`
     }
 
     await this.streamAssistant(assistantId, reply, gen)
@@ -1042,9 +1214,9 @@ export class AgentSession {
           llmMessages.push({
             role: 'user',
             content:
-              'Stop describing. Call browser tools now (navigate / observe / type / click / wait). ' +
-              'If the user already gave email/password in their message, type them into the form. ' +
-              'Only call done when the task is finished or blocked on CAPTCHA/2FA/human verification.'
+              'Stop describing. Call browser tools now (search / navigate / click / type / extract_text / done). ' +
+              'For "find/cheapest/what is" goals: call search first. Mutators already return snapshots — do not only observe. ' +
+              'Only call done when finished or blocked on CAPTCHA/2FA.'
           })
           this.trace('system', 'Nudged model to use tools (text-only reply)')
           rounds++
@@ -1068,137 +1240,271 @@ export class AgentSession {
       let hitAskHuman = false
       const pendingImages: string[] = []
 
-      for (const tc of toolCalls) {
-        if (!this.isActiveRun(gen)) break
-        while (this.paused && this.isActiveRun(gen)) await sleep(150)
-        if (!this.isActiveRun(gen)) break
-
-        if (this.abort?.signal.aborted) {
-          llmMessages.push({
-            role: 'tool',
-            tool_call_id: tc.id,
-            content: JSON.stringify({ ok: false, error: 'Aborted before execution' })
-          })
-          continue
-        }
-
-        const rawCall = toolCallFromLlm(tc)
-        if (!rawCall) {
-          llmMessages.push({
-            role: 'tool',
-            tool_call_id: tc.id,
-            content: JSON.stringify({ ok: false, error: `Unknown tool: ${tc.function.name}` })
-          })
-          continue
-        }
-
-        const redactedArgs = scrubCallArgsForTrajectory(rawCall)
-        const resolvedArgs = resolveCallPlaceholders(rawCall, map)
-        const redactedCall: ToolCall = { id: rawCall.id, name: rawCall.name, args: redactedArgs }
-        const resolvedCall: ToolCall = { id: rawCall.id, name: rawCall.name, args: resolvedArgs }
-
-        const action: AgentAction = {
-          type: redactedCall.name,
-          label: redactedCall.name,
-          detail: summarizeArgs(redactedCall),
-          status: 'running'
-        }
-        actions.push(action)
-        this.emit()
-
-        if (redactedCall.name === 'ask_human') {
-          action.status = 'waiting'
-          this.waitingQuestion = String(redactedCall.args.question ?? 'Need your help')
-          this.status = 'waiting_human'
-          this.transferOwnershipToHumanIfSafe('Waiting for human')
-          if (this.policy.pauseOnAskHuman) this.paused = true
-          this.trace('tool', 'ask_human', this.waitingQuestion, 'ask_human', true)
-          llmMessages.push({
-            role: 'tool',
-            tool_call_id: tc.id,
-            content: JSON.stringify({ ok: true, note: 'Waiting for human reply' })
-          })
-          this.humanHandoff = {
-            kind: 'llm',
-            goal,
-            llmMessages: [...llmMessages],
-            map,
-            visionEnabled
-          }
-          this.emit()
-          hitAskHuman = true
-          break
-        }
-
-        this.mutationInFlight = isMutatingTool(redactedCall.name)
-        let result
-        try {
-          result = await this.executor.execute(resolvedCall, {
-            policy: this.policy,
-            mode: this.mode,
-            requestConfirm: (reason, tool, args) => this.waitForConfirm(reason, tool, args),
-            lastObservation: this.lastObservation,
-            signal: this.abort?.signal,
-            resolver: secretResolver,
-            vision: visionEnabled
-          })
-        } finally {
-          this.mutationInFlight = false
-          if (this.pendingOwnershipTransfer && this.isActiveRun(gen)) {
-            this.pendingOwnershipTransfer = false
-            this.tabs.transferAgentTabsToHuman()
-          } else if (this.pendingOwnershipTransfer) {
-            this.pendingOwnershipTransfer = false
-          }
-        }
-
-        if (!this.isActiveRun(gen)) {
-          if (action.status === 'running') {
-            action.status = 'error'
-            action.detail = 'Stopped'
-            this.emit()
-          }
-          return
-        }
-
-        this.stepCount++
-        const summaryText = redactTextForTrajectory(result.summary ?? '')
-        this.lastToolNotes.push(summaryText)
-        if (this.lastToolNotes.length > 40) this.lastToolNotes = this.lastToolNotes.slice(-30)
-        this.trace('tool', summaryText, undefined, redactedCall.name, result.ok, scrubDataForTrajectory(result.data))
-
-        if (redactedCall.name === 'observe' && result.ok && result.data) {
-          const d = result.data as ObserveSnapshot & { compact?: string }
-          this.lastObservation = {
-            url: safeUrlForLlm(d.url ?? '', 200),
-            title: d.title ?? '',
-            elements: d.elements ?? [],
-            textPreview: (d.textPreview ?? '').slice(0, 800)
-          }
-        }
-
-        action.status = result.ok ? 'done' : 'error'
-        if (!result.ok) action.detail = result.error
-        this.emit()
-
-        const sanitizedPayload = result.ok
-          ? { ok: true, summary: summaryText, data: scrubDataForTrajectory(result.data) }
-          : { ok: false, error: result.error, summary: summaryText }
-
-        llmMessages.push({
-          role: 'tool',
-          tool_call_id: tc.id,
-          content: slimToolResultForLlm(scrubSensitiveUrlFields(sanitizedPayload))
+      // Parallelize pure read tools (extract_text + extract_links) like BrowserOS multi-tool turns
+      const parallelOk =
+        toolCalls.length > 1 &&
+        toolCalls.every((tc) => {
+          const n = tc.function?.name
+          return Boolean(n && isToolName(n) && PARALLEL_SAFE_TOOLS.has(n))
         })
 
-        if (visionEnabled && redactedCall.name === 'screenshot' && result.ok && result.image) {
-          pendingImages.push(result.image)
-        }
+      if (parallelOk) {
+        const prepared = toolCalls.map((tc) => {
+          const rawCall = toolCallFromLlm(tc)
+          if (!rawCall) {
+            return { tc, error: `Unknown tool: ${tc.function.name}` as string }
+          }
+          const redactedArgs = scrubCallArgsForTrajectory(rawCall)
+          const resolvedArgs = resolveCallPlaceholders(rawCall, map)
+          const redactedCall: ToolCall = { id: rawCall.id, name: rawCall.name, args: redactedArgs }
+          const resolvedCall: ToolCall = { id: rawCall.id, name: rawCall.name, args: resolvedArgs }
+          const action: AgentAction = {
+            type: redactedCall.name,
+            label: redactedCall.name,
+            detail: summarizeArgs(redactedCall),
+            status: 'running'
+          }
+          actions.push(action)
+          return { tc, redactedCall, resolvedCall, action }
+        })
+        this.emit()
 
-        if (redactedCall.name === 'done') {
-          finalSummary = String(redactedCall.args.summary ?? summaryText)
-          hitDone = true
-          break
+        const settled = await Promise.all(
+          prepared.map(async (p) => {
+            if ('error' in p && p.error && !('resolvedCall' in p)) {
+              return { ...p, result: null as ToolResult | null }
+            }
+            if (!('resolvedCall' in p) || !p.resolvedCall || !p.action) {
+              return { ...p, result: null as ToolResult | null }
+            }
+            if (!this.isActiveRun(gen) || this.abort?.signal.aborted) {
+              p.action.status = 'error'
+              p.action.detail = 'Stopped'
+              return { ...p, result: null as ToolResult | null }
+            }
+            try {
+              const result = await this.executor.execute(p.resolvedCall, {
+                policy: this.policy,
+                mode: this.mode,
+                lastObservation: this.lastObservation,
+                signal: this.abort?.signal,
+                resolver: secretResolver,
+                vision: visionEnabled
+              })
+              return { ...p, result }
+            } catch (e) {
+              const err = e instanceof Error ? e.message : 'Tool error'
+              return {
+                ...p,
+                result: {
+                  ok: false,
+                  tool: p.resolvedCall.name,
+                  error: err,
+                  summary: err
+                } as ToolResult
+              }
+            }
+          })
+        )
+
+        // Always finalize action statuses even if the run was stopped — otherwise UI chips stick on "running".
+        // Skip further LLM/message mutation that would corrupt a newer generation.
+        const runStillActive = this.isActiveRun(gen)
+        for (const item of settled) {
+          if ('error' in item && item.error && !item.result) {
+            if (runStillActive) {
+              llmMessages.push({
+                role: 'tool',
+                tool_call_id: item.tc.id,
+                content: JSON.stringify({ ok: false, error: item.error })
+              })
+            }
+            continue
+          }
+          const result = item.result
+          const redactedCall = 'redactedCall' in item ? item.redactedCall : null
+          const action = 'action' in item ? item.action : null
+          if (!result || !redactedCall || !action) {
+            if (action && action.status === 'running') {
+              action.status = 'error'
+              action.detail = 'Stopped'
+            }
+            if (runStillActive) {
+              llmMessages.push({
+                role: 'tool',
+                tool_call_id: item.tc.id,
+                content: JSON.stringify({ ok: false, error: 'Aborted' })
+              })
+            }
+            continue
+          }
+          if (action.status === 'running') {
+            action.status = result.ok ? 'done' : 'error'
+            if (!result.ok) action.detail = result.error
+          }
+          if (!runStillActive) continue
+          this.stepCount++
+          const summaryText = redactTextForTrajectory(result.summary ?? '')
+          this.lastToolNotes.push(summaryText)
+          if (this.lastToolNotes.length > 40) this.lastToolNotes = this.lastToolNotes.slice(-30)
+          this.trace(
+            'tool',
+            summaryText,
+            undefined,
+            redactedCall.name,
+            result.ok,
+            scrubDataForTrajectory(result.data)
+          )
+          this.ingestToolObservation(result)
+          llmMessages.push({
+            role: 'tool',
+            tool_call_id: item.tc.id,
+            content: formatLlmToolContent(redactedCall.name, result, summaryText, map)
+          })
+          if (visionEnabled && redactedCall.name === 'screenshot' && result.ok && result.image) {
+            pendingImages.push(result.image)
+          }
+        }
+        this.emit()
+        if (!runStillActive) return
+      } else {
+        for (const tc of toolCalls) {
+          if (!this.isActiveRun(gen)) break
+          while (this.paused && this.isActiveRun(gen)) await sleep(150)
+          if (!this.isActiveRun(gen)) break
+
+          if (this.abort?.signal.aborted) {
+            llmMessages.push({
+              role: 'tool',
+              tool_call_id: tc.id,
+              content: JSON.stringify({ ok: false, error: 'Aborted before execution' })
+            })
+            continue
+          }
+
+          const rawCall = toolCallFromLlm(tc)
+          if (!rawCall) {
+            llmMessages.push({
+              role: 'tool',
+              tool_call_id: tc.id,
+              content: JSON.stringify({ ok: false, error: `Unknown tool: ${tc.function.name}` })
+            })
+            continue
+          }
+
+          const redactedArgs = scrubCallArgsForTrajectory(rawCall)
+          const resolvedArgs = resolveCallPlaceholders(rawCall, map)
+          const redactedCall: ToolCall = { id: rawCall.id, name: rawCall.name, args: redactedArgs }
+          const resolvedCall: ToolCall = { id: rawCall.id, name: rawCall.name, args: resolvedArgs }
+
+          const action: AgentAction = {
+            type: redactedCall.name,
+            label: redactedCall.name,
+            detail: summarizeArgs(redactedCall),
+            status: 'running'
+          }
+          actions.push(action)
+          this.emit()
+
+          if (redactedCall.name === 'ask_human') {
+            action.status = 'waiting'
+            this.waitingQuestion = String(redactedCall.args.question ?? 'Need your help')
+            this.status = 'waiting_human'
+            this.transferOwnershipToHumanIfSafe('Waiting for human')
+            if (this.policy.pauseOnAskHuman) this.paused = true
+            this.trace('tool', 'ask_human', this.waitingQuestion, 'ask_human', true)
+            llmMessages.push({
+              role: 'tool',
+              tool_call_id: tc.id,
+              content: JSON.stringify({ ok: true, note: 'Waiting for human reply' })
+            })
+            // Pad remaining tool_calls so resumeLlmAfterHuman does not 400 (missing tool results).
+            const askIdx = toolCalls.indexOf(tc)
+            for (let i = askIdx + 1; i < toolCalls.length; i++) {
+              const skipped = toolCalls[i]
+              llmMessages.push({
+                role: 'tool',
+                tool_call_id: skipped.id,
+                content: JSON.stringify({ ok: false, error: 'Skipped: waiting for human' })
+              })
+            }
+            this.humanHandoff = {
+              kind: 'llm',
+              goal,
+              llmMessages: [...llmMessages],
+              map,
+              visionEnabled
+            }
+            this.emit()
+            hitAskHuman = true
+            break
+          }
+
+          this.mutationInFlight = isMutatingTool(redactedCall.name)
+          let result
+          try {
+            result = await this.executor.execute(resolvedCall, {
+              policy: this.policy,
+              mode: this.mode,
+              requestConfirm: (reason, tool, args) => this.waitForConfirm(reason, tool, args),
+              lastObservation: this.lastObservation,
+              signal: this.abort?.signal,
+              resolver: secretResolver,
+              vision: visionEnabled
+            })
+          } finally {
+            this.mutationInFlight = false
+            if (this.pendingOwnershipTransfer && this.isActiveRun(gen)) {
+              this.pendingOwnershipTransfer = false
+              this.tabs.transferAgentTabsToHuman()
+            } else if (this.pendingOwnershipTransfer) {
+              this.pendingOwnershipTransfer = false
+            }
+          }
+
+          if (!this.isActiveRun(gen)) {
+            if (action.status === 'running') {
+              action.status = 'error'
+              action.detail = 'Stopped'
+              this.emit()
+            }
+            return
+          }
+
+          this.stepCount++
+          const summaryText = redactTextForTrajectory(result.summary ?? '')
+          this.lastToolNotes.push(summaryText)
+          if (this.lastToolNotes.length > 40) this.lastToolNotes = this.lastToolNotes.slice(-30)
+          this.trace(
+            'tool',
+            summaryText,
+            undefined,
+            redactedCall.name,
+            result.ok,
+            scrubDataForTrajectory(result.data)
+          )
+
+          this.ingestToolObservation(result)
+
+          action.status = result.ok ? 'done' : 'error'
+          if (!result.ok) action.detail = result.error
+          this.emit()
+
+          llmMessages.push({
+            role: 'tool',
+            tool_call_id: tc.id,
+            content: formatLlmToolContent(redactedCall.name, result, summaryText, map)
+          })
+
+          if (visionEnabled && redactedCall.name === 'screenshot' && result.ok && result.image) {
+            pendingImages.push(result.image)
+          }
+
+          if (redactedCall.name === 'done') {
+            finalSummary = String(redactedCall.args.summary ?? summaryText)
+            hitDone = true
+            break
+          }
         }
       }
 
@@ -1292,6 +1598,7 @@ function toolCallFromLlm(tc: LlmToolCall): ToolCall | null {
 
 function summarizeArgs(c: ToolCall): string {
   const a = c.args
+  if (typeof a.query === 'string' && a.query) return a.query.slice(0, 60)
   if (a.url) return String(a.url)
   if (a.ref) return String(a.ref)
   if (a.text != null && String(a.text).length > 0) {
@@ -1330,6 +1637,59 @@ function looksLikePassiveDescription(text: string): boolean {
     return true
   }
   return false
+}
+
+/**
+ * Build LLM tool message content. Trajectory stays scrubbed via scrubDataForTrajectory;
+ * profile/credentials must remain usable for form fill (passwords → secret placeholders).
+ */
+function formatLlmToolContent(
+  toolName: ToolName,
+  result: ToolResult,
+  summaryText: string,
+  map: SecretRedactionMap
+): string {
+  if (!result.ok) {
+    return slimToolResultForLlm({ ok: false, error: result.error, summary: summaryText })
+  }
+
+  if (toolName === 'get_credentials' && result.data && typeof result.data === 'object') {
+    const d = result.data as { username?: string; password?: string; id?: string }
+    let passwordField: string | undefined
+    if (typeof d.password === 'string' && d.password) {
+      const n = map.placeholders.length + 1
+      const ph = `[BROWGENT_SECRET_${n}]`
+      map.placeholders.push(ph)
+      map.rawByPlaceholder[ph] = d.password
+      passwordField = ph
+    }
+    return slimToolResultForLlm({
+      ok: true,
+      summary: summaryText,
+      data: {
+        username: d.username ?? '',
+        password: passwordField ?? '',
+        id: d.id,
+        note: 'Type password via the placeholder string — it resolves locally only.'
+      }
+    })
+  }
+
+  if (toolName === 'get_profile') {
+    // Contact fields are intentional for fill; do not email-scrub them for the model.
+    return slimToolResultForLlm({
+      ok: true,
+      summary: summaryText,
+      data: result.data
+    })
+  }
+
+  const sanitizedPayload = {
+    ok: true,
+    summary: summaryText,
+    data: scrubDataForTrajectory(result.data)
+  }
+  return slimToolResultForLlm(scrubSensitiveUrlFields(sanitizedPayload))
 }
 
 function slimData(data: unknown): unknown {
@@ -1413,19 +1773,36 @@ function scrubDataForTrajectory(data: unknown): unknown {
     const walk = (v: unknown): unknown => {
       if (v == null) return v
       if (typeof v === 'string') return redactTextForTrajectory(v)
-      if (Array.isArray(v)) return v.map(walk)
+      if (Array.isArray(v)) {
+        // Cap huge arrays (e.g. raw elements[] must never land in trajectory)
+        if (v.length > 80) return v.slice(0, 80).map(walk).concat([`…+${v.length - 80} more`])
+        return v.map(walk)
+      }
       if (typeof v === 'object') {
         const obj = v as Record<string, unknown>
         if (visited.has(obj)) return '[Circular]'
         visited.add(obj)
         const out: Record<string, unknown> = {}
         for (const [k, val] of Object.entries(obj)) {
+          // Auto-snapshots carry full elements for in-session refs; trajectory only needs count + compact
+          if (k === 'elements' && Array.isArray(val)) {
+            out.elementCount = val.length
+            continue
+          }
           if (k === 'value' && typeof val === 'string' && val.length > 0) {
             out[k] = '[REDACTED]'
-          } else if (k === 'url' || k === 'href' || k === 'finalUrl') {
+          } else if (k === 'url' || k === 'href' || k === 'finalUrl' || k === 'searchUrl') {
             out[k] = typeof val === 'string' ? safeUrlForLlm(val, 200) : walk(val)
           } else if (k === 'password' || k === 'secret' || k === 'token' || k === 'otp' || k === 'code') {
             out[k] = typeof val === 'string' ? '[REDACTED]' : walk(val)
+          } else if (k === 'compact' && typeof val === 'string' && val.length > 4000) {
+            out[k] = val.slice(0, 4000) + '…'
+          } else if (
+            (k === 'text' || k === 'textPreview' || k === 'body') &&
+            typeof val === 'string' &&
+            val.length > 4000
+          ) {
+            out[k] = val.slice(0, 4000) + '…'
           } else {
             out[k] = walk(val)
           }
@@ -1539,6 +1916,7 @@ function modeSetsResearchOnly(mode: AgentMode): boolean {
 function isMutatingTool(name: ToolName): boolean {
   switch (name) {
     case 'navigate':
+    case 'search':
     case 'back':
     case 'forward':
     case 'reload':
@@ -1556,5 +1934,7 @@ function isMutatingTool(name: ToolName): boolean {
       return false
   }
 }
+
+
 
 

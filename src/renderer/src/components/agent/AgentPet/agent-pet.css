@@ -18,7 +18,9 @@
   -webkit-app-region: no-drag;
   border-radius: 50%;
   color: var(--text-primary);
-  transition: transform 160ms var(--ease), filter 160ms var(--ease);
+  transition:
+    transform var(--dur-slow) var(--ease),
+    filter var(--dur-slow) var(--ease);
 }
 
 .agent-pet:hover {
@@ -128,27 +130,28 @@
   }
 }
 
-/* Context menu */
+/* Context menu — matches .chrome-menu */
 .agent-pet-menu {
   position: absolute;
   z-index: 80;
   min-width: 148px;
-  padding: 4px;
-  border-radius: 10px;
+  padding: var(--space-2);
+  border-radius: var(--r-lg);
   background: var(--bg-elevated);
-  border: 1px solid var(--border-strong);
+  border: var(--bw) solid var(--border-strong);
   box-shadow: var(--shadow-soft);
   list-style: none;
   margin: 0;
+  -webkit-app-region: no-drag;
 }
 
 .agent-pet-menu[data-placement='above'] {
-  bottom: calc(100% + 6px);
+  bottom: calc(100% + var(--flyout-offset-y));
   right: 0;
 }
 
 .agent-pet-menu[data-placement='below'] {
-  top: calc(100% + 6px);
+  top: calc(100% + var(--flyout-offset-y));
   right: 0;
 }
 
@@ -156,13 +159,14 @@
   display: block;
   width: 100%;
   text-align: left;
-  padding: 8px 10px;
-  border-radius: 7px;
+  min-height: var(--menu-item-min-h);
+  padding: var(--space-4) var(--space-5);
+  border-radius: var(--r-md);
   border: none;
   background: transparent;
   color: var(--text-primary);
-  font-size: 12px;
-  font-weight: 550;
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semibold);
   cursor: pointer;
 }
 

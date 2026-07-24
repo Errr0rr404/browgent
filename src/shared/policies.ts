@@ -57,10 +57,12 @@ export const RESEARCH_TOOLS = new Set([
   'done',
   'ask_human',
   'navigate',
+  'search',
   'back',
   'forward',
   'reload',
-  'new_tab'
+  'new_tab',
+  'get_profile'
 ])
 
 /** Watch mode: observation only — human drives the browser. */
@@ -73,7 +75,8 @@ export const WATCH_TOOLS = new Set([
   'list_tabs',
   'think',
   'done',
-  'ask_human'
+  'ask_human',
+  'get_profile'
 ])
 
 /** Schemes the agent may open via navigate / new_tab (blocks file:/data: exfil). */

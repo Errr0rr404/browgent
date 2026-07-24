@@ -3,5 +3,7 @@ export type SettingsSection =
   | 'agent'
   | 'brain'
   | 'privacy'
+  | 'import'
+  | 'profile'
   | 'search'
   | 'shortcuts'

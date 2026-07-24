@@ -125,7 +125,7 @@ export function HistoryPage({ open, onClose, onOpenUrl }: Props): React.JSX.Elem
           </div>
           <button
             type="button"
-            className="history-clear-btn"
+            className="history-clear-btn settings-btn settings-btn-danger"
             disabled={entries.length === 0}
             onClick={() => {
               if (!window.confirm('Clear all browsing history?')) return

@@ -5,15 +5,19 @@
  * inserting a <script> into the DOM (executes in page context). Required so
  * Google / Akamai / similar checks do not see Electron automation signals.
  *
+ * ALWAYS force Google Chrome Client Hints — Electron’s native userAgentData
+ * omits “Google Chrome”, which triggers:
+ *   “This browser or app may not be secure”
+ * on accounts.google.com. Main process later upgrades versions via
+ * installGuestStealthPatches.
+ *
  * Registered on partition persist:browgent-pages for every guest tab.
  */
 
-// Static early patch (no Node in sandbox). Full userAgentData is applied from
-// main via installGuestStealthPatches with the real Chrome version.
+// Static early patch (no Node in sandbox). Version placeholders are upgraded
+// from main with the real Chromium version as soon as the page is ready.
 const MAIN_WORLD_PATCH = `(() => {
-  if (globalThis.__browgentIdentityPatched) return;
-  globalThis.__browgentIdentityPatched = true;
-
+  // Always re-assert Chrome brands; do not bail if a partial native UAD exists.
   try {
     Object.defineProperty(Navigator.prototype, 'webdriver', {
       get: () => undefined,
@@ -31,7 +35,6 @@ const MAIN_WORLD_PATCH = `(() => {
   } catch (_) {}
 
   try {
-    // Prefer undefined over true for automation probes that read the own-property
     if (navigator.webdriver === true) {
       Object.defineProperty(navigator, 'webdriver', {
         get: () => undefined,
@@ -41,39 +44,67 @@ const MAIN_WORLD_PATCH = `(() => {
   } catch (_) {}
 
   try {
-    // Placeholder brands until main injects version-accurate userAgentData
-    if (!navigator.userAgentData) {
-      const brands = [
-        { brand: 'Google Chrome', version: '136' },
-        { brand: 'Chromium', version: '136' },
-        { brand: 'Not.A/Brand', version: '99' }
-      ];
-      Object.defineProperty(Navigator.prototype, 'userAgentData', {
-        get: () => ({
+    // GREASE-style brand order matches stock Chrome headers we send from main.
+    // Version is a best-effort placeholder; main upgrades to process.versions.chrome.
+    const major = '136';
+    const full = '136.0.0.0';
+    const platform =
+      /Mac/i.test(navigator.platform) ? 'macOS' :
+      /Win/i.test(navigator.platform) ? 'Windows' : 'Linux';
+    const brands = [
+      { brand: 'Not.A/Brand', version: '99' },
+      { brand: 'Google Chrome', version: major },
+      { brand: 'Chromium', version: major }
+    ];
+    const fullVersionList = [
+      { brand: 'Not.A/Brand', version: '10.0.1.4' },
+      { brand: 'Google Chrome', version: full },
+      { brand: 'Chromium', version: full }
+    ];
+    // Infer arch from platform/UA — do not hardcode arm (breaks Intel Mac / x64 Linux).
+    const arch =
+      /arm|aarch64/i.test(navigator.platform || '') ||
+      /arm|aarch64/i.test(navigator.userAgent || '')
+        ? 'arm'
+        : 'x86';
+    const uad = {
+      brands,
+      mobile: false,
+      platform,
+      getHighEntropyValues: async (hints) => {
+        const out = {
           brands,
           mobile: false,
-          platform: 'macOS',
-          getHighEntropyValues: async () => ({
-            brands,
-            mobile: false,
-            platform: 'macOS',
-            platformVersion: '14.0.0',
-            architecture: 'arm',
-            bitness: '64',
-            model: '',
-            uaFullVersion: '136.0.0.0',
-            fullVersionList: brands.map((b) =>
-              b.brand === 'Not.A/Brand'
-                ? { brand: b.brand, version: '10.0.1.4' }
-                : { brand: b.brand, version: '136.0.0.0' }
-            )
-          }),
-          toJSON: () => ({ brands, mobile: false, platform: 'macOS' })
-        }),
+          platform,
+          platformVersion: platform === 'macOS' ? '14.0.0' : platform === 'Windows' ? '15.0.0' : '6.5.0',
+          architecture: arch,
+          bitness: '64',
+          model: '',
+          uaFullVersion: full,
+          fullVersionList
+        };
+        if (!Array.isArray(hints)) return out;
+        const filtered = { brands, mobile: false, platform };
+        for (const h of hints) {
+          if (h in out) filtered[h] = out[h];
+        }
+        return filtered;
+      },
+      toJSON: () => ({ brands, mobile: false, platform })
+    };
+    Object.defineProperty(Navigator.prototype, 'userAgentData', {
+      get: () => uad,
+      configurable: true
+    });
+    try {
+      Object.defineProperty(navigator, 'userAgentData', {
+        get: () => uad,
         configurable: true
       });
-    }
+    } catch (_) {}
   } catch (_) {}
+
+  globalThis.__browgentIdentityPatched = true;
 })();`
 
 function injectMainWorld(): void {
@@ -81,7 +112,10 @@ function injectMainWorld(): void {
     if (!document.documentElement) return
     const script = document.createElement('script')
     script.textContent = MAIN_WORLD_PATCH
-    document.documentElement.appendChild(script)
+    // Prefer insert before any existing children so we run ahead of page scripts
+    const root = document.documentElement
+    if (root.firstChild) root.insertBefore(script, root.firstChild)
+    else root.appendChild(script)
     script.remove()
   } catch {
     // ignore — CSP-blocked pages still get UA/client-hint protection from main

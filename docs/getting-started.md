@@ -97,7 +97,8 @@ Playwright attach: see [playwright.md](./playwright.md) and `examples/playwright
 3. Status bar: `mcp · :17342` → wire Claude Code ([mcp.md](./mcp.md))  
 4. Policy tab → Strict / Builder / Open  
 5. Trajectory → **Export eval JSON**  
-6. Settings → Privacy → **Export YC traction JSON** (optional)
+6. Settings → **Import** (one-click from Chrome/Arc/Edge/…) and **User Hub** (profile + password vault)
+7. Settings → Privacy → **Export YC traction JSON** (optional)
 
 | Goal | What should happen |
 |------|--------------------|
