@@ -199,6 +199,10 @@ let mainWindow: BrowserWindow | null = null
 let tabs: TabManager | null = null
 let agent: AgentSession | null = null
 let petOverlay: PetOverlay | null = null
+// Last pet position index.ts is aware of (renderer-configured or drag-end), so a window
+// resize can re-clamp the native overlay back into bounds. Not tracked: the pristine
+// bottom-right default the overlay picks internally before the renderer ever sets x/y.
+let lastPetPos: { x: number; y: number } | null = null
 let historyStore: HistoryStore | null = null
 let downloadManager: DownloadManager | null = null
 let ipcRegistered = false
@@ -236,6 +240,28 @@ function createWindow(): void {
       sandbox: true,
       spellcheck: false
     }
+  })
+
+  // Defense-in-depth: keep the chrome shell renderer locked to its own app origin
+  // (assertChromeSender checks sender identity, not origin). Guest page navigation and
+  // external links flow through TabManager's WebContentsViews / createTab — never the
+  // top-level webContents — so any navigation/popup here is unexpected and denied.
+  const isAppOrigin = (target: string): boolean => {
+    try {
+      const u = new URL(target)
+      if (u.protocol === 'file:') return true // packaged renderer (index.html)
+      const devUrl = process.env['ELECTRON_RENDERER_URL']
+      return devUrl ? u.origin === new URL(devUrl).origin : false // vite dev server
+    } catch {
+      return false
+    }
+  }
+  mainWindow.webContents.on('will-navigate', (details) => {
+    if (!isAppOrigin(details.url)) details.preventDefault()
+  })
+  mainWindow.webContents.setWindowOpenHandler(() => {
+    // The shell UI never opens native popups; deny all window.open from the chrome renderer.
+    return { action: 'deny' }
   })
 
   tabs = new TabManager(mainWindow, (state) => {
@@ -285,6 +311,7 @@ function createWindow(): void {
       }
     },
     onMoved: (x, y) => {
+      lastPetPos = { x, y }
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send(IPC.PET_MOVED, { x, y })
       }
@@ -348,8 +375,17 @@ function createWindow(): void {
     } catch {
       // ignore
     }
+    // Release the localhost MCP bridge with the window (on macOS the app stays alive
+    // after window close, otherwise the bridge would stay bound with no window driving
+    // it). createWindow() re-attach()es + start()s it; start() is idempotent.
+    try {
+      mcpBridge.stop()
+    } catch {
+      // ignore
+    }
     petOverlay?.destroy()
     petOverlay = null
+    lastPetPos = null
     tabs?.destroy()
     tabs = null
     agent = null
@@ -359,6 +395,10 @@ function createWindow(): void {
 
   mainWindow.on('resize', () => {
     tabs?.layoutActiveView()
+    // Re-clamp the pet into the new bounds so shrinking the window can't strand it
+    // off-screen. setPosition() clamps to the current content size; passing the tracked
+    // (unclamped) position means it returns to where it belongs when the window grows.
+    if (lastPetPos) petOverlay?.setPosition(lastPetPos.x, lastPetPos.y)
     petOverlay?.raise()
   })
 
@@ -509,7 +549,9 @@ function registerIpcOnce(): void {
       y?: number
     } = {}
     if (typeof c['visible'] === 'boolean') partial.visible = c['visible']
-    if (typeof c['theme'] === 'string') partial.theme = c['theme']
+    // Cap theme/form like every other string IPC arg (ensureString convention).
+    const theme = ensureOptionalString(c['theme'], 'pet.theme', 32)
+    if (theme !== undefined) partial.theme = theme
     if (
       c['mood'] === 'idle' ||
       c['mood'] === 'busy' ||
@@ -517,9 +559,14 @@ function registerIpcOnce(): void {
     ) {
       partial.mood = c['mood']
     }
-    if (typeof c['form'] === 'string') partial.form = c['form']
+    const form = ensureOptionalString(c['form'], 'pet.form', 32)
+    if (form !== undefined) partial.form = form
     if (typeof c['x'] === 'number' && Number.isFinite(c['x'])) partial.x = c['x']
     if (typeof c['y'] === 'number' && Number.isFinite(c['y'])) partial.y = c['y']
+    // Track the renderer-provided position so a window resize can re-clamp the pet.
+    if (partial.x !== undefined && partial.y !== undefined) {
+      lastPetPos = { x: partial.x, y: partial.y }
+    }
     petOverlay?.configure(partial)
   })
 
@@ -882,16 +929,25 @@ app.whenReady().then(() => {
   // Guest page tabs: deny mic/camera/notifications by default (agent browses untrusted sites)
   pageSession.setPermissionRequestHandler((_wc, _permission, callback) => callback(false))
   pageSession.setPermissionCheckHandler(() => false)
-  // Chrome UI (agent voice): allow media (mic) for speech recognition
-  session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
+  // Chrome UI (agent voice): allow the microphone for speech recognition, but never
+  // the camera. 'media' spans audio AND video, and the PetOverlay WebContentsView also
+  // inherits defaultSession — so scope grants to audio-only to avoid silently handing
+  // camera access to any default-session content.
+  session.defaultSession.setPermissionRequestHandler((_wc, permission, callback, details) => {
     if (permission === 'media') {
-      callback(true)
+      // details is a MediaAccessPermissionRequest here; mediaTypes lists what was asked.
+      // Grant audio-only (or unspecified) requests; deny as soon as 'video' appears.
+      const mediaTypes = (details as Electron.MediaAccessPermissionRequest).mediaTypes
+      const wantsVideo = Array.isArray(mediaTypes) && mediaTypes.includes('video')
+      callback(!wantsVideo)
       return
     }
     callback(false)
   })
-  session.defaultSession.setPermissionCheckHandler((_wc, permission) => {
-    return permission === 'media'
+  session.defaultSession.setPermissionCheckHandler((_wc, permission, _origin, details) => {
+    if (permission !== 'media') return false
+    // Mirror the request handler: allow mic (audio/unknown) checks, deny camera (video).
+    return details.mediaType !== 'video'
   })
 
   createWindow()
@@ -906,11 +962,10 @@ app.whenReady().then(() => {
 })
 
 app.on('second-instance', () => {
-  if (mainWindow) {
+  // Headless has no visible window to raise; match the isDestroyed guard used elsewhere.
+  if (mainWindow && !mainWindow.isDestroyed() && !getRuntimeFlags().headless) {
     if (mainWindow.isMinimized()) mainWindow.restore()
-    if (!getRuntimeFlags().headless) {
-      mainWindow.focus()
-    }
+    mainWindow.focus()
   }
 })
 
