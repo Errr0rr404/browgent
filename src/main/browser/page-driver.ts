@@ -229,80 +229,97 @@ async function resolveCenter(
   return { x: data.x, y: data.y, name: data.name }
 }
 
-async function validateClickPoint(
+/**
+ * Resolve the element center AND hit-test it in ONE injected script. Doing both in
+ * a single round-trip removes the race where the page reflows between a separate
+ * center-resolution pass and a separate validation pass — the source of flaky
+ * "point does not hit target" failures on dynamic pages.
+ */
+async function resolveAndValidateClickPoint(
   wc: WebContents,
-  ref: string | null,
-  selector: string | null,
-  x: number,
-  y: number
-): Promise<{ ok: true } | { ok: false; error: string }> {
-  const script = `
-    (() => {
-      const x = ${x};
-      const y = ${y};
-      const ref = ${JSON.stringify(ref)};
-      const sel = ${JSON.stringify(selector)};
-      const vw = window.innerWidth;
-      const vh = window.innerHeight;
-      if (x < 0 || y < 0 || x > vw || y > vh) return JSON.stringify({ ok: false, error: 'point outside viewport' });
-      const el = document.elementFromPoint(x, y);
-      if (!el) return JSON.stringify({ ok: false, error: 'no element at point' });
-      if (ref) {
-        const target = document.querySelector('[data-browgent-ref="' + CSS.escape(ref) + '"]');
-        if (!target) return JSON.stringify({ ok: false, error: 'ref stale' });
-        const ok = target === el || (target.contains && target.contains(el));
-        if (!ok) return JSON.stringify({ ok: false, error: 'point does not hit target' });
-      } else if (sel) {
-        let target = null;
-        try { target = document.querySelector(sel); } catch (_) { return JSON.stringify({ ok: false, error: 'bad selector' }); }
-        if (!target) return JSON.stringify({ ok: false, error: 'selector not found' });
-        const ok = target === el || (target.contains && target.contains(el));
-        if (!ok) return JSON.stringify({ ok: false, error: 'point does not hit target' });
-      }
-      return JSON.stringify({ ok: true });
-    })()
-  `
+  args: ToolArgs
+): Promise<{ ok: true; x: number; y: number; name?: string } | { ok: false; error: string }> {
+  const ref = typeof args.ref === 'string' ? args.ref : null
+  const selector = typeof args.selector === 'string' ? args.selector : null
+  if (!ref && !selector) return { ok: false, error: 'element not found' }
+
+  if (ref) {
+    try {
+      await highlightRef(wc, ref)
+    } catch {
+      // ignore
+    }
+  }
+
+  const script = `(() => {
+    const ref = ${JSON.stringify(ref)};
+    const sel = ${JSON.stringify(selector)};
+    let el = null;
+    if (ref) {
+      el = document.querySelector('[data-browgent-ref="' + CSS.escape(ref) + '"]');
+      if (!el) return JSON.stringify({ ok: false, error: 'ref not found' });
+    } else if (sel) {
+      try { el = document.querySelector(sel); } catch (e) { return JSON.stringify({ ok: false, error: 'bad selector' }); }
+    }
+    if (!el) return JSON.stringify({ ok: false, error: 'element not found' });
+    el.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
+    const r = el.getBoundingClientRect();
+    if (r.width < 1 || r.height < 1) return JSON.stringify({ ok: false, error: 'not visible' });
+    const x = Math.round(r.x + r.width / 2);
+    const y = Math.round(r.y + r.height / 2);
+    const vw = window.innerWidth, vh = window.innerHeight;
+    if (x < 0 || y < 0 || x > vw || y > vh) return JSON.stringify({ ok: false, error: 'point outside viewport' });
+    // Hit-test in the SAME frame the center was measured in, so layout can't shift underneath us.
+    const hit = document.elementFromPoint(x, y);
+    if (!hit) return JSON.stringify({ ok: false, error: 'no element at point' });
+    const onTarget = hit === el || (el.contains && el.contains(hit));
+    if (!onTarget) return JSON.stringify({ ok: false, error: 'point does not hit target' });
+    const name = (el.getAttribute('aria-label') || el.innerText || el.getAttribute('placeholder') || el.tagName || '').trim().slice(0, 80);
+    return JSON.stringify({ ok: true, x, y, name });
+  })()`
+
   try {
     const raw = await wc.executeJavaScript(script, true)
-    const data = typeof raw === 'string' ? JSON.parse(raw) : raw
-    return data as { ok: true } | { ok: false; error: string }
+    const data =
+      typeof raw === 'string'
+        ? (JSON.parse(raw) as { ok: boolean; x?: number; y?: number; name?: string; error?: string })
+        : raw
+    if (data?.ok && data.x != null && data.y != null) {
+      return { ok: true, x: data.x, y: data.y, name: data.name }
+    }
+    return { ok: false, error: data?.error || 'element not found' }
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : 'validate failed' }
+    return { ok: false, error: e instanceof Error ? e.message : 'resolve failed' }
   }
 }
 
 async function cdpClick(wc: WebContents, args: ToolArgs, state: RunState): Promise<DriverActionResult> {
-  const ref = typeof args.ref === 'string' ? args.ref : null
-  const selector = typeof args.selector === 'string' ? args.selector : null
-  const center = await resolveCenter(wc, args)
-  if (!center) return { ok: false, error: 'element not found', via: 'cdp' }
-
-  const validation = await validateClickPoint(wc, ref, selector, center.x, center.y)
-  if (!validation.ok) {
-    return { ok: false, error: validation.error, via: 'cdp' }
-  }
+  // Single-eval resolve+validate immediately before dispatch (no two-round-trip race).
+  const target = await resolveAndValidateClickPoint(wc, args)
+  if (!target.ok) return { ok: false, error: target.error, via: 'cdp' }
+  const { x, y, name } = target
 
   await cdp(wc, 'Input.dispatchMouseEvent', {
     type: 'mouseMoved',
-    x: center.x,
-    y: center.y,
+    x,
+    y,
     button: 'none'
   }, state)
   await cdp(wc, 'Input.dispatchMouseEvent', {
     type: 'mousePressed',
-    x: center.x,
-    y: center.y,
+    x,
+    y,
     button: 'left',
     clickCount: 1
   }, state)
   await cdp(wc, 'Input.dispatchMouseEvent', {
     type: 'mouseReleased',
-    x: center.x,
-    y: center.y,
+    x,
+    y,
     button: 'left',
     clickCount: 1
   }, state)
-  return { ok: true, name: center.name, via: 'cdp' }
+  return { ok: true, name, via: 'cdp' }
 }
 
 async function cdpHover(wc: WebContents, args: ToolArgs, state: RunState): Promise<DriverActionResult> {
@@ -317,6 +334,32 @@ async function cdpHover(wc: WebContents, args: ToolArgs, state: RunState): Promi
   return { ok: true, name: center.name, via: 'cdp' }
 }
 
+/** Collapse the caret to the end of the focused field (input/textarea/contenteditable). */
+async function moveCaretToEnd(wc: WebContents): Promise<void> {
+  const script = `(() => {
+    const el = document.activeElement;
+    if (!el) return;
+    try {
+      if (el.isContentEditable) {
+        const r = document.createRange();
+        r.selectNodeContents(el);
+        r.collapse(false);
+        const s = window.getSelection();
+        s.removeAllRanges();
+        s.addRange(r);
+      } else if (typeof el.setSelectionRange === 'function') {
+        const len = (el.value || '').length;
+        el.setSelectionRange(len, len);
+      }
+    } catch (_) {}
+  })()`
+  try {
+    await wc.executeJavaScript(script, true)
+  } catch {
+    // best effort — caret positioning is non-fatal
+  }
+}
+
 async function cdpType(wc: WebContents, args: ToolArgs, state: RunState): Promise<DriverActionResult> {
   // Focus via real click, then insert text (CDP) — clearer for SPAs than pure DOM .value
   const click = await cdpClick(wc, args, state)
@@ -329,6 +372,10 @@ async function cdpType(wc: WebContents, args: ToolArgs, state: RunState): Promis
     await cdpKey(wc, 'keyUp', 'a', mod, state)
     await cdpKey(wc, 'keyDown', 'Backspace', undefined, state)
     await cdpKey(wc, 'keyUp', 'Backspace', undefined, state)
+  } else {
+    // Not clearing: a real click lands the caret wherever it hit (often mid-value).
+    // Move it to the end so insertText APPENDS rather than splitting the value.
+    await moveCaretToEnd(wc)
   }
 
   const text = String(args.text ?? '')
@@ -336,6 +383,31 @@ async function cdpType(wc: WebContents, args: ToolArgs, state: RunState): Promis
     await cdp(wc, 'Input.insertText', { text }, state)
   }
   return { ok: true, name: click.name, via: 'cdp' }
+}
+
+/**
+ * Virtual key codes for named keys. Without these, CDP dispatchKeyEvent sends vk=0
+ * for named keys → Enter won't submit, Backspace won't delete, Tab won't move focus.
+ */
+const VK_CODES: Record<string, number> = {
+  Enter: 13,
+  Backspace: 8,
+  Tab: 9,
+  Escape: 27,
+  ArrowUp: 38,
+  ArrowDown: 40,
+  ArrowLeft: 37,
+  ArrowRight: 39,
+  Delete: 46,
+  Home: 36,
+  End: 35,
+  PageUp: 33,
+  PageDown: 34
+}
+
+function virtualKeyCode(key: string): number {
+  if (key.length === 1) return key.toUpperCase().charCodeAt(0)
+  return VK_CODES[key] ?? 0
 }
 
 async function cdpKey(
@@ -354,12 +426,13 @@ async function cdpKey(
           (modifiers.includes('Shift') ? 8 : 0)
       }
     : {}
+  const vk = virtualKeyCode(key)
   await cdp(wc, 'Input.dispatchKeyEvent', {
     type,
     key,
     code: key.length === 1 ? `Key${key.toUpperCase()}` : key,
-    windowsVirtualKeyCode: key.length === 1 ? key.toUpperCase().charCodeAt(0) : 0,
-    nativeVirtualKeyCode: key.length === 1 ? key.toUpperCase().charCodeAt(0) : 0,
+    windowsVirtualKeyCode: vk,
+    nativeVirtualKeyCode: vk,
     text: type === 'keyDown' && key.length === 1 ? key : undefined,
     ...mods
   }, state)
@@ -385,10 +458,15 @@ async function cdpPress(wc: WebContents, args: ToolArgs, state: RunState): Promi
     space: ' ',
     backspace: 'Backspace',
     delete: 'Delete',
+    del: 'Delete',
     arrowdown: 'ArrowDown',
     arrowup: 'ArrowUp',
     arrowleft: 'ArrowLeft',
-    arrowright: 'ArrowRight'
+    arrowright: 'ArrowRight',
+    home: 'Home',
+    end: 'End',
+    pageup: 'PageUp',
+    pagedown: 'PageDown'
   }
   const resolved = keyMap[main.toLowerCase()] ?? main
 
@@ -396,15 +474,20 @@ async function cdpPress(wc: WebContents, args: ToolArgs, state: RunState): Promi
     await cdpKey(wc, 'keyDown', resolved, modStr, state)
     await cdpKey(wc, 'keyUp', resolved, modStr, state)
   } else if (resolved.length === 1) {
+    const vk = virtualKeyCode(resolved)
     await cdp(wc, 'Input.dispatchKeyEvent', {
       type: 'keyDown',
       text: resolved,
       key: resolved,
-      unmodifiedText: resolved
+      unmodifiedText: resolved,
+      windowsVirtualKeyCode: vk,
+      nativeVirtualKeyCode: vk
     }, state)
     await cdp(wc, 'Input.dispatchKeyEvent', {
       type: 'keyUp',
-      key: resolved
+      key: resolved,
+      windowsVirtualKeyCode: vk,
+      nativeVirtualKeyCode: vk
     }, state)
   } else {
     await cdpKey(wc, 'keyDown', resolved, undefined, state)

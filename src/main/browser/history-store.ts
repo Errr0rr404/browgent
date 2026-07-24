@@ -4,7 +4,7 @@
  */
 import { app } from 'electron'
 import { randomUUID } from 'crypto'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import type { HistoryEntry } from '../../shared/types'
 
@@ -94,7 +94,10 @@ export class HistoryStore {
         .map((url) => this.entries.get(url))
         .filter((e): e is HistoryEntry => Boolean(e))
         .slice(0, MAX_ENTRIES)
-      writeFileSync(this.path, JSON.stringify({ entries }, null, 0), 'utf8')
+      // Atomic write (tmp + rename) so a crash mid-write can't corrupt history.json.
+      const tmp = `${this.path}.tmp`
+      writeFileSync(tmp, JSON.stringify({ entries }, null, 0), 'utf8')
+      renameSync(tmp, this.path)
     } catch (err) {
       console.warn('[browgent] history save failed', err)
     }

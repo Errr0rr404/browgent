@@ -9,11 +9,17 @@ import { execFileSync } from 'child_process'
 import type { BrowserId } from '../../shared/import-types'
 import { chromiumKeychainAccount } from './browser-detect'
 
-const KEYCHAIN_CACHE = new Map<string, string>()
+// Caches BOTH successful and failed keychain/secret-tool lookups so the OS call
+// (up to 15s on macOS, or a `secret-tool` spawn on Linux) runs AT MOST ONCE per
+// browser/app per import run. Storing `null` records a negative ("attempted,
+// denied/empty") result so a denied prompt or missing keyring never re-runs the
+// synchronous exec for every one of up to 2000 password rows (which froze the app).
+const KEYCHAIN_CACHE = new Map<string, string | null>()
 
 function readMacSafeStoragePassword(service: string, account: string): string | null {
-  const cacheKey = `${service}::${account}`
-  if (KEYCHAIN_CACHE.has(cacheKey)) return KEYCHAIN_CACHE.get(cacheKey)!
+  const cacheKey = `mac::${service}::${account}`
+  if (KEYCHAIN_CACHE.has(cacheKey)) return KEYCHAIN_CACHE.get(cacheKey) ?? null
+  let secret: string | null = null
   try {
     const out = execFileSync(
       'security',
@@ -24,15 +30,50 @@ function readMacSafeStoragePassword(service: string, account: string): string | 
         stdio: ['ignore', 'pipe', 'pipe']
       }
     )
-    const secret = out.trim()
-    if (secret) {
-      KEYCHAIN_CACHE.set(cacheKey, secret)
-      return secret
-    }
+    const s = out.trim()
+    if (s) secret = s
   } catch (e) {
     console.warn('[import] keychain read failed', service, e)
   }
-  return null
+  // Cache negatives too — otherwise a denied prompt re-spawns the 15s exec per row.
+  KEYCHAIN_CACHE.set(cacheKey, secret)
+  return secret
+}
+
+function readLinuxSafeStoragePassword(browserId: BrowserId): string {
+  const cacheKey = `linux::${browserId}`
+  // Resolve once per browser per run; previously `secret-tool` was spawned per row.
+  if (KEYCHAIN_CACHE.has(cacheKey)) return KEYCHAIN_CACHE.get(cacheKey) || 'peanuts'
+  // Chromium builds register different libsecret application attributes.
+  const apps =
+    browserId === 'chrome'
+      ? ['chrome', 'chromium']
+      : browserId === 'edge'
+        ? ['microsoft-edge', 'edge']
+        : browserId === 'brave'
+          ? ['brave-browser', 'brave']
+          : browserId === 'arc'
+            ? ['arc', 'chrome']
+            : [browserId, 'chrome']
+  let secret: string | null = null
+  for (const app of apps) {
+    try {
+      const out = execFileSync('secret-tool', ['lookup', 'application', app], {
+        encoding: 'utf8',
+        timeout: 5000
+      }).trim()
+      if (out) {
+        secret = out
+        break
+      }
+    } catch {
+      /* try next */
+    }
+  }
+  // Historical default on some Linux Chromium builds when no keyring is used.
+  const resolved = secret || 'peanuts'
+  KEYCHAIN_CACHE.set(cacheKey, resolved)
+  return resolved
 }
 
 function deriveKey(safeStoragePassword: string): Buffer {
@@ -73,33 +114,7 @@ export function decryptChromiumPassword(
   if (process.platform === 'darwin') {
     secret = readMacSafeStoragePassword(account.service, account.account)
   } else if (process.platform === 'linux') {
-    // Chromium builds register different libsecret application attributes.
-    const apps =
-      browserId === 'chrome'
-        ? ['chrome', 'chromium']
-        : browserId === 'edge'
-          ? ['microsoft-edge', 'edge']
-          : browserId === 'brave'
-            ? ['brave-browser', 'brave']
-            : browserId === 'arc'
-              ? ['arc', 'chrome']
-              : [browserId, 'chrome']
-    for (const app of apps) {
-      try {
-        const out = execFileSync('secret-tool', ['lookup', 'application', app], {
-          encoding: 'utf8',
-          timeout: 5000
-        }).trim()
-        if (out) {
-          secret = out
-          break
-        }
-      } catch {
-        /* try next */
-      }
-    }
-    // Historical default on some Linux Chromium builds when no keyring is used
-    if (!secret) secret = 'peanuts'
+    secret = readLinuxSafeStoragePassword(browserId)
   }
 
   if (!secret) return null

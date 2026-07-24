@@ -38,6 +38,10 @@ export class PetOverlay {
   private dragBase: { x: number; y: number } | null = null
   /** Full-window hit target while dragging so pointer events do not drop. */
   private dragging = false
+  /** Safety net: force-clear a stuck drag if the terminal PET_DRAG_END is lost. */
+  private dragWatchdog: ReturnType<typeof setTimeout> | null = null
+  private static readonly DRAG_WATCHDOG_MS = 1000
+  private onBlur: (() => void) | null = null
   private onToggle: (() => void) | null = null
   private onHide: (() => void) | null = null
   private onMoved: ((x: number, y: number) => void) | null = null
@@ -45,6 +49,10 @@ export class PetOverlay {
 
   constructor(private readonly window: BrowserWindow) {
     this.bindIpc()
+    // If the window loses focus mid-drag (e.g. alt-tab), the renderer's pointerup —
+    // and thus PET_DRAG_END — may never arrive. Reset so the overlay stops eating clicks.
+    this.onBlur = (): void => this.forceEndDrag()
+    this.window.on('blur', this.onBlur)
   }
 
   setHandlers(opts: {
@@ -84,15 +92,19 @@ export class PetOverlay {
       this.dragBase = { x: this.state.x, y: this.state.y }
       this.applyBounds()
       this.pushState()
+      this.armDragWatchdog()
     })
     ipcMain.handle(IPC.PET_DRAG_BY, (e, dx: number, dy: number) => {
       this.assertPetSender(e)
       if (!this.dragBase) return
       if (typeof dx !== 'number' || typeof dy !== 'number') return
+      // Live drag activity — push the watchdog out so it only fires once movement stops.
+      this.armDragWatchdog()
       this.setPosition(this.dragBase.x + dx, this.dragBase.y + dy, false)
     })
     ipcMain.handle(IPC.PET_DRAG_END, (e) => {
       this.assertPetSender(e)
+      this.clearDragWatchdog()
       this.dragging = false
       this.dragBase = null
       this.applyBounds()
@@ -193,6 +205,36 @@ export class PetOverlay {
     if (emit) this.onMoved?.(nx, ny)
   }
 
+  /** (Re)arm the stuck-drag watchdog; fires once no dragBy/dragEnd arrives in time. */
+  private armDragWatchdog(): void {
+    this.clearDragWatchdog()
+    this.dragWatchdog = setTimeout(() => {
+      this.dragWatchdog = null
+      this.forceEndDrag()
+    }, PetOverlay.DRAG_WATCHDOG_MS)
+  }
+
+  private clearDragWatchdog(): void {
+    if (this.dragWatchdog) {
+      clearTimeout(this.dragWatchdog)
+      this.dragWatchdog = null
+    }
+  }
+
+  /**
+   * Force-clear a stuck drag and shrink the overlay back to the pet's bounds. Without
+   * this, a lost PET_DRAG_END leaves the transparent full-window view on top, silently
+   * swallowing every page click.
+   */
+  private forceEndDrag(): void {
+    this.clearDragWatchdog()
+    if (!this.dragging) return
+    this.dragging = false
+    this.dragBase = null
+    this.applyBounds()
+    this.pushState()
+  }
+
   private applyBounds(): void {
     if (!this.view || this.window.isDestroyed()) return
     if (this.state.x < 0 || this.state.y < 0) this.defaultPosition()
@@ -245,6 +287,15 @@ export class PetOverlay {
 
   destroy(): void {
     this.unbindIpc()
+    this.clearDragWatchdog()
+    if (this.onBlur) {
+      try {
+        if (!this.window.isDestroyed()) this.window.removeListener('blur', this.onBlur)
+      } catch {
+        /* ignore */
+      }
+      this.onBlur = null
+    }
     this.dragging = false
     this.dragBase = null
     if (this.view) {

@@ -59,15 +59,24 @@ export class PasswordVault {
   }
 
   private encrypt(plain: string): { passwordEnc: string; enc: 'safeStorage' | 'plain' } {
-    try {
-      if (safeStorage.isEncryptionAvailable()) {
+    // When OS encryption IS available we must use it. If encryptString throws we
+    // refuse to silently downgrade to reversible base64 — throw so callers (e.g.
+    // the import path) can skip + warn instead of persisting a plaintext secret.
+    if (safeStorage.isEncryptionAvailable()) {
+      try {
         const buf = safeStorage.encryptString(plain)
         return { passwordEnc: buf.toString('base64'), enc: 'safeStorage' }
+      } catch (e) {
+        throw new Error(
+          `safeStorage.encryptString failed while OS encryption is available; ` +
+            `refusing to store credential as plaintext: ${e instanceof Error ? e.message : String(e)}`
+        )
       }
-    } catch {
-      /* fall through */
     }
-    // Fallback: still local file mode 0600 — warn once via enc flag
+    // Intentional plaintext fallback — ONLY reached when the OS has no secure
+    // storage at all (isEncryptionAvailable() === false). File stays mode 0600 and
+    // enc:'plain' marks it so hasPlaintextRecords() can report it. The import path
+    // blocks this case up front via encryptionAvailable().
     return { passwordEnc: Buffer.from(plain, 'utf8').toString('base64'), enc: 'plain' }
   }
 

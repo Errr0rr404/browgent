@@ -50,7 +50,8 @@ export function userAgentLooksLikeElectron(ua: string): boolean {
 function acceptLanguages(): string {
   try {
     const locale = app.getLocale?.() || 'en-US'
-    const lang = locale.replace('_', '-')
+    // Global replace: locales like "zh_Hans_CN" have more than one underscore.
+    const lang = locale.replace(/_/g, '-')
     const base = lang.split('-')[0] || 'en'
     if (base.toLowerCase() === lang.toLowerCase()) {
       return lang === 'en' ? 'en-US,en;q=0.9' : `${lang},en;q=0.8`
@@ -88,24 +89,41 @@ function archClientHint(): string {
   return process.arch === 'arm64' ? '"arm"' : '"x86"'
 }
 
+/**
+ * Known Darwin kernel major → macOS marketing major for Client-Hints
+ * `sec-ch-ua-platform-version`. Apple's year-based renumber breaks the old
+ * `darwin - 9` arithmetic at Darwin 25 (macOS 26 "Tahoe", NOT "16").
+ */
+const DARWIN_TO_MACOS: Record<number, number> = {
+  21: 12, // Monterey
+  22: 13, // Ventura
+  23: 14, // Sonoma
+  24: 15, // Sequoia
+  25: 26 // macOS 26 (Tahoe) — first year-based release
+}
+
 /** Best-effort real OS version for Client Hints (matches stock Chrome better than a hardcode). */
 function platformVersionHint(): string {
   try {
     const rel = release() // e.g. 23.6.0 on macOS, 10.0.22631 on Windows
     if (process.platform === 'darwin') {
-      // Darwin 23 → macOS 14, 24 → 15, 22 → 13
-      const major = Number(rel.split('.')[0])
-      if (Number.isFinite(major) && major >= 20) {
-        const macos = major - 9
+      const darwinMajor = Number(rel.split('.')[0])
+      if (Number.isFinite(darwinMajor)) {
+        // Unknown-future kernels follow the post-25 offset (Darwin 25 → macOS 26);
+        // very old (pre-21) kernels fall back to a sane modern default.
+        const macos =
+          DARWIN_TO_MACOS[darwinMajor] ?? (darwinMajor > 25 ? darwinMajor + 1 : 14)
         return `"${macos}.0.0"`
       }
       return '"14.0.0"'
     }
     if (process.platform === 'win32') {
-      // Windows 10/11 report 10.0.x
-      const parts = rel.split('.')
-      if (parts.length >= 3) return `"${parts[0]}.${parts[1]}.0"`
-      return '"15.0.0"'
+      // os.release() reports 10.0.<build> for BOTH Win10 and Win11. Chrome derives
+      // the platform version from the build number: Win11 (build ≥ 22000) → "15.0.0",
+      // Win10 → "10.0.0".
+      const build = Number(rel.split('.')[2])
+      if (Number.isFinite(build)) return build >= 22000 ? '"15.0.0"' : '"10.0.0"'
+      return '"10.0.0"'
     }
     return `"${rel.split('.').slice(0, 3).join('.')}"`
   } catch {

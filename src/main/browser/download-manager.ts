@@ -3,7 +3,7 @@
  */
 import { app, shell, type DownloadItem, type Session } from 'electron'
 import { randomUUID } from 'crypto'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs'
 import { basename, extname, join, resolve, sep } from 'path'
 import type { DownloadItemState, DownloadState } from '../../shared/types'
 
@@ -53,6 +53,9 @@ export class DownloadManager {
   private wired = false
   /** One-shot URL → preferred relative subfolder under downloads */
   private pendingSubfolders = new Map<string, string>()
+  /** TTL timers for the above so a queued URL that never downloads does not leak. */
+  private pendingSubfolderTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  private static readonly SUBFOLDER_TTL_MS = 60_000
 
   constructor(filePath?: string) {
     const dir = app.getPath('userData')
@@ -73,6 +76,8 @@ export class DownloadManager {
       if (!Array.isArray(data.items)) return
       for (const it of data.items) {
         if (!it?.id) continue
+        // De-dupe a corrupted downloads.json by id (keep first; order stays unique).
+        if (this.items.has(it.id)) continue
         // Never restore as progressing after restart
         const state: DownloadState =
           it.state === 'progressing' ? 'interrupted' : it.state || 'completed'
@@ -96,7 +101,10 @@ export class DownloadManager {
     }
     try {
       const items = this.getState().filter((i) => i.state !== 'progressing')
-      writeFileSync(this.path, JSON.stringify({ items }, null, 0), 'utf8')
+      // Atomic write (tmp + rename) so a crash mid-write can't corrupt downloads.json.
+      const tmp = `${this.path}.tmp`
+      writeFileSync(tmp, JSON.stringify({ items }, null, 0), 'utf8')
+      renameSync(tmp, this.path)
     } catch (err) {
       console.warn('[browgent] downloads save failed', err)
     }
@@ -121,10 +129,27 @@ export class DownloadManager {
     try {
       const u = new URL(url)
       if (u.protocol !== 'http:' && u.protocol !== 'https:') return
+      // Replace any prior pending entry/timer for this URL, then arm a fresh TTL so
+      // a queued URL that never downloads (404 / blocked / rendered inline) is dropped.
+      this.dropPendingSubfolder(u.href)
       this.pendingSubfolders.set(u.href, safe)
+      const timer = setTimeout(() => {
+        this.pendingSubfolders.delete(u.href)
+        this.pendingSubfolderTimers.delete(u.href)
+      }, DownloadManager.SUBFOLDER_TTL_MS)
+      if (typeof timer.unref === 'function') timer.unref()
+      this.pendingSubfolderTimers.set(u.href, timer)
     } catch {
       /* ignore */
     }
+  }
+
+  /** Remove a pending subfolder mapping and cancel its TTL timer. */
+  private dropPendingSubfolder(href: string): void {
+    this.pendingSubfolders.delete(href)
+    const timer = this.pendingSubfolderTimers.get(href)
+    if (timer) clearTimeout(timer)
+    this.pendingSubfolderTimers.delete(href)
   }
 
   private track(item: DownloadItem): void {
@@ -136,7 +161,7 @@ export class DownloadManager {
       const key = new URL(itemUrl).href
       const sub = this.pendingSubfolders.get(key)
       if (sub) {
-        this.pendingSubfolders.delete(key)
+        this.dropPendingSubfolder(key)
         const candidate = join(downloadsRoot, sub)
         const root = resolve(downloadsRoot) + sep
         if (resolve(candidate).startsWith(root)) {
@@ -176,25 +201,27 @@ export class DownloadManager {
 
     this.items.set(id, state)
     this.live.set(id, item)
-    // Never evict in-flight downloads from the ordered list / map.
-    const progressing = new Set(
-      this.order.filter((oid) => this.items.get(oid)?.state === 'progressing' || this.live.has(oid))
-    )
-    progressing.add(id)
-    const rest = this.order.filter((x) => x !== id && !progressing.has(x))
-    this.order = [id, ...[...progressing].filter((x) => x !== id), ...rest].slice(0, MAX_TRACKED)
-    // If still over, drop completed/cancelled only
-    while (this.order.length > MAX_TRACKED) {
-      const dropIdx = this.order.map((oid, i) => ({ oid, i })).reverse().find(({ oid }) => {
-        const it = this.items.get(oid)
-        return it && it.state !== 'progressing' && !this.live.has(oid)
-      })
-      if (!dropIdx) break
-      this.order.splice(dropIdx.i, 1)
-      this.items.delete(dropIdx.oid)
-    }
-    for (const [k] of this.items) {
-      if (!this.order.includes(k) && !this.live.has(k)) this.items.delete(k)
+    // Newest download to the front; keep prior order for the rest.
+    this.order = [id, ...this.order.filter((x) => x !== id)]
+    // Cap the list WITHOUT ever evicting an in-flight (progressing/live) download —
+    // only the completed/historical tail is trimmed. A slice(0, MAX_TRACKED) could
+    // otherwise drop a currently-downloading item off the end of the list.
+    const isInFlight = (oid: string): boolean =>
+      this.live.has(oid) || this.items.get(oid)?.state === 'progressing'
+    if (this.order.length > MAX_TRACKED) {
+      let completedBudget = MAX_TRACKED - this.order.filter(isInFlight).length
+      const kept: string[] = []
+      for (const oid of this.order) {
+        if (isInFlight(oid)) {
+          kept.push(oid) // always retained, even if in-flight count exceeds the cap
+        } else if (completedBudget > 0) {
+          kept.push(oid)
+          completedBudget--
+        } else {
+          this.items.delete(oid) // evict oldest completed/historical entry
+        }
+      }
+      this.order = kept
     }
     this.emit()
 
