@@ -649,7 +649,7 @@
   animation-delay: 0ms;
 }
 .floating-pet-welcome-dot--invader {
-  background: #2a2a2a;
+  background: linear-gradient(135deg, var(--text-secondary), var(--text-primary));
   animation-delay: 0.22s;
 }
 .floating-pet-welcome-dot--cloud {

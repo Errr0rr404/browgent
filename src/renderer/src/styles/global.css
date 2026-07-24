@@ -67,7 +67,7 @@
   --space-12: 32px;
 
   /* Type scale (integer sizes only) */
-  --fs-2xs: 9px; /* badges, tab owner */
+  --fs-2xs: 10px; /* badges, tab owner (bumped 9→10 for legibility) */
   --fs-xs: 10px; /* mono section labels */
   --fs-sm: 11px; /* meta, statusbar, counts */
   --fs-md: 12px; /* tab titles, compact labels, chips */
@@ -77,7 +77,7 @@
   --fs-2xl: 26px; /* new-tab greeting */
 
   /* Control hit targets */
-  --ctrl-xs: 18px; /* tab close */
+  --ctrl-xs: 24px; /* tab close — enlarged hit area (12px icon stays centered) */
   --ctrl-sm: 28px; /* dense icons (sidebar, find, panel headers) */
   --ctrl-md: 32px; /* primary toolbar icon buttons */
   --ctrl-lg: 36px; /* omnibox / primary CTA height */

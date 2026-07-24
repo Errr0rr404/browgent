@@ -66,6 +66,12 @@
   --bubble-user: linear-gradient(180deg, #252b3c, #1d2332);
   --bubble-assistant: linear-gradient(180deg, #171c28, #131722);
   --tab-active: linear-gradient(90deg, rgba(62, 224, 197, 0.1), rgba(255, 255, 255, 0.04));
+
+  /* Token parity: semantic + elevation (dark bg swallows dark shadows → add accent glow) */
+  --success: #4ade9d;
+  --r-xl: 20px;
+  --shadow-float: 0 12px 32px rgba(0, 0, 0, 0.55), 0 0 20px rgba(62, 224, 197, 0.08);
+  --shadow-bubble: 0 2px 10px rgba(0, 0, 0, 0.4);
 }
 
 /* ── Terminal (Dev) ───────────────────────────────────────── */
@@ -122,6 +128,13 @@
   --tab-active: rgba(63, 185, 80, 0.12);
   --shadow-soft: 0 8px 24px rgba(0, 0, 0, 0.5);
   --shadow-panel: -8px 0 24px rgba(0, 0, 0, 0.4);
+
+  /* Token parity: semantic + elevation */
+  --info: #79c0ff;
+  --success: #3fb950;
+  --r-xl: 8px;
+  --shadow-float: 0 8px 24px rgba(0, 0, 0, 0.5);
+  --shadow-bubble: 0 2px 8px rgba(0, 0, 0, 0.35);
 }
 
 /* ── Matrix (Dev) ─────────────────────────────────────────── */
@@ -184,6 +197,13 @@
   --tab-active: rgba(0, 255, 65, 0.1);
   --shadow-soft: 0 0 28px rgba(0, 255, 65, 0.1);
   --shadow-panel: -8px 0 32px rgba(0, 255, 65, 0.06);
+
+  /* Token parity: semantic + elevation (glow reads on the near-black bg) */
+  --info: #43e0ff;
+  --success: #00e64d;
+  --r-xl: 4px;
+  --shadow-float: 0 10px 30px rgba(0, 0, 0, 0.6), 0 0 18px rgba(0, 255, 65, 0.12);
+  --shadow-bubble: 0 2px 10px rgba(0, 0, 0, 0.5), 0 0 8px rgba(0, 255, 65, 0.08);
 }
 
 @keyframes crt {
@@ -253,6 +273,13 @@
   --bubble-user: linear-gradient(180deg, #434c5e, #3b4252);
   --bubble-assistant: linear-gradient(180deg, #333a49, #2f3541);
   --tab-active: linear-gradient(90deg, rgba(136, 192, 208, 0.14), rgba(216, 222, 233, 0.05));
+
+  /* Token parity: was inheriting E-Ink serif + slate --info + white-halo shadows */
+  --info: #81a1c1;
+  --success: #a3be8c;
+  --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --shadow-float: 0 10px 28px rgba(0, 0, 0, 0.45);
+  --shadow-bubble: 0 2px 8px rgba(0, 0, 0, 0.3);
 }
 
 /* ── Solarized (Calm) ─────────────────────────────────────── */
@@ -299,6 +326,13 @@
   --bubble-user: linear-gradient(180deg, #0b4354, #073642);
   --bubble-assistant: linear-gradient(180deg, #05303c, #032a34);
   --tab-active: linear-gradient(90deg, rgba(42, 161, 152, 0.13), rgba(147, 161, 161, 0.04));
+
+  /* Token parity: canonical Solarized blue/green + real sans + dark shadows */
+  --info: #268bd2;
+  --success: #859900;
+  --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --shadow-float: 0 10px 28px rgba(0, 0, 0, 0.5);
+  --shadow-bubble: 0 2px 8px rgba(0, 0, 0, 0.32);
 }
 
 /* E-Ink lives in global.css :root (default). Re-apply when data-theme is set
@@ -408,6 +442,13 @@
   --bubble-user: linear-gradient(180deg, #2a1a52, #22154a);
   --bubble-assistant: linear-gradient(180deg, #1a0f38, #150c30);
   --tab-active: linear-gradient(90deg, rgba(255, 110, 199, 0.14), rgba(0, 229, 255, 0.06));
+
+  /* Token parity: geometric/techno sans + neon-glow elevation (was E-Ink serif + white halo) */
+  --info: #7aa2ff;
+  --success: #34e5b0;
+  --font-sans: 'Futura', 'Century Gothic', 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --shadow-float: 0 10px 30px rgba(0, 0, 0, 0.55), 0 0 20px rgba(255, 110, 199, 0.14);
+  --shadow-bubble: 0 2px 10px rgba(0, 0, 0, 0.4);
 }
 
 /* ── Brutalist (Loud) ─────────────────────────────────────── */
@@ -464,6 +505,13 @@
   --tab-active: #ffffff;
   --shadow-soft: 4px 4px 0 #000000;
   --shadow-panel: -4px 0 0 #000000;
+
+  /* Token parity: primary-color semantics + square hard-offset elevation */
+  --info: #0000cc;
+  --success: #008000;
+  --r-xl: 0px;
+  --shadow-float: 6px 6px 0 #000000;
+  --shadow-bubble: 4px 4px 0 #000000;
 }
 
 /* ── Theme picker UI ──────────────────────────────────────── */

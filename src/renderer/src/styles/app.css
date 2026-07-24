@@ -25,6 +25,7 @@
 
 /* ── Top chrome ─────────────────────────────────────────────── */
 .chrome-top {
+  position: relative; /* positioning context for the top-center .app-toast */
   z-index: 30;
   background: var(--chrome-grad);
   border-bottom: var(--bw, 1px) solid var(--border);
@@ -192,7 +193,7 @@
   border-radius: var(--r-sm);
   flex-shrink: 0;
   object-fit: contain;
-  background: rgba(0, 0, 0, 0.25);
+  background: color-mix(in srgb, var(--text-primary) 12%, transparent);
 }
 
 .tab-favicon.placeholder {
@@ -506,7 +507,8 @@
 
 .body > .content-hole {
   flex: 1;
-  min-width: 0;
+  /* Never let the page area collapse when side panels are open (see @media below) */
+  min-width: 240px;
 }
 
 /* ── Arc-style sidebar ──────────────────────────────────────── */
@@ -710,7 +712,7 @@
   border-radius: var(--r-sm);
   object-fit: contain;
   flex-shrink: 0;
-  background: rgba(0, 0, 0, 0.2);
+  background: color-mix(in srgb, var(--text-primary) 12%, transparent);
 }
 
 .arc-favicon-fallback {
@@ -1007,12 +1009,27 @@
 }
 
 .content-hole {
-  min-width: 0;
+  min-width: 240px;
   min-height: 0;
   flex: 1;
   background: var(--bg-app);
   position: relative;
   overflow: hidden;
+}
+
+/*
+ * Narrow-window overflow guard.
+ * The library manager is an absolute overlay (see chrome-pages.css), so the
+ * flex columns are: sidebar + content-hole(min 240) + agent. Shrink the two
+ * fixed columns below 960px so the page never collapses and the agent
+ * composer never clips off-screen — verified at 1024px and 800px with the
+ * sidebar, agent panel and library all open.
+ */
+@media (max-width: 960px) {
+  .app-shell {
+    --sidebar-w: 200px;
+    --agent-w: 360px;
+  }
 }
 
 .content-placeholder {
@@ -1225,8 +1242,8 @@
 
 .provider-badge.heuristic {
   color: var(--warning);
-  border-color: rgba(245, 193, 74, 0.28);
-  background: rgba(245, 193, 74, 0.08);
+  border-color: color-mix(in srgb, var(--warning) 35%, transparent);
+  background: color-mix(in srgb, var(--warning) 12%, transparent);
 }
 
 .thinking-bubble {
@@ -2179,13 +2196,13 @@
 .statusbar-owner.owner-agent {
   color: var(--accent);
   background: var(--accent-dim);
-  border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
+  border: var(--bw) solid color-mix(in srgb, var(--accent) 28%, transparent);
 }
 
 .statusbar-owner.owner-human {
   color: var(--text-secondary);
   background: color-mix(in srgb, var(--text-muted) 12%, transparent);
-  border: 1px solid var(--border);
+  border: var(--bw) solid var(--border);
 }
 
 .statusbar-btn.statusbar-pill {
@@ -2197,13 +2214,15 @@
   color: var(--text-primary);
 }
 
-/* App toast */
+/* App toast — anchored top-center inside the always-visible .chrome-top band
+   (bottom-center would be painted over by the native page view on live tabs). */
 .app-toast {
-  position: fixed;
-  bottom: calc(var(--statusbar-h, 30px) + 16px);
+  position: absolute;
+  top: 6px;
   left: 50%;
   transform: translateX(-50%);
-  z-index: 10050;
+  z-index: 100000;
+  -webkit-app-region: no-drag;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -2381,7 +2400,7 @@
   padding: 0 3px;
   border-radius: var(--r-pill);
   background: var(--accent);
-  color: #fff;
+  color: var(--text-inverse);
   font-size: var(--fs-2xs);
   font-weight: var(--fw-semibold);
   line-height: 14px;
@@ -2500,7 +2519,7 @@
 
 .downloads-row {
   padding: 10px 14px;
-  border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  border-bottom: var(--bw) solid color-mix(in srgb, var(--border) 70%, transparent);
 }
 
 .downloads-row:last-child {
@@ -2813,5 +2832,5 @@
   gap: 10px;
   margin-bottom: 10px;
   padding-bottom: 8px;
-  border-bottom: 1px solid var(--border, rgba(255, 255, 255, 0.06));
+  border-bottom: var(--bw) solid var(--border, rgba(255, 255, 255, 0.06));
 }

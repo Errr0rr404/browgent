@@ -1018,13 +1018,23 @@
 
 /* ── Library manager ─────────────────────────────────────────── */
 .library-manager {
-  width: 380px;
-  min-width: 380px;
-  flex-shrink: 0;
+  /*
+   * Overlay pinned over the sidebar column instead of a 4th flex column.
+   * Keeping it within [0, --sidebar-w] means it never overlaps the
+   * .content-hole rect, which the native page view paints over regardless
+   * of z-index. This also frees the column so the agent panel can't be
+   * pushed off-screen (see the @media guard in app.css).
+   */
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  z-index: 26; /* above the sidebar (25), below chrome flyouts */
+  width: var(--sidebar-w);
+  min-width: 0;
   display: flex;
   flex-direction: column;
   min-height: 0;
-  height: 100%;
   background: var(--cp-panel-grad);
   border-right: var(--cp-bw) solid var(--border-strong);
   box-shadow: 12px 0 40px rgba(0, 0, 0, 0.22);
