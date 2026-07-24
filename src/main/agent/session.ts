@@ -75,6 +75,13 @@ export class AgentSession {
   private mutationInFlight = false
   private pendingOwnershipTransfer = false
   /**
+   * Fix #2: set when a human Takeover→Resume happened mid-run. The LLM loop
+   * re-observes `resumeObserveTabId` and injects a fresh snapshot at its next
+   * clean round boundary, so the model never acts on stale pre-takeover refs.
+   */
+  private resumeContextPending = false
+  private resumeObserveTabId: string | null = null
+  /**
    * Snapshot so ask_human can resume the same LLM thread (goal + messages + secrets)
    * instead of starting a brand-new task from only the human's short answer.
    */
@@ -189,6 +196,8 @@ export class AgentSession {
     this.taskInFlight = false
     this.mutationInFlight = false
     this.pendingOwnershipTransfer = false
+    this.resumeContextPending = false
+    this.resumeObserveTabId = null
     this.tabs.releaseAgentTabs()
     this.refreshProvider()
     this.pushSystem('Session cleared. Shared browser tabs are unchanged.')
@@ -206,6 +215,8 @@ export class AgentSession {
     this.taskInFlight = false
     this.mutationInFlight = false
     this.pendingOwnershipTransfer = false
+    this.resumeContextPending = false
+    this.resumeObserveTabId = null
     this.tabs.releaseAgentTabs()
     this.pushAssistant('Stopped. You own the tabs again.')
     this.trace('system', 'Agent stopped')
@@ -243,14 +254,28 @@ export class AgentSession {
           : 'acting'
         : 'idle'
       if (this.taskInFlight) {
-        const id = this.tabs.getActiveTabId() ?? ''
+        // Fix #2: pin resume to the tab the task was actually driving (from the
+        // last observation) rather than whatever the human left focused, so the
+        // agent re-owns the correct tab even after the human switched tabs.
+        const taskTabId = this.lastObservation?.tabId ?? null
+        const id =
+          taskTabId && this.tabs.has(taskTabId)
+            ? taskTabId
+            : this.tabs.getActiveTabId() ?? ''
         if (id && this.tabs.has(id)) {
           this.tabs.setOwner(id, 'agent')
+          // Re-focus the task tab so tool calls (which default to the active tab)
+          // don't land on a tab the human switched to during takeover.
+          if (this.tabs.getActiveTabId() !== id) this.tabs.activateTab(id)
           this.tabs.applyGuardPolicy(id, {
             allowHosts: this.policy.allowHosts ?? [],
             blockHosts: this.policy.blockHosts ?? [],
             crossHostRequired: !!this.policy.confirmCrossHost
           })
+          // The human may have navigated/edited during takeover — force the LLM
+          // loop to re-observe this tab and tell the model before its next action.
+          this.resumeObserveTabId = id
+          this.resumeContextPending = true
         }
       }
     }
@@ -535,91 +560,109 @@ export class AgentSession {
     this.cancelled = false
     this.paused = false
     this.taskInFlight = true
+    // Fresh task → no pending human-takeover context carried from a previous run.
+    this.resumeContextPending = false
+    this.resumeObserveTabId = null
+    // Fix #6: run the whole body inside try/finally so an emit()/IPC/guard-policy
+    // throw can never strand the agent "busy". The finally releases the flag only
+    // for THIS generation — a newer run (stop/clear/new send bumps runGeneration)
+    // owns taskInFlight and must not have it cleared by this older invocation.
     try {
-      this.onAgentRunStarted?.()
-    } catch {
-      // metrics must never break the agent
-    }
-    this.currentGoal = text
-    this.stepCount = 0
-    this.lastToolNotes = []
-    this.refreshProvider()
-    this.abort = new AbortController()
-
-    if (!opts.skipUserMessage) {
-      this.push('user', text)
-    }
-    const redactedUserText = redactSecrets(text).redacted
-    this.trace('user', redactedUserText, redactedUserText)
-    this.status = 'thinking'
-    this.tabs.setOwner(tabId ?? this.tabs.getActiveTabId(), 'agent')
-    this.tabs.applyGuardPolicy(
-      tabId ?? this.tabs.getActiveTabId() ?? '',
-      {
-        allowHosts: this.policy.allowHosts ?? [],
-        blockHosts: this.policy.blockHosts ?? [],
-        crossHostRequired: !!this.policy.confirmCrossHost
+      try {
+        this.onAgentRunStarted?.()
+      } catch {
+        // metrics must never break the agent
       }
-    )
-    this.emit()
+      this.currentGoal = text
+      this.stepCount = 0
+      this.lastToolNotes = []
+      this.refreshProvider()
+      this.abort = new AbortController()
 
-    try {
-      if (this.provider !== 'heuristic') {
-        await this.runWithLlm(text, gen)
-      } else {
-        await this.runHeuristic(text, gen)
+      if (!opts.skipUserMessage) {
+        this.push('user', text)
       }
-    } catch (e) {
-      if (!this.isActiveRun(gen)) return
-      const err = e instanceof Error ? e.message : 'Agent error'
-      this.trace('system', 'Agent error', err)
-      // Fallback to heuristics only when no mutating steps ran yet (avoid re-submits).
-      if (this.provider !== 'heuristic' && this.isActiveRun(gen) && this.stepCount === 0) {
-        this.pushSystem(
-          `${getProviderDisplayName()} error — falling back to heuristics: ${err}`
-        )
-        this.emit()
-        try {
+      const redactedUserText = redactSecrets(text).redacted
+      this.trace('user', redactedUserText, redactedUserText)
+      this.status = 'thinking'
+      this.tabs.setOwner(tabId ?? this.tabs.getActiveTabId(), 'agent')
+      this.tabs.applyGuardPolicy(
+        tabId ?? this.tabs.getActiveTabId() ?? '',
+        {
+          allowHosts: this.policy.allowHosts ?? [],
+          blockHosts: this.policy.blockHosts ?? [],
+          crossHostRequired: !!this.policy.confirmCrossHost
+        }
+      )
+      this.emit()
+
+      try {
+        if (this.provider !== 'heuristic') {
+          await this.runWithLlm(text, gen)
+        } else {
           await this.runHeuristic(text, gen)
-        } catch (e2) {
-          if (!this.isActiveRun(gen)) return
-          const err2 = e2 instanceof Error ? e2.message : 'Heuristic error'
-          this.pushAssistant(`Failed: ${err2}`)
+        }
+      } catch (e) {
+        if (!this.isActiveRun(gen)) return
+        const err = e instanceof Error ? e.message : 'Agent error'
+        this.trace('system', 'Agent error', err)
+        // Fix #1b: distinguish "no LLM configured" (the heuristic planner IS the
+        // intended brain) from "a configured LLM call failed" (a real error to
+        // surface). Only downgrade to heuristics when the LLM genuinely is not
+        // configured — never swallow a 401/404/429/network failure into a silent
+        // heuristic run. (A run that STARTED heuristic already has provider
+        // 'heuristic' and skips this branch, so heuristic never re-runs itself.)
+        if (
+          this.provider !== 'heuristic' &&
+          !isLlmConfigured() &&
+          this.isActiveRun(gen) &&
+          this.stepCount === 0
+        ) {
+          this.pushSystem(`No LLM configured — using the heuristic planner: ${err}`)
+          this.emit()
+          try {
+            await this.runHeuristic(text, gen)
+          } catch (e2) {
+            if (!this.isActiveRun(gen)) return
+            const err2 = e2 instanceof Error ? e2.message : 'Heuristic error'
+            this.pushAssistant(`Failed: ${err2}`)
+            this.status = 'error'
+            this.pendingOwnershipTransfer = false
+            this.tabs.releaseAgentTabs()
+            this.emit()
+            return
+          }
+        } else if (this.isActiveRun(gen)) {
+          // Configured LLM failed (or steps already ran): surface the error to the
+          // user; do NOT silently fall back to the heuristic planner.
+          this.pushAssistant(
+            this.stepCount > 0
+              ? `Stopped after LLM error (partial progress kept — check trajectory): ${err}`
+              : `Failed: ${err}`
+          )
           this.status = 'error'
-          this.taskInFlight = false
           this.pendingOwnershipTransfer = false
           this.tabs.releaseAgentTabs()
           this.emit()
           return
         }
-      } else if (this.isActiveRun(gen)) {
-        this.pushAssistant(
-          this.stepCount > 0
-            ? `Stopped after LLM error (partial progress kept — check trajectory): ${err}`
-            : `Failed: ${err}`
-        )
-        this.status = 'error'
-        this.taskInFlight = false
-        this.pendingOwnershipTransfer = false
-        this.tabs.releaseAgentTabs()
+      }
+
+      if (!this.isActiveRun(gen)) return
+      // ask_human leaves the session waiting for the human
+      const endedWaiting = this.waitingQuestion != null || this.pendingConfirmation != null
+      if (endedWaiting) {
         this.emit()
         return
       }
-    }
-
-    if (!this.isActiveRun(gen)) return
-    // ask_human leaves the session waiting for the human
-    const endedWaiting = this.waitingQuestion != null || this.pendingConfirmation != null
-    if (endedWaiting) {
-      this.taskInFlight = false
+      this.status = 'idle'
+      this.pendingOwnershipTransfer = false
+      this.tabs.releaseAgentTabs()
       this.emit()
-      return
+    } finally {
+      // Guaranteed release of the busy flag — but only for this generation.
+      if (this.isActiveRun(gen)) this.taskInFlight = false
     }
-    this.status = 'idle'
-    this.taskInFlight = false
-    this.pendingOwnershipTransfer = false
-    this.tabs.releaseAgentTabs()
-    this.emit()
   }
 
   private isActiveRun(gen: number): boolean {
@@ -1092,58 +1135,64 @@ export class AgentSession {
     this.cancelled = false
     this.paused = false
     this.taskInFlight = true
-    this.currentGoal = handoff.goal
-    this.refreshProvider()
-    this.abort = new AbortController()
-
-    const tabId = this.tabs.getActiveTabId()
-    this.tabs.setOwner(tabId, 'agent')
-    this.tabs.applyGuardPolicy(tabId ?? '', {
-      allowHosts: this.policy.allowHosts ?? [],
-      blockHosts: this.policy.blockHosts ?? [],
-      crossHostRequired: !!this.policy.confirmCrossHost
-    })
-
-    const llmMessages: ChatMessage[] = [
-      ...baseMessages,
-      {
-        role: 'user',
-        content:
-          `Human answered your ask_human question:\n${answer}\n\n` +
-          `Continue the original task using tools. Do not re-ask unless still blocked.`
-      }
-    ]
-
-    this.status = 'thinking'
-    this.emit()
-
+    // Fresh loop → no stale human-takeover context from a previous run.
+    this.resumeContextPending = false
+    this.resumeObserveTabId = null
+    // Fix #6: guarantee taskInFlight release for this generation even on an
+    // emit()/IPC throw (mirrors runTask).
     try {
-      await this.continueLlmLoop(llmMessages, map, Boolean(handoff.visionEnabled), gen)
-    } catch (e) {
+      this.currentGoal = handoff.goal
+      this.refreshProvider()
+      this.abort = new AbortController()
+
+      const tabId = this.tabs.getActiveTabId()
+      this.tabs.setOwner(tabId, 'agent')
+      this.tabs.applyGuardPolicy(tabId ?? '', {
+        allowHosts: this.policy.allowHosts ?? [],
+        blockHosts: this.policy.blockHosts ?? [],
+        crossHostRequired: !!this.policy.confirmCrossHost
+      })
+
+      const llmMessages: ChatMessage[] = [
+        ...baseMessages,
+        {
+          role: 'user',
+          content:
+            `Human answered your ask_human question:\n${answer}\n\n` +
+            `Continue the original task using tools. Do not re-ask unless still blocked.`
+        }
+      ]
+
+      this.status = 'thinking'
+      this.emit()
+
+      try {
+        await this.continueLlmLoop(llmMessages, map, Boolean(handoff.visionEnabled), gen)
+      } catch (e) {
+        if (!this.isActiveRun(gen)) return
+        const err = e instanceof Error ? e.message : 'Agent error'
+        this.trace('system', 'Agent error after human reply', err)
+        this.pushAssistant(`Failed after human reply: ${err}`)
+        this.status = 'error'
+        this.pendingOwnershipTransfer = false
+        this.tabs.releaseAgentTabs()
+        this.emit()
+        return
+      }
+
       if (!this.isActiveRun(gen)) return
-      const err = e instanceof Error ? e.message : 'Agent error'
-      this.trace('system', 'Agent error after human reply', err)
-      this.pushAssistant(`Failed after human reply: ${err}`)
-      this.status = 'error'
-      this.taskInFlight = false
+      const endedWaiting = this.waitingQuestion != null || this.pendingConfirmation != null
+      if (endedWaiting) {
+        this.emit()
+        return
+      }
+      this.status = 'idle'
       this.pendingOwnershipTransfer = false
       this.tabs.releaseAgentTabs()
       this.emit()
-      return
+    } finally {
+      if (this.isActiveRun(gen)) this.taskInFlight = false
     }
-
-    if (!this.isActiveRun(gen)) return
-    const endedWaiting = this.waitingQuestion != null || this.pendingConfirmation != null
-    if (endedWaiting) {
-      this.taskInFlight = false
-      this.emit()
-      return
-    }
-    this.status = 'idle'
-    this.taskInFlight = false
-    this.pendingOwnershipTransfer = false
-    this.tabs.releaseAgentTabs()
-    this.emit()
   }
 
   /** Shared LLM tool loop used by runWithLlm and resumeLlmAfterHuman. */
@@ -1168,7 +1217,11 @@ export class AgentSession {
     let finalSummary = ''
     let rounds = 0
     let textOnlyNudges = 0
-    const maxRounds = Math.min(this.policy.maxSteps, 24)
+    // Fix #3: honor the user-configured policy.maxSteps (already clamped to
+    // 5..100 in setPolicy) instead of a hard 24-round cap that silently truncated
+    // tasks the user set to 40–100 steps. The 100 ceiling is a safety backstop;
+    // the per-step guard below (stepCount >= policy.maxSteps) still bounds tools.
+    const maxRounds = Math.min(this.policy.maxSteps, 100)
     const maxTextNudges = 2
     const secretResolver = (text: string): string => resolveSecretPlaceholders(text, map)
     // Goal string for handoff storage only
@@ -1182,9 +1235,23 @@ export class AgentSession {
         break
       }
 
+      // Fix #2: a human Takeover→Resume may have changed the page. At this clean
+      // round boundary (any previous tool_calls/results are fully paired) re-observe
+      // the pinned tab and inject a fresh snapshot so the model does not click/type
+      // stale refs. Only done here — never mid tool-call sequence, which would
+      // orphan tool results and 400 the provider.
+      if (this.resumeContextPending) {
+        await this.injectResumeSnapshot(llmMessages, gen)
+        if (!this.isActiveRun(gen)) break
+      }
+
       this.status = 'thinking'
       this.emit()
 
+      // Fix #7: bound llmMessages before each call so repeated ask_human handoffs
+      // (2FA-heavy flows) and long loops don't grow context into a provider
+      // context-length 400. Mirrors the this.messages trimming.
+      trimLlmMessages(llmMessages)
       if (visionEnabled) keepOnlyLatestImage(llmMessages)
 
       let turn
@@ -1192,6 +1259,10 @@ export class AgentSession {
         turn = await completeWithTools(llmMessages, this.mode, this.abort?.signal)
       } catch (e) {
         if (!this.isActiveRun(gen) || (e instanceof Error && e.name === 'AbortError')) return
+        // Fix #1a: the placeholder assistant bubble was pushed before this call.
+        // If the turn throws before any tool ran, drop it so the caller surfaces
+        // the error as a real message instead of leaving a blank agent bubble.
+        this.removeGhostAssistant(assistantId, actions)
         throw e
       }
 
@@ -1252,7 +1323,8 @@ export class AgentSession {
         const prepared = toolCalls.map((tc) => {
           const rawCall = toolCallFromLlm(tc)
           if (!rawCall) {
-            return { tc, error: `Unknown tool: ${tc.function.name}` as string }
+            // Fix #4: a provider tool_call may lack `function` — optional-chain it.
+            return { tc, error: `Unknown tool: ${tc.function?.name ?? 'unknown'}` as string }
           }
           const redactedArgs = scrubCallArgsForTrajectory(rawCall)
           const resolvedArgs = resolveCallPlaceholders(rawCall, map)
@@ -1387,7 +1459,8 @@ export class AgentSession {
             llmMessages.push({
               role: 'tool',
               tool_call_id: tc.id,
-              content: JSON.stringify({ ok: false, error: `Unknown tool: ${tc.function.name}` })
+              // Fix #4: optional-chain `function` (a malformed tool_call would throw).
+              content: JSON.stringify({ ok: false, error: `Unknown tool: ${tc.function?.name ?? 'unknown'}` })
             })
             continue
           }
@@ -1535,6 +1608,70 @@ export class AgentSession {
     if (this.isActiveRun(gen)) this.trace('assistant', redactTextForTrajectory(finalSummary).slice(0, 200))
   }
 
+  /**
+   * Fix #1: drop the placeholder assistant message a loop pushes up-front when the
+   * turn errors before producing any content or running any action — otherwise it
+   * renders as a blank agent bubble. Kept (with its action chips) once any action
+   * ran, so partial progress is preserved and the caller adds the error note.
+   */
+  private removeGhostAssistant(assistantId: string, actions: AgentAction[]): void {
+    if (actions.length > 0) return
+    const idx = this.messages.findIndex((m) => m.id === assistantId)
+    if (idx === -1) return
+    const msg = this.messages[idx]
+    if (
+      msg.role === 'assistant' &&
+      msg.content === '' &&
+      (!msg.actions || msg.actions.length === 0)
+    ) {
+      this.messages.splice(idx, 1)
+    }
+  }
+
+  /**
+   * Fix #2: after a human Takeover→Resume, re-observe the pinned tab and append a
+   * fresh snapshot to the LLM context so the model acts on the current page, not
+   * stale refs from before the takeover. Called only at a clean round boundary.
+   */
+  private async injectResumeSnapshot(llmMessages: ChatMessage[], gen: number): Promise<void> {
+    const tabId = this.resumeObserveTabId ?? this.tabs.getActiveTabId() ?? undefined
+    // Consume the flag up-front so a failed/duplicate observe can't re-loop.
+    this.resumeContextPending = false
+    this.resumeObserveTabId = null
+    if (!this.isActiveRun(gen)) return
+    try {
+      const snap = await this.tabs.observe(tabId)
+      if (!snap || !this.isActiveRun(gen)) return
+      this.lastObservation = {
+        url: safeUrlForLlm(snap.url ?? '', 200),
+        title: snap.title ?? '',
+        elements: snap.elements ?? [],
+        textPreview: (snap.textPreview ?? '').slice(0, 800),
+        tabId
+      }
+      const compact = (snap.elements ?? [])
+        .slice(0, 28)
+        .map((e) => `[${e.ref}] ${e.role}: ${e.name || e.tag}${e.href ? ` → ${e.href}` : ''}`)
+        .join('\n')
+      llmMessages.push({
+        role: 'user',
+        content:
+          `(Human took over, then resumed.) Current page is ${snap.title || 'untitled'} — ` +
+          `${safeUrlForLlm(snap.url ?? '', 200)}\n` +
+          `${(snap.textPreview ?? '').replace(/\s+/g, ' ').trim().slice(0, 400)}\n` +
+          (compact ? `Interactive (refs refreshed — earlier refs may be stale):\n${compact}\n` : '') +
+          `Re-check the page before acting; do not reuse element refs from before the takeover.`
+      })
+      this.trace(
+        'system',
+        'Resumed after takeover — injected fresh snapshot',
+        safeUrlForLlm(snap.url ?? '', 200)
+      )
+    } catch {
+      // Observe failure must not block resume — the model can still call observe.
+    }
+  }
+
   private resolveConfirm(ok: boolean): void {
     if (this.confirmResolver) this.confirmResolver(ok)
   }
@@ -1580,7 +1717,14 @@ export class AgentSession {
   }
 
   private emit(): void {
-    this.onChange(this.getState())
+    // Fix #6: state notifications are fire-and-forget — a throwing onChange (IPC to
+    // a torn-down renderer, serialization error) must never abort an agent run or
+    // leave taskInFlight stuck "busy". Swallow; the next emit() resyncs the UI.
+    try {
+      this.onChange(this.getState())
+    } catch {
+      // ignore renderer/IPC failures
+    }
   }
 }
 
@@ -1728,6 +1872,41 @@ function keepOnlyLatestImage(messages: ChatMessage[]): void {
       messages[i] = { role: 'user', content: '[earlier screenshot omitted to save context]' }
     }
   }
+}
+
+/**
+ * Fix #7: cap the stored llmMessages so repeated ask_human handoffs (2FA-heavy
+ * flows) and long tool loops don't grow the transcript into a provider
+ * context-length 400. Preserves the leading system prompt + the original goal,
+ * drops the oldest middle turns, and NEVER starts the retained tail on a 'tool'
+ * message — that would orphan a tool result whose assistant(tool_calls) parent was
+ * dropped, which providers reject. Mutates the array in place.
+ */
+const LLM_MSG_SOFT_CAP = 40
+const LLM_MSG_KEEP_TAIL = 24
+
+function trimLlmMessages(messages: ChatMessage[]): void {
+  if (messages.length <= LLM_MSG_SOFT_CAP) return
+  // Preserve the leading system prompt + the first user turn (the original goal).
+  let headEnd = 0
+  if (messages[0]?.role === 'system') headEnd = 1
+  if (messages[headEnd]?.role === 'user') headEnd += 1
+  let cut = messages.length - LLM_MSG_KEEP_TAIL
+  if (cut <= headEnd) return
+  // Advance the cut past any 'tool' messages so the retained tail begins with a
+  // user / assistant / assistant(tool_calls) — keeping tool_call↔result pairing.
+  while (cut < messages.length && messages[cut].role === 'tool') cut++
+  const dropped = cut - headEnd
+  if (dropped <= 0 || cut >= messages.length) return
+  const note: ChatMessage = {
+    role: 'user',
+    content:
+      `(Context trimmed: ${dropped} earlier message(s) from prior steps/human ` +
+      `handoffs were dropped to stay within the model's context window. Rely on ` +
+      `the latest snapshot and tool results below.)`
+  }
+  // Replace the dropped middle span with a single summary note, in place.
+  messages.splice(headEnd, dropped, note)
 }
 
 const SECRET_PLACEHOLDER_RE = /\[BROWGENT_SECRET_\d+\]/g
