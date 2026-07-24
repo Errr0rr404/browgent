@@ -26,6 +26,10 @@ import { FloatingAgentPet } from './components/agent/AgentPet/FloatingAgentPet'
 import { FirstRunModal } from './components/FirstRunModal'
 import { Toast, type ToastMessage } from './components/Toast'
 import type { AgentMode } from '@shared/policies'
+// Static import: summary.ts is already pulled into the main chunk via recipes.ts,
+// so a dynamic import here only produced a Rollup "imported both ways" warning
+// with zero code-splitting benefit.
+import { SUMMARIZE_PAGE_PROMPT } from '@shared/summary'
 import './styles/app.css'
 
 export default function App(): React.JSX.Element {
@@ -279,9 +283,7 @@ export default function App(): React.JSX.Element {
       pushToast('info', 'Open a page to summarize')
       return
     }
-    void import('@shared/summary').then(({ SUMMARIZE_PAGE_PROMPT }) => {
-      runRecipe(SUMMARIZE_PAGE_PROMPT, 'research')
-    })
+    runRecipe(SUMMARIZE_PAGE_PROMPT, 'research')
   }, [tabs, runRecipe, pushToast])
 
   // Avoid first-run modal flash before zustand rehydrates localStorage

@@ -80,6 +80,20 @@ export default defineConfig({
         '@shared': resolve('src/shared')
       }
     },
-    plugins: [react()]
+    plugins: [react()],
+    build: {
+      rollupOptions: {
+        output: {
+          // Split vendor code out of the app chunk so cold start parses less
+          // and dependency churn doesn't invalidate the whole app bundle.
+          manualChunks(id: string): string | undefined {
+            if (!id.includes('node_modules')) return undefined
+            if (id.includes('lucide')) return 'icons'
+            if (id.includes('react') || id.includes('scheduler')) return 'react-vendor'
+            return 'vendor'
+          }
+        }
+      }
+    }
   }
 })

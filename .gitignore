@@ -40,3 +40,7 @@ Thumbs.db
 # Local agent / tooling caches
 .claude-flow/
 .superpowers/
+
+# Demo/import scratch artifacts
+examples/demo-last-run.json
+_bg_snap*.tar.gz
