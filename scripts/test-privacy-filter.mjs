@@ -1,21 +1,9 @@
 /**
- * Unit smoke for privacy host-match helpers (no Electron).
- * Run: node scripts/test-privacy-filter.mjs
+ * Unit smoke for the privacy host-match helpers — imports the REAL source
+ * (src/shared/privacy-prefs.ts) via tsx so a regression here actually fails.
+ * Run: tsx scripts/test-privacy-filter.mjs   (or: npm run test:unit)
  */
-
-function hostMatchesSuffix(hostname, suffix) {
-  const h = hostname.toLowerCase().replace(/\.$/, '')
-  const s = suffix.toLowerCase().replace(/^\./, '').replace(/\.$/, '')
-  if (!h || !s) return false
-  return h === s || h.endsWith('.' + s)
-}
-
-function isHostAllowlisted(hostname, allowHosts) {
-  return allowHosts.some((a) => {
-    const t = a.trim()
-    return t.length > 0 && hostMatchesSuffix(hostname, t)
-  })
-}
+import { hostMatchesSuffix, isHostAllowlisted } from '../src/shared/privacy-prefs'
 
 let failed = 0
 function assert(cond, msg) {
@@ -31,6 +19,8 @@ assert(hostMatchesSuffix('ad.doubleclick.net', 'doubleclick.net') === true, 'suf
 assert(hostMatchesSuffix('doubleclick.net', 'doubleclick.net') === true, 'exact host')
 assert(hostMatchesSuffix('example.com', 'doubleclick.net') === false, 'no false positive')
 assert(hostMatchesSuffix('notdoubleclick.net', 'doubleclick.net') === false, 'no suffix trap')
+assert(hostMatchesSuffix('AD.DoubleClick.net', 'doubleclick.net') === true, 'case-insensitive')
+assert(hostMatchesSuffix('ad.doubleclick.net.', 'doubleclick.net') === true, 'trailing dot tolerated')
 assert(isHostAllowlisted('cdn.myapp.com', ['myapp.com']) === true, 'allowlist')
 assert(isHostAllowlisted('evil.com', ['myapp.com']) === false, 'allowlist miss')
 assert(hostMatchesSuffix('', 'x') === false, 'empty host')
