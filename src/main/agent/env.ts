@@ -22,7 +22,7 @@ export function loadEnvFile(): void {
       const text = readFileSync(file, 'utf8')
       for (const rawLine of text.split(/\r?\n/)) {
         // Allow end-of-line comments: KEY=value # comment (only when unquoted)
-        let line = rawLine.trim()
+        const line = rawLine.trim()
         if (!line || line.startsWith('#')) continue
         const eq = line.indexOf('=')
         if (eq <= 0) continue

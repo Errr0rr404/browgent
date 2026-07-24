@@ -714,8 +714,8 @@ export class TabManager {
           clearTimeout(settleTimer)
           settleTimer = null
         }
-        try { wc.removeListener('did-finish-load', onDone) } catch {}
-        try { wc.removeListener('did-fail-load', onFail) } catch {}
+        try { wc.removeListener('did-finish-load', onDone) } catch { /* listener already gone */ }
+        try { wc.removeListener('did-fail-load', onFail) } catch { /* listener already gone */ }
         if (signal) signal.removeEventListener('abort', onAbort)
       }
 

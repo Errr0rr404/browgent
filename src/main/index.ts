@@ -910,7 +910,7 @@ function registerIpcOnce(): void {
   })
 }
 
-app.whenReady().then(() => {
+void app.whenReady().then(() => {
   // Reload .env in case userData path is now available
   loadEnvFile()
   try {

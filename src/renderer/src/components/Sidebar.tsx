@@ -251,6 +251,28 @@ export function Sidebar({
     }
   }, [editingSpace])
 
+  // Declared before the early return below so every hook runs on every render
+  // (react-hooks/rules-of-hooks) — toggling the sidebar must not change hook count.
+  const pinFromPayload = useCallback(
+    (payload: FavDragPayload): boolean => {
+      if (!canAddFavorite) return false
+      if (payload.kind === 'bookmark') {
+        if (isFavorite(payload.id)) return true
+        toggleFavorite(payload.id)
+        return true
+      }
+      const url = payload.url.trim()
+      if (!url || isBlankUrl(url)) return false
+      pinCurrentAsFavorite(
+        payload.title || tabDisplayTitle(payload.title, url),
+        url,
+        payload.favicon
+      )
+      return true
+    },
+    [canAddFavorite, isFavorite, toggleFavorite, pinCurrentAsFavorite]
+  )
+
   if (!open || !space) return null
 
   const closeAndRestoreOpener = (): void => {
@@ -295,26 +317,6 @@ export function Sidebar({
       setMenu({ kind, id, anchor, openerId })
     }
   }
-
-  const pinFromPayload = useCallback(
-    (payload: FavDragPayload): boolean => {
-      if (!canAddFavorite) return false
-      if (payload.kind === 'bookmark') {
-        if (isFavorite(payload.id)) return true
-        toggleFavorite(payload.id)
-        return true
-      }
-      const url = payload.url.trim()
-      if (!url || isBlankUrl(url)) return false
-      pinCurrentAsFavorite(
-        payload.title || tabDisplayTitle(payload.title, url),
-        url,
-        payload.favicon
-      )
-      return true
-    },
-    [canAddFavorite, isFavorite, toggleFavorite, pinCurrentAsFavorite]
-  )
 
   const onFavoritesDragEnter = (e: React.DragEvent): void => {
     if (!isFavDrag(e) || !canAddFavorite) return

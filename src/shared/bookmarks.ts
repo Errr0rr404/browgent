@@ -41,7 +41,7 @@ export interface BookmarksState {
   activeSpaceId: string
 }
 
-export function faviconForUrl(url: string, size = 64): string {
+export function faviconForUrl(url: string, _size = 64): string {
   try {
     const normalized =
       url.startsWith('http://') || url.startsWith('https://') ? url : `https://${url}`

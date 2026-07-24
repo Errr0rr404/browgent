@@ -296,7 +296,7 @@ export function extractCredentials(goal: string): GoalCredentials {
 
   // email/password or email:password (common slash form)
   const slash = text.match(
-    /([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})\s*[\/|]\s*(\S+)/
+    /([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})\s*[/|]\s*(\S+)/
   )
   if (slash) {
     out.email = slash[1]
@@ -369,7 +369,7 @@ export function redactSecrets(text: string): { redacted: string; map: SecretReda
   let out = text
 
   out = out.replace(
-    /\b([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})\b\s*[\/|]\s*(\S+)/g,
+    /\b([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})\b\s*[/|]\s*(\S+)/g,
     (_m, email, rest) => `${sub(String(email))} / ${sub(String(rest ?? ''))}`
   )
 

@@ -14,7 +14,6 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs'
 import type { AgentSession } from '../agent/session'
 import type { TabManager } from '../browser/tab-manager'
 import {
-  DEFAULT_MCP_PORT,
   type McpHealthResponse,
   type McpStatus,
   type McpToolCallResponse

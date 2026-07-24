@@ -244,7 +244,9 @@ export function NewTabPage({
                 key={text}
                 type="button"
                 className="newtab-chip"
-                onClick={() => onAskAgent(text)}
+                onClick={() => {
+                  void onAskAgent(text)
+                }}
               >
                 {text}
               </button>
