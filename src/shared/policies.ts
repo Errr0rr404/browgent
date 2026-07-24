@@ -62,7 +62,11 @@ export const RESEARCH_TOOLS = new Set([
   'forward',
   'reload',
   'new_tab',
-  'get_profile'
+  'get_profile',
+  'list_assets',
+  'assert_text',
+  'assert_url',
+  'assert_element'
 ])
 
 /** Watch mode: observation only — human drives the browser. */
@@ -76,7 +80,11 @@ export const WATCH_TOOLS = new Set([
   'think',
   'done',
   'ask_human',
-  'get_profile'
+  'get_profile',
+  'list_assets',
+  'assert_text',
+  'assert_url',
+  'assert_element'
 ])
 
 /** Schemes the agent may open via navigate / new_tab (blocks file:/data: exfil). */

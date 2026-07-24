@@ -17,8 +17,16 @@ import type { ObserveSnapshot } from '../../shared/types'
 import type { DriverMode } from '../../shared/driver'
 import { getRuntimeFlags, setDriverMode as setRuntimeDriverMode } from './runtime-flags'
 import { detachDebugger, runPageAction, type DomActionKind } from './page-driver'
-import { isHttpOrHttpsOrAboutBlank, looksLikeForbiddenScheme } from '../../shared/policies'
+import {
+  isHttpOrHttpsOrAboutBlank,
+  isPrivateOrMetadataHost,
+  looksLikeForbiddenScheme
+} from '../../shared/policies'
 import { applyWebContentsUserAgent, installGuestStealthPatches } from './guest-identity'
+import { scanPageAssets, type AssetKind, type PageAsset } from './asset-scanner'
+import { maybeHandleCookieBanner } from './cookie-banner'
+import { getPrivacyStore } from './privacy-store'
+import type { DownloadManager } from './download-manager'
 
 interface AgentGuardPolicy {
   allowHosts: string[]
@@ -110,6 +118,8 @@ export class TabManager {
   onVisitMeta: ((visit: VisitRecord) => void) | null = null
   /** Find-in-page result stream for the chrome Find bar. */
   onFindResult: ((result: FindInPageResult) => void) | null = null
+  /** Optional downloads manager for asset batch saves. */
+  downloadManager: DownloadManager | null = null
 
   constructor(
     private window: BrowserWindow,
@@ -804,6 +814,49 @@ export class TabManager {
     }
   }
 
+  async listAssets(tabId?: TabId, kinds?: AssetKind[]): Promise<PageAsset[]> {
+    const wc = this.getWebContents(tabId)
+    if (!wc) return []
+    const all = await scanPageAssets(wc)
+    if (!kinds || kinds.length === 0) return all
+    const set = new Set(kinds)
+    return all.filter((a) => set.has(a.kind))
+  }
+
+  async downloadAssets(
+    urls: string[],
+    opts?: { tabId?: TabId; subfolder?: string; allowPrivateHosts?: boolean }
+  ): Promise<{ started: number; errors: string[] }> {
+    const wc = this.getWebContents(opts?.tabId)
+    if (!wc) return { started: 0, errors: ['No active page'] }
+    const errors: string[] = []
+    let started = 0
+    const sub = (opts?.subfolder || 'browgent-assets').slice(0, 80)
+    const unique = [...new Set(urls.map((u) => u.trim()).filter(Boolean))].slice(0, 50)
+    const allowPrivate =
+      opts?.allowPrivateHosts === true || process.env.BROWGENT_ALLOW_PRIVATE_HOSTS === '1'
+    for (const raw of unique) {
+      try {
+        const u = new URL(raw)
+        if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+          errors.push(`blocked scheme: ${raw.slice(0, 80)}`)
+          continue
+        }
+        const host = u.hostname.toLowerCase()
+        if (!allowPrivate && isPrivateOrMetadataHost(host)) {
+          errors.push(`blocked private/metadata host: ${host}`)
+          continue
+        }
+        this.downloadManager?.preferSubfolder(u.href, sub)
+        wc.downloadURL(u.href)
+        started += 1
+      } catch (e) {
+        errors.push(e instanceof Error ? e.message : `failed: ${raw.slice(0, 60)}`)
+      }
+    }
+    return { started, errors }
+  }
+
   destroy(): void {
     this.destroyed = true
     for (const tab of this.tabs.values()) this.destroyTab(tab)
@@ -1032,6 +1085,14 @@ export class TabManager {
       if (tab.activeAttempt) tab.activeAttempt = null
       tab.navFailedReason = null
       safeEmit()
+      // Best-effort cookie banner handling (prefs-driven; once per nav key)
+      const mode = getPrivacyStore().get().cookieBannerMode
+      if (mode !== 'off' && !this.isBlankTabUrl(tab.url) && /^https?:/i.test(tab.url)) {
+        const navKey = `${tab.id}:${tab.url}`
+        void maybeHandleCookieBanner(webContents, mode, navKey).catch(() => {
+          /* ignore */
+        })
+      }
     })
     webContents.on('did-navigate', (_e, url) => {
       tab.url = url

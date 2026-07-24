@@ -261,6 +261,17 @@ export default function App(): React.JSX.Element {
     [tabs, pushToast]
   )
 
+  const onSummarizePage = useCallback(() => {
+    const active = tabs.find((t) => t.isActive)
+    if (!active?.url || isBlankUrl(active.url)) {
+      pushToast('info', 'Open a page to summarize')
+      return
+    }
+    void import('@shared/summary').then(({ SUMMARIZE_PAGE_PROMPT }) => {
+      runRecipe(SUMMARIZE_PAGE_PROMPT, 'research')
+    })
+  }, [tabs, runRecipe, pushToast])
+
   // Avoid first-run modal flash before zustand rehydrates localStorage
   useEffect(() => {
     if (useChromePrefs.persist.hasHydrated()) {
@@ -300,7 +311,8 @@ export default function App(): React.JSX.Element {
     setDownloadsOpen,
     isBookmarkedUrl,
     toggleFavorite,
-    pinCurrentAsFavorite
+    pinCurrentAsFavorite,
+    onSummarizePage
   })
 
   const activeTab = useMemo(() => tabs.find((t) => t.isActive), [tabs])
@@ -429,6 +441,7 @@ export default function App(): React.JSX.Element {
           onToggleDownloads={toggleDownloads}
           onOpenDownloads={openDownloads}
           onDownloadsOpenChange={setDownloadsOpen}
+          onSummarizePage={onSummarizePage}
         />
         <FindBar
           open={findOpen && !chromeOverlay && !showNewTab}

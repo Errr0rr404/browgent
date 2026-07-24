@@ -53,10 +53,23 @@ export const OBSERVE_SCRIPT = `(() => {
     const rawHref = typeof el.href === 'string' ? el.href : '';
     const safeHref = rawHref && !rawHref.toLowerCase().startsWith('javascript:') ? rawHref : undefined;
 
+    // Associated label text (critical for fill_form matching on real forms)
+    let labelText = '';
+    try {
+      if (el.labels && el.labels.length) {
+        labelText = Array.from(el.labels).map(function(l) { return (l.innerText || l.textContent || ''); }).join(' ');
+      } else {
+        const closestLab = el.closest && el.closest('label');
+        if (closestLab) labelText = closestLab.innerText || closestLab.textContent || '';
+      }
+    } catch (e) { labelText = ''; }
+    const autocomplete = el.getAttribute('autocomplete') || '';
+
     let name;
     if (isFormControl) {
-      name = (ariaLabel || ariaLabelledByText || innerText || placeholder || title || 'field')
-        .trim().replace(/\\s+/g, ' ').slice(0, 120);
+      // Include nameAttr + labels + autocomplete so fill_form / agents can match fields
+      name = (ariaLabel || ariaLabelledByText || labelText || innerText || placeholder || title || nameAttr || autocomplete || 'field')
+        .trim().replace(/\\s+/g, ' ').slice(0, 160);
     } else {
       name = (ariaLabel || ariaLabelledByText || innerText || placeholder || title || nameAttr || altAttr || '')
         .trim().replace(/\\s+/g, ' ').slice(0, 120);
@@ -70,6 +83,8 @@ export const OBSERVE_SCRIPT = `(() => {
       href: safeHref,
       placeholder: el.getAttribute('placeholder') || undefined,
       value,
+      autocomplete: autocomplete || undefined,
+      nameAttr: nameAttr || undefined,
       bbox: { x: Math.round(rect.x), y: Math.round(rect.y), w: Math.round(rect.width), h: Math.round(rect.height) }
     });
   }

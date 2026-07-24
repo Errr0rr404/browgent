@@ -27,6 +27,7 @@ interface Options {
   isBookmarkedUrl: (url: string) => BookmarkId | null
   toggleFavorite: (id: BookmarkId) => void
   pinCurrentAsFavorite: (title: string, url: string, favicon?: string) => void
+  onSummarizePage?: () => void
 }
 
 /** Global chrome keyboard shortcuts (⌘T/W/L/J, Esc, tab switch, …). */
@@ -51,7 +52,8 @@ export function useAppShortcuts({
   setDownloadsOpen,
   isBookmarkedUrl,
   toggleFavorite,
-  pinCurrentAsFavorite
+  pinCurrentAsFavorite,
+  onSummarizePage
 }: Options): void {
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
@@ -181,6 +183,11 @@ export function useAppShortcuts({
         setSettingsOpen(false)
         setDownloadsOpen?.(false)
       }
+      if (key === 'u' && e.shiftKey) {
+        e.preventDefault()
+        onSummarizePage?.()
+        return
+      }
       if (e.key === 'p' && !e.shiftKey) {
         e.preventDefault()
         if (settingsOpen || historyOpen) return
@@ -244,6 +251,7 @@ export function useAppShortcuts({
     setSettingsOpen,
     setHistoryOpen,
     setFindOpen,
-    setDownloadsOpen
+    setDownloadsOpen,
+    onSummarizePage
   ])
 }

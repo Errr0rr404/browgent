@@ -83,6 +83,7 @@ function buildShortcuts(mod: string): Array<{ label: string; keys: string[] }> {
     { label: 'Find in page', keys: [mod, 'F'] },
     { label: 'History', keys: [mod, 'Y'] },
     { label: 'Downloads', keys: [mod, shift, 'J'] },
+    { label: 'Summarize page', keys: [mod, shift, 'U'] },
     { label: 'Print page', keys: [mod, 'P'] },
     { label: 'Zoom in / out / reset', keys: [mod, '+ / − / 0'] },
     { label: 'Switch to tab 1–9', keys: [mod, '1–9'] },
@@ -564,6 +565,7 @@ export function SettingsPage({
                     <code className="settings-code">persist:browgent-pages</code>.
                   </p>
                 </div>
+                <PrivacyBlockingCard />
                 <div className="settings-card settings-card-pad">
                   <div className="settings-toggle-row">
                     <span className="settings-toggle-text">
@@ -745,6 +747,114 @@ export function SettingsPage({
           </div>
         </div>
       </div>
+    </div>
+  )
+}
+
+function PrivacyBlockingCard(): React.JSX.Element {
+  const [prefs, setPrefs] = useState<import('@shared/privacy-prefs').PrivacyPrefs | null>(null)
+  const [stats, setStats] = useState<import('@shared/privacy-prefs').PrivacyStats | null>(null)
+  const [allowText, setAllowText] = useState('')
+
+  useEffect(() => {
+    if (!window.browgent?.getPrivacyPrefs) return
+    void window.browgent.getPrivacyPrefs().then((p) => {
+      setPrefs(p)
+      setAllowText((p.allowHosts || []).join('\n'))
+    })
+    void window.browgent.getPrivacyStats?.().then(setStats)
+    const unsub = window.browgent.onPrivacyState?.((snap) => {
+      setPrefs(snap.prefs)
+      setStats(snap.stats)
+    })
+    return () => unsub?.()
+  }, [])
+
+  const patch = useCallback(async (partial: Partial<import('@shared/privacy-prefs').PrivacyPrefs>) => {
+    if (!window.browgent?.setPrivacyPrefs) return
+    const next = await window.browgent.setPrivacyPrefs(partial)
+    setPrefs(next)
+  }, [])
+
+  if (!prefs) {
+    return (
+      <div className="settings-card settings-card-pad">
+        <p className="settings-lead">Loading privacy settings…</p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="settings-card settings-card-pad">
+      <p className="settings-toggle-label" style={{ marginBottom: 8 }}>
+        Blocking
+      </p>
+      <p className="settings-toggle-sub" style={{ marginBottom: 10 }}>
+        Network filter on guest tabs only. Compact host list — not full uBlock.
+        Session blocked: {stats?.blockedSession ?? 0} · all time: {stats?.blockedTotal ?? 0}
+        {stats?.lastBlockedHost ? ` · last: ${stats.lastBlockedHost}` : ''}
+      </p>
+      <ToggleRow
+        label="Block ads"
+        sub="Cancel known ad network requests"
+        on={prefs.blockAds}
+        onToggle={() => void patch({ blockAds: !prefs.blockAds })}
+      />
+      <ToggleRow
+        label="Block trackers"
+        sub="Analytics and common tracking pixels"
+        on={prefs.blockTrackers}
+        onToggle={() => void patch({ blockTrackers: !prefs.blockTrackers })}
+      />
+      <ToggleRow
+        label="Show shield badge"
+        sub="Status bar shows session block count"
+        on={prefs.showShieldBadge}
+        onToggle={() => void patch({ showShieldBadge: !prefs.showShieldBadge })}
+      />
+      <div className="settings-toggle-row" style={{ alignItems: 'flex-start' }}>
+        <span className="settings-toggle-text">
+          <span className="settings-toggle-label">Cookie banners</span>
+          <span className="settings-toggle-sub">
+            Best-effort auto-click after page load (Reject preferred recommended)
+          </span>
+        </span>
+        <select
+          className="settings-num"
+          value={prefs.cookieBannerMode}
+          aria-label="Cookie banner mode"
+          onChange={(e) => {
+            const v = e.target.value
+            if (v === 'off' || v === 'reject' || v === 'accept') {
+              void patch({ cookieBannerMode: v })
+            }
+          }}
+        >
+          <option value="off">Off</option>
+          <option value="reject">Prefer reject</option>
+          <option value="accept">Prefer accept</option>
+        </select>
+      </div>
+      <label className="settings-toggle-text" style={{ display: 'block', marginTop: 10 }}>
+        <span className="settings-toggle-label">Allowlist hosts</span>
+        <span className="settings-toggle-sub" style={{ display: 'block', marginBottom: 6 }}>
+          One host suffix per line (never blocked)
+        </span>
+        <textarea
+          className="settings-num mono"
+          style={{ width: '100%', minHeight: 72, resize: 'vertical' }}
+          value={allowText}
+          onChange={(e) => setAllowText(e.target.value)}
+          onBlur={() => {
+            const hosts = allowText
+              .split(/\n+/)
+              .map((h) => h.trim())
+              .filter(Boolean)
+            void patch({ allowHosts: hosts })
+          }}
+          aria-label="Allowlist hosts"
+        />
+      </label>
     </div>
   )
 }

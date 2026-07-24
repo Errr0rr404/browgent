@@ -36,6 +36,9 @@ export function StatusBar({
   const mode = agent?.mode ?? 'act'
   const [driver, setDriver] = useState<CdpEndpointStatus | null>(null)
   const [mcp, setMcp] = useState<McpStatus | null>(null)
+  const [shield, setShield] = useState<{ show: boolean; session: number; total: number } | null>(
+    null
+  )
   const [appVersion, setAppVersion] = useState<string>(APP_VERSION_LOADING)
   const zoomFactor = activeTab?.zoomFactor ?? 1
   const zoomPct = Math.round(zoomFactor * 100)
@@ -64,6 +67,29 @@ export function StatusBar({
     }, 15_000)
     return () => window.clearInterval(t)
   }, [refreshDriver, refreshMcp])
+
+  useEffect(() => {
+    if (!window.browgent?.getPrivacyPrefs) return
+    const apply = (
+      prefs: { showShieldBadge?: boolean; blockAds?: boolean; blockTrackers?: boolean },
+      stats: { blockedSession?: number; blockedTotal?: number }
+    ): void => {
+      const filtering = !!(prefs.blockAds || prefs.blockTrackers)
+      setShield({
+        show: !!prefs.showShieldBadge && filtering,
+        session: stats.blockedSession ?? 0,
+        total: stats.blockedTotal ?? 0
+      })
+    }
+    void Promise.all([
+      window.browgent.getPrivacyPrefs(),
+      window.browgent.getPrivacyStats?.() ?? Promise.resolve({ blockedSession: 0, blockedTotal: 0 })
+    ]).then(([prefs, stats]) => apply(prefs, stats)).catch(() => {
+      /* ignore */
+    })
+    const unsub = window.browgent.onPrivacyState?.((snap) => apply(snap.prefs, snap.stats))
+    return () => unsub?.()
+  }, [])
 
   useEffect(() => {
     let alive = true
@@ -113,6 +139,18 @@ export function StatusBar({
       <span className="statusbar-pill" aria-label={`${tabCount} open tabs`}>
         {tabCount} tab{tabCount === 1 ? '' : 's'}
       </span>
+      {shield?.show && (
+        <>
+          <span className="statusbar-sep" />
+          <span
+            className="statusbar-pill live"
+            title={`Blocked ${shield.session} this session · ${shield.total} all time`}
+            aria-label={`Shield blocked ${shield.session} requests this session`}
+          >
+            shield · {shield.session}
+          </span>
+        </>
+      )}
       <span className="statusbar-sep" />
       <span
         className={`statusbar-pill statusbar-agent${live ? ' live' : ''}`}

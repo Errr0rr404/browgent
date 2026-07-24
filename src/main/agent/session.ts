@@ -1929,6 +1929,8 @@ function isMutatingTool(name: ToolName): boolean {
     case 'new_tab':
     case 'close_tab':
     case 'switch_tab':
+    case 'fill_form':
+    case 'download_assets':
       return true
     default:
       return false

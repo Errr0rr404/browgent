@@ -17,6 +17,7 @@ Single index for the repo. Prefer these pages over ad-hoc notes.
 |-------|-------------|
 | [Architecture](./architecture.md) | Process model, folders, IPC, identity |
 | [Agent guide](./agent-guide.md) | Modes, tools, policies, LLM vs heuristic |
+| [QA with Browgent](./qa.md) | Assert tools, form fill, trajectories, Playwright/MCP |
 | [Shortcuts](./shortcuts.md) | Keyboard & mouse |
 | [Market map](./market.md) | Competitors + non-wedge backlog |
 | [Guest identity checklist](./guest-identity-checklist.md) | Chrome-like UA regression |

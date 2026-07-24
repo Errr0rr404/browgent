@@ -30,6 +30,12 @@ export type ToolName =
   | 'think'
   | 'get_profile'
   | 'get_credentials'
+  | 'list_assets'
+  | 'download_assets'
+  | 'fill_form'
+  | 'assert_text'
+  | 'assert_url'
+  | 'assert_element'
 
 export interface ToolDef {
   name: ToolName
@@ -193,6 +199,57 @@ export const TOOL_DEFS: ToolDef[] = [
       'Look up a saved password for the current (or given) site from the local vault. Use only when logging in; returns password for local type only.',
     params: { url: 'string?' },
     sensitive: true
+  },
+  {
+    name: 'list_assets',
+    description:
+      'List downloadable images, media, and document links on the current page (url, kind, name). Read-only.',
+    params: { tabId: 'string?', kinds: 'string?' }
+  },
+  {
+    name: 'download_assets',
+    description:
+      'Download one or more asset URLs from the page into the downloads folder. Prefer urls from list_assets. May require confirm for many files.',
+    params: { urls: 'string', tabId: 'string?', subfolder: 'string?' },
+    sensitive: true
+  },
+  {
+    name: 'fill_form',
+    description:
+      'Fill form fields using User Hub profile and/or explicit fields map. Matches by label/placeholder/name. Never fills passwords (use get_credentials). Prefer dryRun first on sensitive pages.',
+    params: {
+      useProfile: 'boolean?',
+      fields: 'string?',
+      dryRun: 'boolean?',
+      tabId: 'string?'
+    }
+  },
+  {
+    name: 'assert_text',
+    description:
+      'QA: pass if page text includes the given substring (case-insensitive). Returns ok false on failure without throwing.',
+    params: { includes: 'string', tabId: 'string?', maxChars: 'number?' }
+  },
+  {
+    name: 'assert_url',
+    description:
+      'QA: pass if current URL matches includes/equals/host constraints.',
+    params: {
+      includes: 'string?',
+      equals: 'string?',
+      host: 'string?',
+      tabId: 'string?'
+    }
+  },
+  {
+    name: 'assert_element',
+    description:
+      'QA: pass if observe snapshot has a matching ref, or nameIncludes substring on an element name.',
+    params: {
+      ref: 'string?',
+      nameIncludes: 'string?',
+      tabId: 'string?'
+    }
   }
 ]
 
@@ -232,5 +289,10 @@ export const PARALLEL_SAFE_TOOLS = new Set<ToolName>([
   'get_url',
   'list_tabs',
   'screenshot',
-  'think'
+  'think',
+  'list_assets',
+  'assert_text',
+  'assert_url',
+  'assert_element',
+  'get_profile'
 ])

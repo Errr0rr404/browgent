@@ -39,3 +39,4 @@ Thumbs.db
 
 # Local agent / tooling caches
 .claude-flow/
+.superpowers/

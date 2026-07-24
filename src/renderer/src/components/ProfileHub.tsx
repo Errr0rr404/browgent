@@ -79,10 +79,10 @@ export function ProfileHub(): React.JSX.Element {
       <div>
         <h2>User Hub</h2>
         <p className="settings-lead">
-          Store contact and address details locally. When enabled, the agent can read them via{' '}
-          <code className="settings-code">get_profile</code> to fill forms — it should never invent
-          your email or phone. Passwords from browser import live in the vault below (origins only
-          shown here).
+          Store contact and address details locally. When enabled, the agent can use{' '}
+          <code className="settings-code">get_profile</code> and <code className="settings-code">fill_form</code>{' '}
+          (try dryRun first) — it should never invent your email or phone. Passwords stay in the vault
+          below and require confirm via <code className="settings-code">get_credentials</code>.
         </p>
       </div>
 

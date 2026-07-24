@@ -10,6 +10,7 @@ import {
   Search,
   Settings2,
   ShieldAlert,
+  Sparkles,
   Star,
   X
 } from 'lucide-react'
@@ -50,6 +51,8 @@ interface Props {
   onToggleDownloads?: () => void
   onOpenDownloads?: () => void
   onDownloadsOpenChange?: (open: boolean) => void
+  /** One-click research-mode summary of the active page */
+  onSummarizePage?: () => void
 }
 
 export function Toolbar({
@@ -76,7 +79,8 @@ export function Toolbar({
   onOpenHistory,
   onToggleDownloads,
   onOpenDownloads,
-  onDownloadsOpenChange
+  onDownloadsOpenChange,
+  onSummarizePage
 }: Props): React.JSX.Element {
   const searchEngine = useChromePrefs((s) => s.searchEngine)
   const setAgentPetVisible = useChromePrefs((s) => s.setAgentPetVisible)
@@ -277,6 +281,18 @@ export function Toolbar({
       </form>
 
       <div className="toolbar-actions">
+        {onSummarizePage && (
+          <button
+            type="button"
+            className="icon-btn"
+            aria-label="Summarize page"
+            title="Summarize page (⌘⇧U)"
+            disabled={!activeTab?.url || isBlankUrl(activeTab.url)}
+            onClick={onSummarizePage}
+          >
+            <Sparkles size={16} strokeWidth={1.75} />
+          </button>
+        )}
         {onToggleHistory && (
           <button
             type="button"

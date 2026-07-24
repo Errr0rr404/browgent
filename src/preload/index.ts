@@ -13,6 +13,7 @@ import {
 } from '../shared/types'
 import type { AgentMode, AgentPolicy } from '../shared/policies'
 import type { CdpEndpointStatus, DriverMode } from '../shared/driver'
+import type { PrivacyPrefs, PrivacyStateSnapshot, PrivacyStats } from '../shared/privacy-prefs'
 
 const api = {
   getTabs: (): Promise<TabState[]> => ipcRenderer.invoke(IPC.TABS_GET),
@@ -168,6 +169,29 @@ const api = {
     ipcRenderer.on(IPC.DOWNLOADS_STATE, listener)
     return () => ipcRenderer.removeListener(IPC.DOWNLOADS_STATE, listener)
   },
+
+  // Privacy
+  getPrivacyPrefs: (): Promise<PrivacyPrefs> => ipcRenderer.invoke(IPC.PRIVACY_GET),
+  setPrivacyPrefs: (partial: Partial<PrivacyPrefs>): Promise<PrivacyPrefs> =>
+    ipcRenderer.invoke(IPC.PRIVACY_SET, partial),
+  getPrivacyStats: (): Promise<PrivacyStats> => ipcRenderer.invoke(IPC.PRIVACY_STATS),
+  onPrivacyState: (cb: (snap: PrivacyStateSnapshot) => void): (() => void) => {
+    const listener = (_: Electron.IpcRendererEvent, snap: PrivacyStateSnapshot): void => cb(snap)
+    ipcRenderer.on(IPC.PRIVACY_STATE, listener)
+    return () => ipcRenderer.removeListener(IPC.PRIVACY_STATE, listener)
+  },
+
+  // Page assets
+  listPageAssets: (
+    tabId?: TabId
+  ): Promise<Array<{ url: string; kind: string; name: string }>> =>
+    ipcRenderer.invoke(IPC.ASSETS_LIST, tabId),
+  downloadPageAssets: (payload: {
+    urls: string[]
+    tabId?: TabId
+    subfolder?: string
+  }): Promise<{ started: number; errors: string[] }> =>
+    ipcRenderer.invoke(IPC.ASSETS_DOWNLOAD, payload),
 
   platform: process.platform as NodeJS.Platform
 }

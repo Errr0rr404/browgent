@@ -4,6 +4,7 @@
  */
 
 import type { AgentMode } from './policies'
+import { SUMMARIZE_PAGE_PROMPT } from './summary'
 
 export interface AgentRecipe {
   id: string
@@ -20,8 +21,7 @@ export const AGENT_RECIPES: AgentRecipe[] = [
     title: 'Research summary',
     blurb: 'Read-only summary of the current page',
     mode: 'research',
-    prompt:
-      'If the tab is blank, navigate to https://example.com. Observe the page, extract the main text, list the top links, and summarize what the page is about in 3 bullets. Do not click or type.'
+    prompt: SUMMARIZE_PAGE_PROMPT
   },
   {
     id: 'form-smoke',
@@ -29,7 +29,7 @@ export const AGENT_RECIPES: AgentRecipe[] = [
     blurb: 'Fill a public demo form (no submit)',
     mode: 'act',
     prompt:
-      'Navigate to https://httpbin.org/forms/post. Observe interactive fields. Fill customer name "Browgent Demo", telephone "555-0100", email "demo@browgent.local". Do NOT submit unless I confirm. Summarize which fields you filled.'
+      'Navigate to https://httpbin.org/forms/post. Prefer fill_form with useProfile if profile has data; otherwise type customer name "Browgent Demo", telephone "555-0100", email "demo@browgent.local". Do NOT submit unless I confirm. Summarize which fields you filled.'
   },
   {
     id: 'qa-smoke',
@@ -38,6 +38,22 @@ export const AGENT_RECIPES: AgentRecipe[] = [
     mode: 'act',
     prompt:
       'I am already logged in on this tab. Observe the page. Confirm the URL and title. List primary nav items you can see (refs). Navigate to one secondary page if safe, observe again, then return. Stop and ask_human if you hit a paywall, CAPTCHA, or logout wall.'
+  },
+  {
+    id: 'qa-assert-smoke',
+    title: 'QA assert smoke',
+    blurb: 'Assert URL + visible text on current app',
+    mode: 'act',
+    prompt:
+      'You are smoke-testing the current webapp tab. get_url. assert_url host matches the current host. observe. assert_element with nameIncludes for a primary nav or main landmark if present. extract_text and assert_text for a word you actually see. Call done with a pass/fail table. ask_human on login walls.'
+  },
+  {
+    id: 'fill-profile',
+    title: 'Fill with profile',
+    blurb: 'fill_form from User Hub (no submit)',
+    mode: 'act',
+    prompt:
+      'Observe the form on this page. Call fill_form with useProfile true (dryRun true first if unsure). Then fill_form without dryRun. Do NOT submit. Report which refs were filled. ask_human if password fields are required.'
   },
   {
     id: 'takeover-handoff',

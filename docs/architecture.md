@@ -106,7 +106,8 @@ Exposed as `window.browgent` (see `src/preload/index.ts`):
 - Tabs: create, close, activate, navigate, back/forward/reload/stop, print
 - Find in page / zoom (factor get/set/in/out/reset)
 - History: list, search, delete, clear (persisted under userData)
-- Downloads: list, open, show in folder, cancel, clear, open folder
+- Downloads: list, open, show in folder, cancel, clear, open folder; page asset list/download
+- Privacy: get/set prefs (ads, trackers, cookie banners), stats push
 - Chrome layout (top/right/bottom/left) for view bounds
 - Agent: send, getState, stop, clear, pause, resume, takeover, mode, policy, confirm, reject, answerHuman, export
 - Driver: status (CDP URL when enabled, mode), setMode (`dom` | `cdp`)

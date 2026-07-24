@@ -38,7 +38,7 @@
     "playwright:example": "node examples/playwright-connect.mjs",
     "mcp": "node scripts/browgent-mcp.mjs",
     "mcp:smoke": "node scripts/mcp-bridge-smoke.mjs",
-    "test:unit": "node scripts/test-tool-schema.mjs",
+    "test:unit": "node scripts/test-tool-schema.mjs && node scripts/test-privacy-filter.mjs",
     "test:identity": "node scripts/test-identity-checklist.mjs",
     "demo:hero": "node scripts/demo-hero.mjs",
     "yc:packet": "node scripts/yc-packet.mjs",

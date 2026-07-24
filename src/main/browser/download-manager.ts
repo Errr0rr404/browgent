@@ -51,6 +51,8 @@ export class DownloadManager {
   private path: string
   private onChange: ((items: DownloadItemState[]) => void) | null = null
   private wired = false
+  /** One-shot URL → preferred relative subfolder under downloads */
+  private pendingSubfolders = new Map<string, string>()
 
   constructor(filePath?: string) {
     const dir = app.getPath('userData')
@@ -113,14 +115,43 @@ export class DownloadManager {
     })
   }
 
+  /** Queue preferred subfolder for the next download of this URL (http(s) only). */
+  preferSubfolder(url: string, subfolder: string): void {
+    const safe = safeFilename(subfolder.replace(/[\\/]+/g, '-')).slice(0, 80) || 'assets'
+    try {
+      const u = new URL(url)
+      if (u.protocol !== 'http:' && u.protocol !== 'https:') return
+      this.pendingSubfolders.set(u.href, safe)
+    } catch {
+      /* ignore */
+    }
+  }
+
   private track(item: DownloadItem): void {
     const id = randomUUID()
-    const downloadsDir = app.getPath('downloads')
-    const filename = safeFilename(item.getFilename() || basename(item.getURL()) || 'download')
+    const downloadsRoot = app.getPath('downloads')
+    const itemUrl = item.getURL()
+    let downloadsDir = downloadsRoot
+    try {
+      const key = new URL(itemUrl).href
+      const sub = this.pendingSubfolders.get(key)
+      if (sub) {
+        this.pendingSubfolders.delete(key)
+        const candidate = join(downloadsRoot, sub)
+        const root = resolve(downloadsRoot) + sep
+        if (resolve(candidate).startsWith(root)) {
+          if (!existsSync(candidate)) mkdirSync(candidate, { recursive: true })
+          downloadsDir = candidate
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+    const filename = safeFilename(item.getFilename() || basename(itemUrl) || 'download')
     // Prefer our safe path; only keep Electron's path if already under downloads.
     let savePath = item.getSavePath()
     if (savePath) {
-      const root = resolve(downloadsDir) + sep
+      const root = resolve(downloadsRoot) + sep
       if (!resolve(savePath).startsWith(root)) {
         savePath = uniqueSavePath(downloadsDir, filename)
         item.setSavePath(savePath)

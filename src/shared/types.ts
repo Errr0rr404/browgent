@@ -157,6 +157,10 @@ export interface ObserveElement {
   href?: string
   placeholder?: string
   value?: string
+  /** HTML name= attribute (form fill matching) */
+  nameAttr?: string
+  /** HTML autocomplete attribute */
+  autocomplete?: string
   bbox?: { x: number; y: number; w: number; h: number }
 }
 
@@ -275,5 +279,15 @@ export const IPC = {
 
   /** User Hub profile */
   PROFILE_GET: 'profile:get',
-  PROFILE_SET: 'profile:set'
+  PROFILE_SET: 'profile:set',
+
+  /** Privacy (ads / trackers / cookie banners) */
+  PRIVACY_GET: 'privacy:get',
+  PRIVACY_SET: 'privacy:set',
+  PRIVACY_STATS: 'privacy:stats',
+  PRIVACY_STATE: 'privacy:state',
+
+  /** Page assets (list / download) */
+  ASSETS_LIST: 'assets:list',
+  ASSETS_DOWNLOAD: 'assets:download'
 } as const

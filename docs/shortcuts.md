@@ -11,6 +11,7 @@ Modifier is **⌘** on macOS, **Ctrl** on Windows/Linux.
 | ⌘/Ctrl+F | Find in page |
 | ⌘/Ctrl+Y | History |
 | ⌘/Ctrl+⇧+J | Downloads panel |
+| ⌘/Ctrl+⇧+U | Summarize page (research mode) |
 | ⌘/Ctrl+P | Print page |
 | ⌘/Ctrl++ or = | Zoom in |
 | ⌘/Ctrl+- | Zoom out |

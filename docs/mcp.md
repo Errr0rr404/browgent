@@ -101,4 +101,4 @@ Token file (optional): `userData/mcp-bridge.json` after first launch (`app.setNa
 
 - [Playwright + CDP](./playwright.md)
 - [Agent guide](./agent-guide.md)
-- [YC readiness plan](./superpowers/plans/2026-07-23-yc-readiness.md)
+- [QA with Browgent](./qa.md)

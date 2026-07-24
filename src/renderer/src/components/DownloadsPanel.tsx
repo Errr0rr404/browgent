@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Download, FolderOpen, Trash2, X } from 'lucide-react'
+import { Download, FolderOpen, Images, Trash2, X } from 'lucide-react'
 import type { DownloadItemState } from '@shared/types'
 
 interface Props {
@@ -51,6 +51,13 @@ export function DownloadsPanel({
   activeCount = 0
 }: Props): React.JSX.Element {
   const [items, setItems] = useState<DownloadItemState[]>([])
+  const [assetBusy, setAssetBusy] = useState(false)
+  const [assetNote, setAssetNote] = useState<string | null>(null)
+  const [pageAssets, setPageAssets] = useState<
+    Array<{ url: string; kind: string; name: string }>
+  >([])
+  const [selectedUrls, setSelectedUrls] = useState<Set<string>>(() => new Set())
+  const [assetsOpen, setAssetsOpen] = useState(false)
   const [chromeHost, setChromeHost] = useState<HTMLElement | null>(null)
   const rootRef = useRef<HTMLDivElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -78,6 +85,72 @@ export function DownloadsPanel({
     onOpenChange(false)
     window.requestAnimationFrame(() => triggerRef.current?.focus())
   }, [onOpenChange])
+
+  const loadPageAssets = useCallback(async () => {
+    if (!window.browgent?.listPageAssets) {
+      setAssetNote('Asset list unavailable')
+      return
+    }
+    setAssetBusy(true)
+    setAssetNote(null)
+    try {
+      const assets = await window.browgent.listPageAssets()
+      const list = assets.slice(0, 80)
+      setPageAssets(list)
+      // Default-select images + documents
+      const defaults = list
+        .filter((a) => a.kind === 'image' || a.kind === 'document')
+        .map((a) => a.url)
+      const pick = defaults.length ? defaults : list.map((a) => a.url)
+      setSelectedUrls(new Set(pick.slice(0, 40)))
+      setAssetsOpen(true)
+      if (!list.length) setAssetNote('No assets found on this page')
+    } catch (e) {
+      setAssetNote(e instanceof Error ? e.message : 'Asset list failed')
+    } finally {
+      setAssetBusy(false)
+    }
+  }, [])
+
+  const downloadSelectedAssets = useCallback(async () => {
+    if (!window.browgent?.downloadPageAssets) {
+      setAssetNote('Asset download unavailable')
+      return
+    }
+    const urls = [...selectedUrls].slice(0, 40)
+    if (!urls.length) {
+      setAssetNote('Select at least one asset')
+      return
+    }
+    setAssetBusy(true)
+    setAssetNote(null)
+    try {
+      const host = (() => {
+        try {
+          return new URL(urls[0] || 'https://page.local').hostname.replace(/\W+/g, '-').slice(0, 40)
+        } catch {
+          return 'page'
+        }
+      })()
+      const result = await window.browgent.downloadPageAssets({
+        urls,
+        subfolder: `browgent-${host || 'assets'}`
+      })
+      setAssetNote(
+        result.started
+          ? `Started ${result.started} download(s)`
+          : result.errors[0] || 'Nothing started'
+      )
+      if (result.started) {
+        setAssetsOpen(false)
+        setPageAssets([])
+      }
+    } catch (e) {
+      setAssetNote(e instanceof Error ? e.message : 'Asset save failed')
+    } finally {
+      setAssetBusy(false)
+    }
+  }, [selectedUrls])
 
   useEffect(() => {
     if (!open) return
@@ -123,6 +196,16 @@ export function DownloadsPanel({
             <button
               type="button"
               className="downloads-icon-btn"
+              title="Save page assets (images/docs)"
+              aria-label="Save page assets"
+              disabled={assetBusy}
+              onClick={() => void loadPageAssets()}
+            >
+              <Images size={14} strokeWidth={1.75} />
+            </button>
+            <button
+              type="button"
+              className="downloads-icon-btn"
               title="Open downloads folder"
               aria-label="Open downloads folder"
               onClick={() => void window.browgent.openDownloadsFolder?.()}
@@ -151,6 +234,93 @@ export function DownloadsPanel({
         </header>
 
         <div className="downloads-panel-body">
+          {assetNote && <p className="downloads-empty">{assetNote}</p>}
+          {assetsOpen && pageAssets.length > 0 && (
+            <div className="downloads-assets-picker" style={{ marginBottom: 10 }}>
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  gap: 8,
+                  marginBottom: 6
+                }}
+              >
+                <span className="downloads-empty" style={{ margin: 0 }}>
+                  Page assets ({selectedUrls.size}/{pageAssets.length})
+                </span>
+                <span className="downloads-row-btns">
+                  <button
+                    type="button"
+                    className="downloads-link-btn"
+                    onClick={() => setSelectedUrls(new Set(pageAssets.map((a) => a.url)))}
+                  >
+                    All
+                  </button>
+                  <button
+                    type="button"
+                    className="downloads-link-btn"
+                    onClick={() =>
+                      setSelectedUrls(
+                        new Set(
+                          pageAssets
+                            .filter((a) => a.kind === 'image' || a.kind === 'document')
+                            .map((a) => a.url)
+                        )
+                      )
+                    }
+                  >
+                    Images
+                  </button>
+                  <button
+                    type="button"
+                    className="downloads-link-btn"
+                    onClick={() => setSelectedUrls(new Set())}
+                  >
+                    None
+                  </button>
+                </span>
+              </div>
+              <ul className="downloads-list" style={{ maxHeight: 160, overflow: 'auto' }}>
+                {pageAssets.map((a) => {
+                  const checked = selectedUrls.has(a.url)
+                  return (
+                    <li key={a.url} className="downloads-row">
+                      <label
+                        className="downloads-row-top"
+                        style={{ cursor: 'pointer', gap: 8, alignItems: 'flex-start' }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => {
+                            setSelectedUrls((prev) => {
+                              const next = new Set(prev)
+                              if (next.has(a.url)) next.delete(a.url)
+                              else next.add(a.url)
+                              return next
+                            })
+                          }}
+                        />
+                        <span className="downloads-name" title={a.url}>
+                          [{a.kind}] {a.name || a.url}
+                        </span>
+                      </label>
+                    </li>
+                  )
+                })}
+              </ul>
+              <button
+                type="button"
+                className="downloads-link-btn"
+                style={{ marginTop: 6 }}
+                disabled={assetBusy || selectedUrls.size === 0}
+                onClick={() => void downloadSelectedAssets()}
+              >
+                Download selected ({selectedUrls.size})
+              </button>
+            </div>
+          )}
           {items.length === 0 ? (
             <p className="downloads-empty">No downloads yet.</p>
           ) : (

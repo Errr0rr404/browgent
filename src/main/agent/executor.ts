@@ -6,6 +6,7 @@ import {
   hostFromUrl,
   isAgentNavigableUrl,
   isHostAllowed,
+  isPrivateOrMetadataHost,
   looksLikeForbiddenScheme,
   looksSensitiveLabel,
   RESEARCH_TOOLS,
@@ -19,6 +20,8 @@ import type { ObserveElement, ObserveSnapshot } from '../../shared/types'
 import { getProfileStore } from '../browser/profile-store'
 import { getPasswordVault } from '../browser/password-vault'
 import { profileToAgentMap } from '../../shared/profile'
+import { planFormFill } from '../browser/form-fill'
+import type { AssetKind } from '../browser/asset-scanner'
 
 export interface ExecuteContext {
   policy: AgentPolicy
@@ -43,7 +46,9 @@ const GUARDED_TAB_TOOLS = new Set<ToolName>([
   'click',
   'type',
   'select_option',
-  'press_key'
+  'press_key',
+  'fill_form',
+  'download_assets'
 ])
 
 export class ToolExecutor {
@@ -641,6 +646,239 @@ export class ToolExecutor {
           return ok(name, {}, `Waited ${ms}ms`)
         }
 
+        case 'list_assets': {
+          const tabId = str(args.tabId)
+          const kinds = parseAssetKinds(args.kinds)
+          const assets = await this.tabs.listAssets(tabId, kinds)
+          return ok(
+            name,
+            { assets, count: assets.length },
+            `Found ${assets.length} asset(s)`
+          )
+        }
+
+        case 'download_assets': {
+          const urls = parseUrlList(args.urls)
+          if (!urls.length) return fail(name, 'urls required (array or JSON/comma string)')
+          // Gate each URL with the same private-host / policy rules as navigate
+          const filtered: string[] = []
+          const blocked: string[] = []
+          for (const u of urls) {
+            try {
+              const parsed = new URL(u)
+              if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+                blocked.push(`scheme ${parsed.protocol}`)
+                continue
+              }
+              const host = parsed.hostname.toLowerCase()
+              if (
+                process.env.BROWGENT_ALLOW_PRIVATE_HOSTS !== '1' &&
+                isPrivateOrMetadataHost(host)
+              ) {
+                blocked.push(`private ${host}`)
+                continue
+              }
+              if (!isHostAllowed(host, policy)) {
+                blocked.push(`policy ${host}`)
+                continue
+              }
+              filtered.push(parsed.href)
+            } catch {
+              blocked.push(`bad url ${u.slice(0, 40)}`)
+            }
+          }
+          if (!filtered.length) {
+            return fail(
+              name,
+              `No allowed URLs (${blocked.slice(0, 3).join('; ') || 'empty'})`
+            )
+          }
+          if (filtered.length > 10 && ctx.requestConfirm) {
+            const allowed = await ctx.requestConfirm(
+              `Download ${filtered.length} assets to the downloads folder?`,
+              name,
+              { count: filtered.length }
+            )
+            if (!allowed) return fail(name, 'Download rejected by human')
+          }
+          const subfolder =
+            typeof args.subfolder === 'string' && args.subfolder.trim()
+              ? args.subfolder.trim().slice(0, 80)
+              : 'browgent-assets'
+          const result = await this.tabs.downloadAssets(filtered, {
+            tabId: str(args.tabId),
+            subfolder
+          })
+          if (result.started === 0) {
+            return fail(
+              name,
+              result.errors[0] ?? 'No downloads started'
+            )
+          }
+          return ok(
+            name,
+            { ...result, blocked },
+            `Started ${result.started} download(s)${result.errors.length ? `; ${result.errors.length} error(s)` : ''}`
+          )
+        }
+
+        case 'fill_form': {
+          const tabId = str(args.tabId)
+          const useProfile = args.useProfile !== false
+          const dryRun = args.dryRun === true
+          const fields = parseFieldsMap(args.fields)
+          const profile = useProfile ? getProfileStore().get() : null
+          if (useProfile && profile && !profile.agentMayUse) {
+            return fail(name, 'User disabled agent access to profile (Settings → User Hub)')
+          }
+          let snap = ctx.lastObservation ?? null
+          const activeId = tabId ?? this.tabs.getActiveTabId()
+          if (!snap || (snap.tabId && activeId && snap.tabId !== activeId)) {
+            snap = await this.tabs.observe(tabId)
+          }
+          if (!snap) return fail(name, 'Could not observe page for form fill')
+          const plan = planFormFill(snap, profile, fields, useProfile)
+          if (!plan.length) {
+            return ok(
+              name,
+              { filled: [], plan: [], dryRun },
+              'No matching fields to fill'
+            )
+          }
+          if (dryRun) {
+            return ok(
+              name,
+              {
+                dryRun: true,
+                plan: plan.map((p) => ({
+                  ref: p.ref,
+                  reason: p.reason,
+                  valuePreview: p.value.slice(0, 40)
+                }))
+              },
+              `Dry run: would fill ${plan.length} field(s)`
+            )
+          }
+          const filled: Array<{ ref: string; reason: string; valuePreview: string }> = []
+          const errors: string[] = []
+          for (const item of plan) {
+            if (ctx.signal?.aborted) return fail(name, 'Aborted')
+            const actionArgs: ToolArgs = item.isSelect
+              ? { ref: item.ref, label: item.value, value: item.value }
+              : { ref: item.ref, text: item.value, clear: true }
+            const r = await this.tabs.domAction(
+              item.isSelect ? 'select' : 'type',
+              actionArgs,
+              tabId,
+              ctx.signal
+            )
+            if (r.ok) {
+              filled.push({
+                ref: item.ref,
+                reason: item.reason,
+                valuePreview: item.value.slice(0, 40)
+              })
+            } else {
+              errors.push(`${item.ref}: ${r.error ?? 'failed'}`)
+            }
+          }
+          return this.withAutoSnapshot(
+            ok(
+              name,
+              { filled, errors, count: filled.length },
+              `Filled ${filled.length} field(s)${errors.length ? `; ${errors.length} error(s)` : ''}`
+            ),
+            tabId,
+            ctx.signal
+          )
+        }
+
+        case 'assert_text': {
+          const needle = String(args.includes ?? '').trim()
+          if (!needle) return fail(name, 'includes required')
+          const data = await this.tabs.extractText(str(args.tabId), num(args.maxChars, 12000))
+          const text =
+            data && typeof data === 'object' && data !== null && 'text' in data
+              ? String((data as { text: unknown }).text ?? '')
+              : typeof data === 'string'
+                ? data
+                : JSON.stringify(data ?? '')
+          const pass = text.toLowerCase().includes(needle.toLowerCase())
+          const summary = pass
+            ? `ASSERT PASS text includes “${needle.slice(0, 60)}”`
+            : `ASSERT FAIL text missing “${needle.slice(0, 60)}”`
+          // Always ok:true so heuristic/LLM multi-assert recipes can finish a pass/fail table
+          return ok(name, { pass, includes: needle }, summary)
+        }
+
+        case 'assert_url': {
+          const tab = this.tabs.getState().find((t) =>
+            args.tabId ? t.id === args.tabId : t.isActive
+          )
+          const url = tab?.url ?? ''
+          if (!url) {
+            return ok(name, { pass: false, url: '' }, 'ASSERT FAIL no URL')
+          }
+          const includes = typeof args.includes === 'string' ? args.includes : ''
+          const equals = typeof args.equals === 'string' ? args.equals : ''
+          const hostWant = typeof args.host === 'string' ? args.host.toLowerCase() : ''
+          let pass = true
+          const reasons: string[] = []
+          if (equals && url !== equals) {
+            pass = false
+            reasons.push(`expected equals ${equals.slice(0, 80)}`)
+          }
+          if (includes && !url.includes(includes)) {
+            pass = false
+            reasons.push(`missing “${includes.slice(0, 60)}”`)
+          }
+          if (hostWant) {
+            const h = hostFromUrl(url) ?? ''
+            if (h !== hostWant && !h.endsWith(`.${hostWant}`)) {
+              pass = false
+              reasons.push(`host ${h} ≠ ${hostWant}`)
+            }
+          }
+          if (!equals && !includes && !hostWant) {
+            return fail(name, 'assert_url needs includes, equals, or host')
+          }
+          const summary = pass
+            ? `ASSERT PASS url ${url.slice(0, 100)}`
+            : `ASSERT FAIL url ${url.slice(0, 80)}: ${reasons.join('; ')}`
+          return ok(name, { pass, url, reasons }, summary)
+        }
+
+        case 'assert_element': {
+          const ref = str(args.ref)
+          const nameIncludes =
+            typeof args.nameIncludes === 'string' ? args.nameIncludes.trim() : ''
+          if (!ref && !nameIncludes) return fail(name, 'ref or nameIncludes required')
+          const snap = await this.tabs.observe(str(args.tabId))
+          if (!snap) {
+            return ok(name, { pass: false }, 'ASSERT FAIL could not observe')
+          }
+          let hit = null as (typeof snap.elements)[0] | null
+          if (ref) {
+            hit = snap.elements.find((e) => e.ref === ref) ?? null
+          } else if (nameIncludes) {
+            const n = nameIncludes.toLowerCase()
+            hit =
+              snap.elements.find((e) => (e.name || '').toLowerCase().includes(n)) ?? null
+          }
+          if (hit) {
+            return ok(
+              name,
+              { pass: true, element: hit },
+              `ASSERT PASS element [${hit.ref}] ${hit.name || hit.tag}`
+            )
+          }
+          return ok(
+            name,
+            { pass: false },
+            `ASSERT FAIL no element matching ${ref ? `ref ${ref}` : `name “${nameIncludes}”`}`
+          )
+        }
+
         default:
           return fail(name, `Unknown tool: ${name}`)
       }
@@ -737,6 +975,69 @@ function ok(tool: ToolName, data: unknown, summary: string): ToolResult {
 
 function fail(tool: ToolName, error: string): ToolResult {
   return { ok: false, tool, error, summary: error }
+}
+
+function parseUrlList(raw: unknown): string[] {
+  if (Array.isArray(raw)) {
+    return raw.filter((u): u is string => typeof u === 'string' && /^https?:\/\//i.test(u.trim()))
+  }
+  if (typeof raw !== 'string' || !raw.trim()) return []
+  const t = raw.trim()
+  if (t.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(t) as unknown
+      if (Array.isArray(parsed)) return parseUrlList(parsed)
+    } catch {
+      /* fall through */
+    }
+  }
+  return t
+    .split(/[\n,]+/)
+    .map((s) => s.trim())
+    .filter((u) => /^https?:\/\//i.test(u))
+}
+
+function parseFieldsMap(raw: unknown): Record<string, string> | undefined {
+  if (!raw) return undefined
+  if (typeof raw === 'object' && !Array.isArray(raw)) {
+    const out: Record<string, string> = {}
+    for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+      if (typeof k === 'string' && typeof v === 'string') out[k] = v
+    }
+    return out
+  }
+  if (typeof raw === 'string' && raw.trim().startsWith('{')) {
+    try {
+      return parseFieldsMap(JSON.parse(raw))
+    } catch {
+      return undefined
+    }
+  }
+  return undefined
+}
+
+function parseAssetKinds(raw: unknown): AssetKind[] | undefined {
+  const allowed = new Set<AssetKind>(['image', 'video', 'audio', 'document', 'other'])
+  const list: string[] = []
+  if (Array.isArray(raw)) {
+    for (const x of raw) if (typeof x === 'string') list.push(x)
+  } else if (typeof raw === 'string' && raw.trim()) {
+    if (raw.trim().startsWith('[')) {
+      try {
+        const p = JSON.parse(raw) as unknown
+        if (Array.isArray(p)) return parseAssetKinds(p)
+      } catch {
+        /* split */
+      }
+    }
+    list.push(...raw.split(/[\s,]+/))
+  } else {
+    return undefined
+  }
+  const kinds = list
+    .map((s) => s.trim().toLowerCase())
+    .filter((s): s is AssetKind => allowed.has(s as AssetKind))
+  return kinds.length ? kinds : undefined
 }
 
 /** Normalize extractLinks payload → flat array of { text, href }. */

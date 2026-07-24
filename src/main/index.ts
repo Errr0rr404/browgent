@@ -20,8 +20,15 @@ import {
 import { listDetectedBrowsers, importFromBrowser } from './browser/browser-import'
 import { getPasswordVault } from './browser/password-vault'
 import { getProfileStore } from './browser/profile-store'
+import { getPrivacyStore } from './browser/privacy-store'
+import { wireRequestFilter } from './browser/request-filter'
 import { isBrowserId, type ImportOptions } from '../shared/import-types'
 import type { UserProfile } from '../shared/profile'
+import {
+  isCookieBannerMode,
+  sanitizePrivacyPrefs,
+  type PrivacyPrefs
+} from '../shared/privacy-prefs'
 import { applyCdpCommandLine, getCdpStatus } from './browser/cdp-endpoint'
 import { applyGuestIdentityEarly, applyGuestPageSessionIdentity } from './browser/guest-identity'
 import { getRuntimeFlags } from './browser/runtime-flags'
@@ -243,6 +250,14 @@ function createWindow(): void {
       mainWindow.webContents.send(IPC.DOWNLOADS_STATE, items)
     }
   })
+  tabs.downloadManager = downloadManager
+
+  const privacyStore = getPrivacyStore()
+  privacyStore.setOnChange((snap) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send(IPC.PRIVACY_STATE, snap)
+    }
+  })
 
   tabs.onVisit = (visit) => {
     historyStore?.record(visit)
@@ -402,6 +417,7 @@ function registerIpcOnce(): void {
     IPC.AGENT_STATE,
     IPC.FIND_RESULT,
     IPC.DOWNLOADS_STATE,
+    IPC.PRIVACY_STATE,
     IPC.WINDOW_FULLSCREEN_CHANGED,
     IPC.PET_STATE,
     IPC.PET_MOVED,
@@ -672,6 +688,56 @@ function registerIpcOnce(): void {
     return getProfileStore().set(partial as Partial<UserProfile>)
   })
 
+  // ── Privacy ─────────────────────────────────────────────────
+  ipcMain.handle(IPC.PRIVACY_GET, (e) => {
+    assertChromeSender(e)
+    return getPrivacyStore().get()
+  })
+  ipcMain.handle(IPC.PRIVACY_STATS, (e) => {
+    assertChromeSender(e)
+    return getPrivacyStore().getStats()
+  })
+  ipcMain.handle(IPC.PRIVACY_SET, (e, partial: unknown) => {
+    assertChromeSender(e)
+    if (!partial || typeof partial !== 'object') throw new Error('Invalid privacy prefs')
+    const p = partial as Record<string, unknown>
+    const patch: Partial<PrivacyPrefs> = {}
+    if (typeof p.blockAds === 'boolean') patch.blockAds = p.blockAds
+    if (typeof p.blockTrackers === 'boolean') patch.blockTrackers = p.blockTrackers
+    if (typeof p.showShieldBadge === 'boolean') patch.showShieldBadge = p.showShieldBadge
+    if (isCookieBannerMode(p.cookieBannerMode)) patch.cookieBannerMode = p.cookieBannerMode
+    if (Array.isArray(p.allowHosts)) {
+      patch.allowHosts = ensureStringArray(p.allowHosts, 'privacy.allowHosts', MAX_HOSTS, HOST_MAX)
+    }
+    return getPrivacyStore().set(sanitizePrivacyPrefs({ ...getPrivacyStore().get(), ...patch }))
+  })
+
+  // ── Page assets ─────────────────────────────────────────────
+  ipcMain.handle(IPC.ASSETS_LIST, async (e, tabId?: unknown) => {
+    assertChromeSender(e)
+    return (await tabs?.listAssets(ensureOptionalTabId(tabId, 'assets.list.tabId'))) ?? []
+  })
+  ipcMain.handle(IPC.ASSETS_DOWNLOAD, async (e, payload: unknown) => {
+    assertChromeSender(e)
+    if (!payload || typeof payload !== 'object') throw new Error('Invalid assets download payload')
+    const o = payload as Record<string, unknown>
+    const urlsRaw = o.urls
+    const urls: string[] = Array.isArray(urlsRaw)
+      ? urlsRaw.filter((u): u is string => typeof u === 'string').slice(0, 50)
+      : []
+    const subfolder =
+      typeof o.subfolder === 'string' && o.subfolder.trim()
+        ? o.subfolder.trim().slice(0, 80)
+        : 'browgent-assets'
+    const tabId = o.tabId !== undefined ? ensureOptionalTabId(o.tabId, 'assets.download.tabId') : undefined
+    return (
+      (await tabs?.downloadAssets(urls, { tabId, subfolder })) ?? {
+        started: 0,
+        errors: ['No tabs']
+      }
+    )
+  })
+
   ipcMain.handle(IPC.DRIVER_STATUS, async (e) => {
     assertChromeSender(e)
     const mode = tabs?.getDriverMode() ?? getRuntimeFlags().driverMode
@@ -805,6 +871,7 @@ app.whenReady().then(() => {
   applyGuestPageSessionIdentity(pageSession)
   if (!downloadManager) downloadManager = new DownloadManager()
   downloadManager.wireSession(pageSession)
+  wireRequestFilter(pageSession, getPrivacyStore())
   if (!historyStore) historyStore = new HistoryStore()
   // Guest page tabs: deny mic/camera/notifications by default (agent browses untrusted sites)
   pageSession.setPermissionRequestHandler((_wc, _permission, callback) => callback(false))
@@ -850,4 +917,5 @@ app.on('before-quit', () => {
   tabs?.destroy()
   historyStore?.flush()
   downloadManager?.flush()
+  getPrivacyStore().flush()
 })

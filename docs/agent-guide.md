@@ -38,8 +38,14 @@ Defined in `src/shared/tools.ts`, executed in `src/main/agent/executor.ts`:
 | `extract_text` / `extract_links` | Page content |
 | `screenshot` | Viewport screenshot — returns size metadata only in the trajectory (image bytes are not stored) |
 | `get_url` / `list_tabs` / `new_tab` / `close_tab` / `switch_tab` | Tab control |
+| `get_profile` / `get_credentials` | User Hub profile / vault password (confirm) |
+| `fill_form` | Profile-assisted form fill (no passwords) |
+| `list_assets` / `download_assets` | Page media/docs → downloads folder |
+| `assert_text` / `assert_url` / `assert_element` | QA pass/fail checks (trajectory) |
 | `ask_human` | Pause for credentials / CAPTCHA / choice |
 | `think` / `done` | Reasoning + completion |
+
+See also [qa.md](./qa.md) for smoke-testing your own webapp.
 
 **Speed model (BrowserOS-style):** mutators return accessibility snapshots with refs `e1`, `e2`… — skip a redundant `observe` after navigate/click/type. Prefer `search` for open-ended “find / cheapest / what is” goals.
 
