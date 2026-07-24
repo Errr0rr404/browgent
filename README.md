@@ -1,63 +1,33 @@
 # Browgent
 
-**Local-first browser for AI agents** — humans and agents share the same Chromium tabs. **Version 0.2.0.**
+> **An AI agent that works inside your real, logged-in browser — with you one click from taking the wheel.**
+>
+> *Builder's cut:* a local-first, open-source **co-browse runtime**. The in-app agent, Claude Code (over MCP), and Playwright (over CDP) all drive the **same Chromium tabs you do** — behind a policy engine, with human takeover→resume and exportable trajectories. Cookies stay on disk. **v0.2.0.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-teal.svg)](./LICENSE)
 [![Release](https://img.shields.io/github/v/release/Errr0rr404/browgent?include_prereleases&label=release)](https://github.com/Errr0rr404/browgent/releases/latest)
 
-Not another chat sidebar bolted onto Chrome. Browgent is a **desktop co-browse runtime**: real multi-tab Chromium, agent tools, safety policies, trajectory export, **MCP**, and Playwright over CDP — all on your machine.
+Not another chat sidebar bolted onto Chrome. Browgent is a desktop runtime: real multi-tab Chromium, an agent tool loop, safety policies, trajectory export, a localhost **MCP** bridge, and **Playwright over CDP** — all on your machine.
 
-> **One-liner:** Local co-browse runtime where humans and agents share real Chromium tabs — policy, takeover, trajectories, MCP + Playwright. Cookies stay on disk.
+## Why Browgent (vs the browsers you'll confuse it with)
 
-| Not | Instead |
-|-----|---------|
-| BrowserOS (agentic consumer browser) | **Runtime / control plane** for builders + HITL |
-| Comet / Dia / Atlas | Open, attachable, policy-auditable co-browse |
-| Browserbase / cloud BaaS | **Local-first** same-session tabs, not multi-tenant fleets |
+The closest open-source project is **BrowserOS**, and the honest one-line difference is:
 
-Builder path: [docs/builders.md](./docs/builders.md) · Install: [docs/getting-started.md](./docs/getting-started.md) · **YC:** [docs/yc-application.md](./docs/yc-application.md)
+> **BrowserOS is a browser for end-users to automate their own browsing. Browgent is a runtime you attach agents and Playwright to, with a human in the loop.**
 
-```bash
-npm run demo:hero    # automated co-browse path (Browgent must be running)
-npm run yc:packet    # traction JSON → release/yc-traction-packet.json
-```
+Comet / Dia / Atlas are the consumer-category reference — polished AI browsers with a closed, built-in assistant. The table below is deliberately short and checkable: every row is something you can verify by cloning the repo.
 
-## What Browgent does that others don’t
+| Checkable differentiator | Browgent | BrowserOS | Comet / Dia / Atlas | Cloud BaaS\* |
+|--------------------------|:--------:|-----------|---------------------|--------------|
+| **External tools drive the _same_ session** — attach Claude Code (MCP) & Playwright (CDP) to the tabs you see | ✅ | Built-in agent only | Closed built-in assistant | Separate cloud session |
+| **Policy engine + exportable trajectory** — host gates, sensitive-action confirm, JSON audit for evals/replay | ✅ | Not an exported audit surface | No | Product logs / API |
+| **Human takeover → resume on the same tab** — agent pauses, you log in, agent continues | ✅ | You drive (consumer browser) | Assistant-led; no resume handoff | Remote live-view |
+| **Local-first, open-source runtime you self-host** — cookies / SSO stay on disk | ✅ | ✅ also OSS + local | Local browser, but closed source | Multi-tenant cloud |
+| **Model-agnostic** — any OpenAI-compatible model, or none (heuristic) | ✅ | ✅ BYO key / local | Vendor model | Bring your agent |
 
-Consumer AI browsers (Comet, Dia, Atlas) optimize for “ask the assistant.” Cloud fleets (Browserbase, Steel…) optimize for headless scale. Browgent optimizes for **you + an agent on the same local tabs**, with builder-grade control.
+\* Browserbase, Steel, Kernel, Hyperbrowser, etc. — great for headless fleets; not a local co-browse desktop.
 
-| Capability | **Browgent** | Chrome | Comet | Dia | ChatGPT Atlas | Cloud BaaS\* |
-|------------|:------------:|:------:|:-----:|:---:|:-------------:|:------------:|
-| **True co-browse** — agent & human share the same local tab tree (not a remote live-view) | ✅ | — | ⚠️ | ⚠️ | ⚠️ | ❌ remote |
-| **Local-first identity** — cookies / SSO stay on disk (`persist:browgent-pages`) | ✅ | ✅ human | ⚠️ product | ⚠️ product | ⚠️ product | ❌ multi-tenant |
-| **Open source (MIT)** — inspect, fork, self-host the runtime | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ / partial |
-| **Dual driver** — fast DOM inject *and* CDP for real input events | ✅ | — | ❌ | ❌ | ❌ | CDP only |
-| **Playwright attach** — `connectOverCDP` to the *same* desktop session | ✅ | ⚠️ manual | ❌ | ❌ | ❌ | ✅ separate fleet |
-| **Browser-native policy engine** — allow/block hosts, confirm sensitive clicks, max steps | ✅ | — | ⚠️ product | ⚠️ product | ⚠️ product | ⚠️ API |
-| **Act / Research / Watch modes** — full control, read-mostly, or human-only drive | ✅ | — | ⚠️ | ⚠️ | ⚠️ | — |
-| **Human takeover → resume same tab** — agent pauses; you log in / fix; agent continues | ✅ | — | ⚠️ | ⚠️ | ⚠️ | live-view only |
-| **Tab ownership badges** — see who owns the tab (`agent` / human) | ✅ | — | ❌ | ❌ | ❌ | — |
-| **Trajectory log + JSON export** — every tool step for debug, evals, replay | ✅ | — | ❌ | ❌ | ⚠️ | ⚠️ product |
-| **Compact element refs** (`e1`, `e2`…) — Stagehand / browser-use style observe | ✅ | — | ❌ | ❌ | ❌ | via frameworks |
-| **Works offline of a vendor chat** — heuristic planner without API key | ✅ | n/a | ❌ | ❌ | ❌ | n/a |
-| **Model not locked to one cloud chat** — Grok via key; swap/extend the loop | ✅ | n/a | Perplexity | product LLM | OpenAI | bring-your-agent |
-| **Shared tool surface** — desktop tools + live STDIO MCP + Playwright CDP | ✅ | extensions | ❌ | ❌ | ❌ | cloud MCP |
-| **Voice → agent on real tabs** | ✅ | — | ⚠️ | ⚠️ | ⚠️ | — |
-
-\*Browserbase, Steel, Kernel, Hyperbrowser, etc. — great for fleets; not a local co-browse desktop.
-
-**Legend:** ✅ strong / first-class · ⚠️ partial or product-gated · ❌ not the product · — not applicable
-
-### Why that combination matters
-
-```
-Chrome          →  You browse. No agent runtime.
-Comet / Dia / Atlas →  Polished AI product browser (closed, vendor brain).
-Cloud BaaS      →  Agents at scale in someone else's Chromium.
-Browgent        →  You + agent + Playwright (CDP) on *your* tabs, with policy + audit.
-```
-
-Browgent is not trying to be lighter than headless Playwright. It is trying to be the **best local co-browse agent browser**: open, attachable, policy-aware, and human-in-the-loop by default.
+Browgent wins the **attach + audit + human-in-the-loop** axis. It **ties BrowserOS** on being open-source and local, and doesn't pretend otherwise. Full map: [docs/market.md](./docs/market.md).
 
 ## Download
 
@@ -77,59 +47,31 @@ cd browgent
 npm run dev
 ```
 
-Optional: copy `.env.example` → `.env` and set `XAI_API_KEY` for [Grok](https://console.x.ai) (default brain), or point `BROWGENT_PROVIDER` / `BROWGENT_API_KEY` / `BROWGENT_BASE_URL` at any OpenAI-compatible model. Without a key, the heuristic agent still drives the browser.
+Optional: copy `.env.example` → `.env` and set `XAI_API_KEY` for [Grok](https://console.x.ai) (default brain), or point `BROWGENT_PROVIDER` / `BROWGENT_API_KEY` / `BROWGENT_BASE_URL` at any OpenAI-compatible model. Without a key, the heuristic agent still drives the browser. Full env vars, modes, and CDP flags: [docs/getting-started.md](./docs/getting-started.md).
 
-### MCP (Claude Code / Cursor)
+### Attach an agent (MCP) or Playwright
 
-With Browgent running, the localhost bridge listens on **:17342** by default (status bar: `mcp · :17342`).
-
-```bash
-npm run mcp:smoke    # HTTP bridge smoke
-npm run mcp          # STDIO MCP server for coding agents
-```
-
-See [docs/mcp.md](./docs/mcp.md), [docs/getting-started.md](./docs/getting-started.md), [recipes/](./recipes/).  
-Landing: [website/index.html](./website/index.html).
-
-## Capabilities at a glance
-
-| Mode | Behavior |
-|------|----------|
-| **Act** | Full browser control (navigate, click, type, …) |
-| **Research** | Read-mostly (nav + observe/extract/tabs; no click/type) |
-| **Watch** | You browse; agent observes / answers |
-
-### Dual driver + Playwright
-
-| Path | Role |
-|------|------|
-| **DOM** (default in-app) | Fast inject observe/act for the chat agent |
-| **CDP** (in-app optional) | Real `Input` events via DevTools protocol |
-| **CDP endpoint** | Playwright / external tools: `connectOverCDP` |
-
-CDP is off for normal `npm run dev`; enable it explicitly with `BROWGENT_CDP_PORT=9222` (or `BROWGENT_CDP=1`/`on`). A custom positive port is also supported. `BROWGENT_CDP=0`/`off`/`false` or port `0` always disables it. `BROWGENT_AGENT_ONLY` and `BROWGENT_HEADLESS` imply CDP unless explicitly disabled. CDP is localhost-only, but any local process can control or read the session; never expose it publicly.
+With Browgent running, the localhost MCP bridge listens on **:17342** (status bar: `mcp · :17342`; token auto-written to userData).
 
 ```bash
-npm run dev                                      # normal UI; CDP off
-BROWGENT_CDP_PORT=9222 npm run dev              # normal UI + localhost CDP
-npm run dev:agent                                # compact automation shell + CDP
-npm run dev:headless                             # hidden window + agent-only + CDP
-npm i -D playwright && npm run playwright:example
+npm run mcp:smoke   # HTTP bridge smoke
+npm run mcp         # STDIO MCP server for Claude Code / Cursor
+npm run demo:hero   # automated co-browse path (Browgent must be running)
 ```
 
-Disable remote debugging with `BROWGENT_CDP=0`. Details: [docs/playwright.md](./docs/playwright.md).
+Playwright attaches to the same cookies over CDP — see [docs/playwright.md](./docs/playwright.md). The Act / Research / Watch modes and the dual DOM/CDP driver are documented there too, so this page stays skimmable.
 
 ## Documentation
 
 | Doc | Description |
 |-----|-------------|
 | [**Docs index**](./docs/README.md) | Full documentation map |
-| [Getting started](./docs/getting-started.md) | Install, env, first run |
-| [Builders](./docs/builders.md) | Positioning + Claude / MCP / Playwright |
+| [Getting started](./docs/getting-started.md) | Install, env vars, CDP flags, first run |
+| [Builders](./docs/builders.md) | Positioning + Claude Code / MCP / Playwright |
 | [MCP](./docs/mcp.md) | Bridge + STDIO + security |
+| [Playwright + dual driver](./docs/playwright.md) | CDP attach, DOM vs CDP driver |
+| [Market map](./docs/market.md) | Competitors + where Browgent fits |
 | [YC application](./docs/yc-application.md) | Application packet + checklist |
-| [Architecture](./docs/architecture.md) | Process model |
-| [Security](./SECURITY.md) | Vulnerability reporting |
 
 ## License
 

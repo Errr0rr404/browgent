@@ -2,6 +2,14 @@
 
 Companion: [builders.md](./builders.md) · [design-partners.md](./design-partners.md) · `npm run yc:packet` · `npm run demo:hero`
 
+## Beachhead ICP (lead with ONE persona)
+
+**Developers building browser agents that keep failing on real login / SSO / CAPTCHA walls.** They have an agent that works in a demo and dies the moment it meets an enterprise SSO screen, an MFA prompt, or a bot check. Browgent gives that agent a **local, logged-in session**, a **human who can take over mid-task and hand control back on the same tab**, and an **exportable trajectory** to debug and eval against.
+
+Everything in this packet should speak to that persona first. HITL automation/ops teams and eval/safety labs are **"also useful for,"** not the wedge — demote them.
+
+**Monetization wedge (one sentence):** the runtime stays **open-source and local**; we monetize the **audit / eval / policy surface** for teams — hosted trajectory history, shared policy packs, eval dashboards — once builders depend on it.
+
 ## What YC still needs that code cannot invent
 
 | Requirement | How to close |
@@ -53,9 +61,19 @@ Browgent is a desktop co-browse runtime for agent builders and HITL workflows. U
 
 A **local co-browse runtime** where people and agents share Chromium tabs — with safety policy, takeover, trajectories, and first-class MCP + Playwright attach on the same session.
 
-### Why did you pick this idea?
+### Why now? (scaffold — keep the shape, fill with your specifics)
 
-Knowledge work still lives in the browser. Models can click, but remote agents fail real logins and consumer AI browsers hide the control plane builders need. We felt this building automation against real SSO apps.
+**Shape of a winning answer:** one line on the capability that just became true, one on the gap it exposes, one on why that gap is *yours* to close.
+
+- **What just became true:** computer-use models (Anthropic CU, Gemini CU, and peers) can finally *click* — read a page and drive real UI reliably. Agents that were science projects 18 months ago now work in a demo.
+- **The gap it exposes:** those agents still can't *survive* real environments — enterprise SSO, MFA, CAPTCHA, and logged-in state. Remote/headless agents fail the login; consumer AI browsers hide the control plane (no Playwright attach, weak audit) that builders need. A human-in-the-loop, local session is the missing piece.
+- **Guiding prompts for Zann:** What did you personally watch break, on which app? What did you do by hand that a takeover→resume would have saved? Why is 2026 — not 2023 — the moment this is both buildable and wanted?
+
+### Why you? (fill-in template — the part only you can write)
+
+> I'm **[Zann]**. I hit this building **[what]** against **[which real logged-in apps]**. I kept having to **[the specific painful workaround]**. I've shipped **[evidence you move fast — e.g. this runtime in N weeks, live MCP + Playwright attach, weekly changelog]**. I'll obsess over **[co-browse reliability / identity / policy]** for years because **[reason]**.
+
+Replace every bracket with something concrete and checkable. YC funds founder-market fit, not adjectives — swap each "[...]" for a fact, not a claim.
 
 ### Who are your competitors? Who might become competitors?
 
@@ -67,9 +85,11 @@ Knowledge work still lives in the browser. Models can click, but remote agents f
 | Playwright MCP alone | No shared human UI / policy chrome |
 | browser-use / Stagehand | Frameworks — we host the session they attach to |
 
+**Primary foil, stated head-on:** BrowserOS is a browser for end-users to automate their own browsing; Browgent is a runtime you attach agents and Playwright to, with a human in the loop. We honestly **tie** BrowserOS on OSS + local-first + model-agnostic, and **differ** on same-session attach, exportable audit, and takeover→resume. Comet / Dia / Atlas are the consumer-category reference, not the primary foil.
+
 ### How do or will you make money?
 
-Open core: free local runtime; later team seats / hosted control plane / enterprise policy packs. Do not block early traction on pricing.
+**One sentence:** the runtime stays open-source and local; we monetize the **audit / eval / policy surface** for teams — hosted trajectory history, shared policy packs, and eval dashboards — once builders depend on it. Open core; don't block early traction on pricing.
 
 ### Progress
 

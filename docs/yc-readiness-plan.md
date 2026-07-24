@@ -101,7 +101,7 @@ Not “feature complete.” Ready when a partner can believe:
 | Gate | Target | Status today (approx.) |
 |------|--------|-------------------------|
 | Locked wedge + competitor line | Written + on README/site | ✅ positioning + website/ |
-| End-to-end hero demo | Reliable multi-step + takeover + export | ✅ recipes + hero-demo.md (record video still human) |
+| End-to-end hero demo | Reliable multi-step + takeover + export | ✅ recipes + builders.md hero take (record video still human) |
 | Live STDIO MCP on same session | Claude Code/Cursor attach &lt;5 min | ✅ Bridge + STDIO |
 | Playwright attach documented | One-command example | ✅ |
 | Install without source build | Signed mac + Windows (Linux nice) | ⚠️ scripts ready; notarization needs cert |
@@ -130,7 +130,7 @@ Not “feature complete.” Ready when a partner can believe:
 
 | Task | Deliverable | Owner area |
 |------|-------------|------------|
-| 0.1 Canonical one-liner + “not BrowserOS / not Comet / not Browserbase” table | README hero + `docs/positioning.md` | Docs |
+| 0.1 Canonical one-liner + “not BrowserOS / not Comet / not Browserbase” table | README hero + `docs/market.md` + `website/index.html` | Docs |
 | 0.2 Hero workflow script | Written scenario: login → agent acts → policy confirm → takeover → resume → export trajectory | Product |
 | 0.3 Record internal demo | 60–90s unlisted video of hero workflow | Product |
 | 0.4 Kill / park non-wedge work | Explicit backlog: pet polish, theme expansion → P3 | Process |
@@ -285,22 +285,31 @@ Re-apply is fine; shipping does not wait for a batch open window.
 
 ---
 
-## Part G — YC narrative (draft for application later)
+## Part G — YC narrative (draft; canonical scaffolds live in [yc-application.md](./yc-application.md))
+
+**Beachhead ICP (lead with ONE):** developers building browser agents that keep failing on real login / SSO / CAPTCHA walls. HITL ops teams and eval/safety labs are "also useful for," not the wedge.
 
 **What do you do?**  
-Local co-browse runtime: humans and AI agents share real Chromium tabs with policy, takeover, and automation attach (MCP/Playwright).
+An AI agent works inside your real, logged-in browser, with a human one click from taking the wheel — policy, takeover→resume on the same tab, exportable trajectory audit, and MCP/Playwright attach on the same session.
 
-**Why now?**  
-Models can drive UIs, but remote agents can’t use real enterprise logins safely, and consumer AI browsers don’t give builders a control plane.
+**Why now? (shape + prompts — fill the specifics)**  
+- *What just became true:* computer-use models can finally click and drive real UI reliably.  
+- *The gap it exposes:* those agents still can't survive real enterprise SSO / MFA / CAPTCHA, and consumer AI browsers hide the control plane builders need.  
+- *Fill:* the specific app you watched break, the by-hand workaround that takeover→resume replaces, why 2026 (not 2023) is the moment.
 
-**Why you?**  
-[Fill: domain, speed of shipping, insight about co-browse / identity / policy.]
+**Why you? (fill-in template — only you can write this)**  
+> I'm [Zann]. I hit this building [what] against [which logged-in apps]. I kept [painful workaround]. I've shipped [evidence of speed]. I'll obsess over [co-browse reliability / identity / policy] for years because [reason].
+
+Replace every bracket with a concrete, checkable fact.
 
 **How is this different from BrowserOS?**  
-They are an open-source agentic *browser* for end-user automation. We are the *runtime* for human↔agent co-browse with policy, trajectory, and first-class attach for coding agents and Playwright on the same session.
+BrowserOS is a browser for end-users to automate their own browsing; Browgent is a runtime you attach agents and Playwright to, with a human in the loop. We tie on OSS + local-first; we differ on same-session attach, exportable audit, and takeover→resume.
+
+**Monetization wedge (one sentence):**  
+Runtime stays open + local; monetize the audit/eval/policy surface for teams (hosted trajectory history, shared policy packs, eval dashboards) once builders depend on it.
 
 **Traction:**  
-[Fill after Phase 4.]
+[Fill after Phase 4 — usage instrumentation is ready via Settings → Export YC traction JSON / `npm run yc:packet`.]
 
 ---
 
@@ -325,10 +334,10 @@ Legend: ✅ done in repo · ⚠️ partial / needs human or CI machine · ❌ no
 
 | Task | Status | Evidence |
 |------|--------|----------|
-| 0.1 One-liner + not-BrowserOS table | ✅ | `README.md` hero, `docs/positioning.md`, `website/index.html` |
-| 0.2 Hero workflow script | ✅ | `docs/hero-demo.md`, `docs/builders.md` |
+| 0.1 One-liner + not-BrowserOS table | ✅ | `README.md` hero, `docs/market.md`, `website/index.html` |
+| 0.2 Hero workflow script | ✅ | `docs/builders.md` (hero take), `docs/yc-application.md` (demo script) |
 | 0.3 Record demo video | ⚠️ | Script ready; recording is human |
-| 0.4 Park non-wedge work | ✅ | `docs/backlog-non-wedge.md` |
+| 0.4 Park non-wedge work | ✅ | `docs/market.md` (non-wedge backlog) |
 
 ### Phase 1 — Attachability
 
@@ -345,7 +354,7 @@ Legend: ✅ done in repo · ⚠️ partial / needs human or CI machine · ❌ no
 | Task | Status | Evidence |
 |------|--------|----------|
 | 2.1 Windows installer target | ✅ | `electron-builder.yml` win + `npm run dist:win` (build on Win/CI) |
-| 2.2 macOS Gatekeeper docs | ✅ | `docs/install.md` (notarization needs cert ⚠️) |
+| 2.2 macOS Gatekeeper docs | ✅ | `docs/getting-started.md` (notarization needs cert ⚠️) |
 | 2.3 Linux AppImage | ✅ | `npm run dist:linux` |
 | 2.4 First-run UX | ✅ | `FirstRunModal.tsx` + recipes + heuristic/API key copy |
 | 2.5 Auto-update | ❌ | Explicitly optional / non-goal until release cadence |
@@ -357,7 +366,7 @@ Legend: ✅ done in repo · ⚠️ partial / needs human or CI machine · ❌ no
 | 3.1 Recipes 5–10 | ✅ | 9 in-app (`src/shared/recipes.ts`) + `recipes/*.md` |
 | 3.2 Trajectory eval export | ✅ | `schemaVersion` + `evalSteps`; sample `examples/trajectory-eval-sample.json` |
 | 3.3 Modes + policy presets | ✅ | Act/Research/Watch bar; Strict/Builder/Open in Policy pane |
-| 3.4 Reliability site matrix | ✅ | `docs/reliability-sites.md` (manual pass before demos) |
+| 3.4 Reliability site matrix | ✅ | `docs/builders.md` hero take (manual pass before demos) |
 | 3.5 Guest identity suite | ✅ | `docs/guest-identity-checklist.md`, `npm run test:identity` |
 
 ### Phase 4 — Traction machine
@@ -366,7 +375,7 @@ Legend: ✅ done in repo · ⚠️ partial / needs human or CI machine · ❌ no
 |------|--------|----------|
 | 4.1 Landing page | ✅ | `website/index.html` |
 | 4.2 Privacy-safe metrics | ✅ | `src/main/metrics/store.ts`, Settings opt-in |
-| 4.3 Changelog + ship rhythm | ✅ | `CHANGELOG.md`, `docs/shipping-rhythm.md` |
+| 4.3 Changelog + ship rhythm | ✅ | `CHANGELOG.md`, `docs/yc-application.md` (shipping rhythm) |
 | 4.4 Design partner program | ⚠️ | `docs/design-partners.md` (outreach human) |
 | 4.5 GitHub presence | ✅ | Issue templates + good_first_issue; README wedge (GIF optional ⚠️) |
 | 4.6 Distribution hooks | ✅ | `docs/mcp.md`, `docs/builders.md`, Playwright docs |
@@ -381,7 +390,7 @@ Legend: ✅ done in repo · ⚠️ partial / needs human or CI machine · ❌ no
 
 | Still needed for YC application | Owner | Product support now in repo |
 |----------------------------------|--------|------------------------------|
-| 60–90s demo video | Founder | `docs/hero-demo.md` + **Run demo** + `npm run demo:hero` |
+| 60–90s demo video | Founder | `docs/builders.md` hero take + **Run demo** + `npm run demo:hero` |
 | Signed/notarized multi-OS releases | Founder + secrets | `.github/workflows/release.yml` (tag `v*`) |
 | Real design partners + quotes | Founder | outreach templates + landing CTA |
 | Usage curve | Founder | Settings **Export YC traction JSON** + `npm run yc:packet` |

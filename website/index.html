@@ -3,15 +3,15 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Browgent — Local co-browse runtime for AI agents</title>
+    <title>Browgent — an AI agent in your real, logged-in browser</title>
     <meta
       name="description"
-      content="Humans and agents share real Chromium tabs — policy, takeover, MCP, and Playwright. Local-first. Open source."
+      content="An AI agent that works inside your real, logged-in browser — with you one click from taking the wheel. Local-first, open-source co-browse runtime with policy, takeover, MCP, and Playwright."
     />
-    <meta property="og:title" content="Browgent — Local co-browse runtime" />
+    <meta property="og:title" content="Browgent — an AI agent in your real, logged-in browser" />
     <meta
       property="og:description"
-      content="Same tabs for humans and agents. Policy, takeover, MCP + Playwright. Not another chat sidebar."
+      content="Agents and Playwright drive the same Chromium tabs you do. Takeover→resume, policy, trajectory audit. Local-first. Open source."
     />
     <style>
       :root {
@@ -21,6 +21,8 @@
         --text: #e8eaef;
         --muted: #9aa3b2;
         --accent: #5b9cff;
+        --green: #52d689;
+        --amber: #ffc266;
         --border: rgba(255, 255, 255, 0.08);
         font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
       }
@@ -38,15 +40,24 @@
         text-transform: uppercase; color: var(--accent); margin: 0 0 12px;
       }
       h1 { font-size: clamp(1.85rem, 4.2vw, 2.7rem); line-height: 1.12; margin: 0 0 16px; }
-      .lead { font-size: 1.12rem; color: var(--muted); max-width: 42rem; }
-      .cta { display: flex; flex-wrap: wrap; gap: 12px; margin: 28px 0 36px; }
+      .lead { font-size: 1.12rem; color: var(--muted); max-width: 44rem; }
+      .lead strong { color: var(--text); }
+      .cta { display: flex; flex-wrap: wrap; gap: 12px; margin: 26px 0 10px; }
       .btn {
         display: inline-flex; align-items: center; gap: 8px;
-        padding: 12px 18px; border-radius: 10px; font-weight: 600;
+        padding: 12px 20px; border-radius: 10px; font-weight: 700;
         text-decoration: none; border: 1px solid var(--border);
       }
       .btn.primary { background: var(--accent); color: #0b0d12; border-color: transparent; }
-      .btn.ghost { color: var(--text); background: transparent; }
+      .cta-secondary { margin: 0 0 22px; font-size: 0.92rem; color: var(--muted); }
+      .cta-secondary a { color: var(--muted); text-decoration: none; border-bottom: 1px solid var(--border); }
+      .cta-secondary a:hover { color: var(--text); }
+      .proof {
+        margin: 18px 0 0; font-size: 0.95rem; color: var(--muted); max-width: 46rem;
+        padding: 12px 14px; border-left: 2px solid var(--accent); background: rgba(91,156,255,0.05);
+        border-radius: 0 8px 8px 0;
+      }
+      .proof strong { color: var(--text); }
       .grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
       .card {
         background: var(--surface); border: 1px solid var(--border);
@@ -61,12 +72,6 @@
       footer { margin-top: 48px; color: var(--muted); font-size: 0.85rem; }
       section { margin-top: 44px; }
       h2 { font-size: 1.25rem; margin: 0 0 12px; }
-      .video-slot {
-        aspect-ratio: 16/9; border-radius: 14px; border: 1px dashed var(--border);
-        background: color-mix(in srgb, var(--surface) 80%, #000);
-        display: grid; place-items: center; color: var(--muted); text-align: center; padding: 24px;
-      }
-      .video-slot strong { color: var(--text); display: block; margin-bottom: 6px; }
       ol { color: var(--muted); padding-left: 1.2rem; }
       ol li { margin: 6px 0; }
       .pill-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
@@ -75,42 +80,241 @@
         padding: 5px 10px; border-radius: 999px; border: 1px solid var(--border);
         color: var(--muted);
       }
+
+      /* ---- Illustrative co-browse + takeover storyboard (pure CSS/SVG loop) ---- */
+      .stage {
+        position: relative; overflow: hidden;
+        height: clamp(300px, 44vw, 380px);
+        border-radius: 14px; border: 1px solid var(--border);
+        background: var(--surface);
+      }
+      .stage-note { margin: 10px 2px 0; font-size: 0.82rem; color: var(--muted); }
+      .stage-note::before { content: "◐ "; color: var(--accent); }
+      .reel { display: flex; width: 500%; height: 100%; animation: reel 20s infinite; }
+      @keyframes reel {
+        0%, 16%   { transform: translateX(0%); }
+        20%, 36%  { transform: translateX(-20%); }
+        40%, 56%  { transform: translateX(-40%); }
+        60%, 76%  { transform: translateX(-60%); }
+        80%, 96%  { transform: translateX(-80%); }
+        100%      { transform: translateX(0%); }
+      }
+      .panel { flex: 0 0 20%; height: 100%; display: flex; flex-direction: column; }
+      .chrome {
+        display: flex; align-items: center; gap: 8px; padding: 9px 12px;
+        border-bottom: 1px solid var(--border);
+        background: color-mix(in srgb, var(--surface) 65%, #000);
+      }
+      .dots { display: flex; gap: 5px; }
+      .dot { width: 9px; height: 9px; border-radius: 50%; background: rgba(255,255,255,0.16); }
+      .url {
+        flex: 1; font-size: 12px; color: var(--muted);
+        background: var(--bg); border: 1px solid var(--border);
+        border-radius: 6px; padding: 3px 9px;
+        overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+      }
+      .owner {
+        font-size: 10px; font-weight: 700; letter-spacing: 0.04em;
+        padding: 3px 9px; border-radius: 999px; white-space: nowrap;
+      }
+      .owner.agent { color: #bcd3ff; background: rgba(91,156,255,0.16); border: 1px solid rgba(91,156,255,0.45); }
+      .owner.you   { color: #b8f0cd; background: rgba(82,214,137,0.16); border: 1px solid rgba(82,214,137,0.5); }
+      .owner.pause { color: #ffe0b0; background: rgba(255,194,102,0.16); border: 1px solid rgba(255,194,102,0.5); }
+      .body { flex: 1; padding: 20px; display: flex; flex-direction: column; gap: 12px; justify-content: center; }
+      .body.center { align-items: center; text-align: center; }
+      .skel { display: block; height: 11px; border-radius: 6px; background: rgba(255,255,255,0.10); }
+      .w40 { width: 40%; } .w55 { width: 55%; } .w70 { width: 70%; } .w85 { width: 85%; }
+      .mockbtn {
+        align-self: flex-start; position: relative; margin-top: 4px;
+        display: inline-flex; align-items: center; gap: 8px;
+        padding: 9px 15px; border-radius: 8px;
+        background: var(--accent); color: #0b0d12; font-weight: 700; font-size: 13px;
+        animation: pulse 1.7s ease-in-out infinite;
+      }
+      @keyframes pulse {
+        0%, 100% { box-shadow: 0 0 0 0 rgba(91,156,255,0.55); }
+        50%      { box-shadow: 0 0 0 9px rgba(91,156,255,0); }
+      }
+      .cursor { position: absolute; right: -10px; bottom: -12px; color: #fff; filter: drop-shadow(0 1px 1px rgba(0,0,0,.5)); }
+      .field {
+        border: 1px solid var(--border); border-radius: 8px;
+        padding: 9px 11px; font-size: 12px; color: var(--muted); background: var(--bg);
+      }
+      .field.filled { color: var(--text); border-color: rgba(82,214,137,0.5); }
+      .ic { display: inline-flex; }
+      .ic.accent { color: var(--accent); }
+      .ic.green { color: var(--green); }
+      .ic.amber { color: var(--amber); }
+      .lbl { font-size: 13px; color: var(--text); font-weight: 600; }
+      .sub { font-size: 12px; color: var(--muted); }
+      .modal {
+        width: min(320px, 92%); border: 1px solid var(--border); border-radius: 12px;
+        background: var(--surface); overflow: hidden; box-shadow: 0 12px 34px rgba(0,0,0,0.45);
+      }
+      .modal-h {
+        display: flex; align-items: center; gap: 8px; padding: 11px 14px;
+        font-weight: 700; font-size: 13px; color: var(--accent);
+        border-bottom: 1px solid var(--border);
+      }
+      .modal-b { padding: 14px; font-size: 13px; color: var(--text); text-align: left; }
+      .modal-actions { display: flex; gap: 8px; padding: 0 14px 14px; }
+      .mbtn { flex: 1; text-align: center; padding: 8px; border-radius: 8px; font-size: 12px; font-weight: 700; border: 1px solid var(--border); }
+      .mbtn.block { color: var(--muted); }
+      .mbtn.allow { background: var(--accent); color: #0b0d12; border-color: transparent; }
+      .caption {
+        padding: 11px 16px; border-top: 1px solid var(--border);
+        font-size: 13px; color: var(--muted);
+        background: color-mix(in srgb, var(--surface) 82%, #000);
+      }
+      .caption b { color: var(--text); }
+      .caption .n {
+        display: inline-block; min-width: 18px; height: 18px; line-height: 18px; text-align: center;
+        border-radius: 50%; background: var(--accent); color: #0b0d12; font-weight: 800; font-size: 11px; margin-right: 6px;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .reel { animation: none; }
+        .mockbtn { animation: none; }
+      }
     </style>
   </head>
   <body>
     <div class="wrap">
-      <p class="kicker">Local co-browse runtime · open source</p>
-      <h1>Humans + agents on the same Chromium tabs.</h1>
+      <p class="kicker">Local-first co-browse runtime · open source</p>
+      <h1>An AI agent inside your real, logged-in browser.</h1>
       <p class="lead">
-        Browgent is not another chat sidebar. It is a desktop runtime where agents act with
-        <strong>policy</strong>, <strong>takeover</strong>, <strong>trajectory export</strong>,
-        <strong>MCP</strong>, and <strong>Playwright</strong> — on <strong>your</strong> logged-in session.
+        Browgent is not another chat sidebar. It is a desktop runtime where an agent acts on
+        <strong>your</strong> actual tabs and session — and you are always
+        <strong>one click from taking the wheel</strong>. Attach Claude Code (MCP) or Playwright (CDP)
+        to the same tabs, behind a policy engine with exportable trajectories.
       </p>
+
+      <div class="cta">
+        <a class="btn primary" href="https://github.com/Errr0rr404/browgent/releases/latest">Download for macOS</a>
+      </div>
+      <p class="cta-secondary">
+        or <a href="#demo">watch the 60-second flow ↓</a>
+        &nbsp;·&nbsp; <a href="https://github.com/Errr0rr404/browgent">Star on GitHub</a>
+        &nbsp;·&nbsp; <a href="https://github.com/Errr0rr404/browgent/blob/main/docs/builders.md">Builders guide</a>
+        &nbsp;·&nbsp; <a href="https://github.com/Errr0rr404/browgent/issues/new?template=feature_request.md&amp;title=Design%20partner%20interest">Become a design partner</a>
+      </p>
+
+      <p class="proof">
+        <strong>Proof you can run today:</strong> clone it, <code>npm run dev</code>, attach Claude Code over MCP,
+        and take over a login mid-task — no signup, no cloud, no waitlist. MIT-licensed, local-first, model-agnostic.
+        This is an early runtime, honest about its stage: the wedge below is the pitch, not a user chart.
+      </p>
+
       <div class="pill-row">
         <span class="pill">Local-first cookies</span>
         <span class="pill">Claude Code / Cursor MCP</span>
         <span class="pill">Playwright CDP</span>
-        <span class="pill">Eval-pack trajectories</span>
-        <span class="pill">Ads/tracker filter</span>
-        <span class="pill">QA asserts</span>
-      </div>
-      <div class="cta">
-        <a class="btn primary" href="https://github.com/Errr0rr404/browgent/releases/latest">Download</a>
-        <a class="btn ghost" href="https://github.com/Errr0rr404/browgent">Star on GitHub</a>
-        <a class="btn ghost" href="https://github.com/Errr0rr404/browgent/blob/main/docs/builders.md">Builders guide</a>
-        <a class="btn ghost" href="https://github.com/Errr0rr404/browgent/issues/new?template=feature_request.md&amp;title=Design%20partner%20interest">Design partner</a>
+        <span class="pill">Takeover → resume</span>
+        <span class="pill">Policy + trajectory audit</span>
       </div>
 
-      <section>
-        <h2>Demo</h2>
-        <div class="video-slot" id="demo">
-          <div>
-            <strong>60–90s video goes here</strong>
-            Record with <code>docs/builders.md</code> · B-roll via <code>npm run demo:hero</code>
-            <br /><br />
-            <a href="https://github.com/Errr0rr404/browgent/blob/main/docs/builders.md">Demo script →</a>
+      <section id="demo">
+        <h2>The flow: agent acts → hits a login wall → you take over → agent resumes → policy confirms</h2>
+
+        <!--
+          REAL DEMO GOES HERE.
+          When a recording exists, replace the <div class="stage">…</div> block below with the actual
+          60-second demo. Keep this illustration in git history as the fallback.
+          Video:  <video src="demo.mp4" autoplay muted loop playsinline
+                          style="width:100%;border-radius:14px;border:1px solid var(--border)"></video>
+          or GIF:  <img src="demo.gif" alt="Browgent co-browse + takeover demo"
+                          style="width:100%;border-radius:14px;border:1px solid var(--border)" />
+          B-roll:  run `npm run demo:hero` with the app running (see docs/builders.md).
+        -->
+
+        <div class="stage" aria-label="Illustration of the Browgent co-browse and takeover flow">
+          <div class="reel">
+            <!-- 1 · Agent acts -->
+            <div class="panel">
+              <div class="chrome">
+                <span class="dots"><span class="dot"></span><span class="dot"></span><span class="dot"></span></span>
+                <span class="url">app.yourcompany.com/dashboard</span>
+                <span class="owner agent">◆ AGENT</span>
+              </div>
+              <div class="body">
+                <span class="skel w40"></span>
+                <span class="skel w85"></span>
+                <span class="skel w70"></span>
+                <span class="mockbtn">Run monthly report
+                  <span class="cursor"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M5 3l14 7-6.2 1.6L10 18z"/></svg></span>
+                </span>
+              </div>
+              <div class="caption"><span class="n">1</span> Agent acts on your <b>real, logged-in</b> tab</div>
+            </div>
+
+            <!-- 2 · Login wall -->
+            <div class="panel">
+              <div class="chrome">
+                <span class="dots"><span class="dot"></span><span class="dot"></span><span class="dot"></span></span>
+                <span class="url">login.yourcompany.com/sso</span>
+                <span class="owner pause">❚❚ AGENT PAUSED</span>
+              </div>
+              <div class="body center">
+                <span class="ic amber"><svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg></span>
+                <span class="lbl">Single sign-on required</span>
+                <span class="sub">Agent won't guess credentials — it asks you.</span>
+              </div>
+              <div class="caption"><span class="n">2</span> Hits an <b>SSO / login wall</b> — agent stops and calls <code>ask_human</code></div>
+            </div>
+
+            <!-- 3 · Human takeover -->
+            <div class="panel">
+              <div class="chrome">
+                <span class="dots"><span class="dot"></span><span class="dot"></span><span class="dot"></span></span>
+                <span class="url">login.yourcompany.com/sso</span>
+                <span class="owner you">● YOU</span>
+              </div>
+              <div class="body">
+                <span class="ic green"><svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="8" r="3.2"/><path d="M5 20a7 7 0 0 1 14 0"/></svg></span>
+                <span class="lbl">You take the wheel — on the same tab</span>
+                <span class="field filled">you@yourcompany.com</span>
+                <span class="field filled">•••••••••••  ✓ signed in</span>
+              </div>
+              <div class="caption"><span class="n">3</span> <b>Human takeover</b> — you log in; the session stays local</div>
+            </div>
+
+            <!-- 4 · Agent resumes -->
+            <div class="panel">
+              <div class="chrome">
+                <span class="dots"><span class="dot"></span><span class="dot"></span><span class="dot"></span></span>
+                <span class="url">app.yourcompany.com/dashboard</span>
+                <span class="owner agent">◆ AGENT</span>
+              </div>
+              <div class="body">
+                <span class="ic green"><svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M8 12.5l2.5 2.5L16 9.5"/></svg></span>
+                <span class="lbl">Session intact — resuming the task</span>
+                <span class="skel w85"></span>
+                <span class="skel w55"></span>
+              </div>
+              <div class="caption"><span class="n">4</span> Agent <b>resumes on the same tab</b> — no lost context, no re-login</div>
+            </div>
+
+            <!-- 5 · Policy confirm -->
+            <div class="panel">
+              <div class="chrome">
+                <span class="dots"><span class="dot"></span><span class="dot"></span><span class="dot"></span></span>
+                <span class="url">app.yourcompany.com/checkout</span>
+                <span class="owner agent">◆ AGENT</span>
+              </div>
+              <div class="body center">
+                <div class="modal">
+                  <div class="modal-h">
+                    <span class="ic accent"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z"/></svg></span>
+                    Policy check
+                  </div>
+                  <div class="modal-b">Confirm sensitive action: <b>Submit payment</b> on <code>checkout</code>?</div>
+                  <div class="modal-actions"><span class="mbtn block">Block</span><span class="mbtn allow">Allow</span></div>
+                </div>
+              </div>
+              <div class="caption"><span class="n">5</span> <b>Policy gate</b> pauses the risky step until you confirm</div>
+            </div>
           </div>
         </div>
+        <p class="stage-note">Looping illustration of the co-browse + takeover flow — not a screen recording. A real demo drops in above.</p>
       </section>
 
       <div class="grid" style="margin-top: 28px">
@@ -124,22 +328,27 @@
         </div>
         <div class="card">
           <h3>Policy + audit</h3>
-          <p>Confirm sensitive actions, host gates, modes, eval-pack trajectory JSON.</p>
+          <p>Confirm sensitive actions, host gates, modes, exportable trajectory JSON for evals.</p>
         </div>
       </div>
 
       <section>
         <h2>Not these</h2>
+        <p class="lead" style="font-size: 1rem">
+          <strong>BrowserOS is a browser for end-users to automate their own browsing; Browgent is a runtime
+          you attach agents and Playwright to, with a human in the loop.</strong>
+          Comet, Dia, and Atlas are the consumer-category reference — polished AI browsers with a closed assistant.
+        </p>
         <table>
           <thead>
             <tr><th>Product</th><th>Job</th></tr>
           </thead>
           <tbody>
-            <tr><td><strong>Browgent</strong></td><td>Local co-browse <em>runtime</em> + attach</td></tr>
-            <tr><td>BrowserOS</td><td>OSS agentic consumer browser</td></tr>
-            <tr><td>Comet / Dia</td><td>Polished AI browser product</td></tr>
-            <tr><td>Browserbase</td><td>Cloud multi-tenant fleets</td></tr>
-            <tr><td>Playwright MCP alone</td><td>Dev tools without shared human UI</td></tr>
+            <tr><td><strong>Browgent</strong></td><td>Local co-browse <em>runtime</em> you attach agents + Playwright to (HITL)</td></tr>
+            <tr><td>BrowserOS</td><td>Open-source agentic browser for end-users (ties us on OSS + local)</td></tr>
+            <tr><td>Comet / Dia / Atlas</td><td>Closed consumer AI browsers with a built-in assistant</td></tr>
+            <tr><td>Browserbase / Steel</td><td>Cloud multi-tenant headless fleets</td></tr>
+            <tr><td>Playwright MCP alone</td><td>Dev tools without a shared human UI or policy chrome</td></tr>
           </tbody>
         </table>
       </section>
@@ -151,9 +360,23 @@
             <li>Install or <code>npm run dev</code></li>
             <li>Status bar: <code>mcp · :17342</code> (token in userData)</li>
             <li><code>npm run mcp</code> → wire Claude Code</li>
-            <li>In-app: <strong>Run demo</strong> or recipe chips</li>
-            <li>Takeover when needed → Export trajectory</li>
+            <li>In-app: <strong>Run demo</strong> or a recipe chip (takeover leads)</li>
+            <li>Take over on a login wall → Resume → Export trajectory</li>
           </ol>
+        </div>
+      </section>
+
+      <section>
+        <h2>Who this is for</h2>
+        <div class="card">
+          <p>
+            <strong>Beachhead:</strong> developers building browser agents that keep failing on real
+            login / SSO / CAPTCHA walls. Browgent gives those agents a local, logged-in session and a
+            human who can step in and hand control back — with policy and an audit trail.
+          </p>
+          <p style="margin-top: 12px">
+            Also useful for HITL automation/ops teams and eval/safety labs that need exportable trajectories.
+          </p>
         </div>
       </section>
 
@@ -161,7 +384,7 @@
         <h2>Design partners</h2>
         <div class="card">
           <p>
-            Building browser agents or HITL automation? We’re onboarding a small set of partners
+            Building browser agents that die on login walls? We're onboarding a small set of partners
             for free support in exchange for honest feedback (and an optional quote).
           </p>
           <p style="margin-top: 12px">

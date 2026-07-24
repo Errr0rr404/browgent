@@ -1,6 +1,14 @@
 # Agent Browser Market (mid-2026) & Browgent Feature Map
 
-Research synthesized from Browserbase/Stagehand, browser-use, Skyvern, MultiOn, Anthropic CU / Claude Chrome, OpenAI ChatGPT agent, Perplexity Comet, Dia, Gemini Computer Use, Steel, Kernel, Hyperbrowser, Airtop, Browserless, Playwright/CDT MCP, Firecrawl, Anchor, Lightpanda, agent-browser.
+Research synthesized from BrowserOS, Browserbase/Stagehand, browser-use, Skyvern, MultiOn, Anthropic CU / Claude Chrome, OpenAI ChatGPT agent / Atlas, Perplexity Comet, Dia, Gemini Computer Use, Steel, Kernel, Hyperbrowser, Airtop, Browserless, Playwright/CDT MCP, Firecrawl, Anchor, Lightpanda, agent-browser.
+
+## Primary foil: BrowserOS
+
+The product people will most often confuse Browgent with is **BrowserOS** — the closest open-source agentic browser. Address it head-on, the same way, everywhere:
+
+> **BrowserOS is a browser for end-users to automate their own browsing. Browgent is a runtime you attach agents and Playwright to, with a human in the loop.**
+
+Where we honestly **tie** BrowserOS: both are open-source and local-first (cookies stay on disk), and both are model-agnostic. Where Browgent is **distinct**: external tools (Claude Code over MCP, Playwright over CDP) drive the *same* session you see; a policy engine plus exportable trajectory gives an audit surface; and takeover→resume on the same tab is a first-class handoff, not just "a human is also present." Keep **Comet / Dia / Atlas** as the consumer-category reference (closed AI product browsers), not the primary foil.
 
 ## Market layers
 
@@ -8,7 +16,7 @@ Research synthesized from Browserbase/Stagehand, browser-use, Skyvern, MultiOn, 
 |-------|-----|----------------|
 | Cloud BaaS | Browserbase, Steel, Kernel, Hyperbrowser, Browserless, Anchor | Remote Chromium fleets, stealth, CAPTCHA, proxies |
 | Agent frameworks | Stagehand, browser-use, Skyvern, Airtop | NL → act/extract/observe loops |
-| Consumer AI browsers | Comet, Dia, ChatGPT agent | Co-pilot browsing for humans |
+| Consumer AI browsers | BrowserOS (OSS), Comet, Dia, ChatGPT Atlas | Co-pilot browsing for humans (BrowserOS = OSS agentic browser; our primary foil) |
 | Model primitives | Anthropic CU, Gemini CU | Screenshot → mouse/keyboard |
 | Local MCP | Playwright MCP, Chrome DevTools MCP, agent-browser | Coding-agent browser tools |
 

@@ -16,6 +16,15 @@ export interface AgentRecipe {
 }
 
 export const AGENT_RECIPES: AgentRecipe[] = [
+  // Lead with the human-in-the-loop takeover recipe so first-run starters open on the "aha".
+  {
+    id: 'takeover-handoff',
+    title: 'Takeover handoff',
+    blurb: 'Demo human login mid-task',
+    mode: 'act',
+    prompt:
+      'Navigate to https://github.com/login. When you hit a login form or wall, call ask_human explaining I should Takeover, complete login if I want, then Resume. After I answer, observe the page and report what you see. Do not invent credentials.'
+  },
   {
     id: 'research-summary',
     title: 'Research summary',
@@ -54,14 +63,6 @@ export const AGENT_RECIPES: AgentRecipe[] = [
     mode: 'act',
     prompt:
       'Observe the form on this page. Call fill_form with useProfile true (dryRun true first if unsure). Then fill_form without dryRun. Do NOT submit. Report which refs were filled. ask_human if password fields are required.'
-  },
-  {
-    id: 'takeover-handoff',
-    title: 'Takeover handoff',
-    blurb: 'Demo human login mid-task',
-    mode: 'act',
-    prompt:
-      'Navigate to https://github.com/login. When you hit a login form or wall, call ask_human explaining I should Takeover, complete login if I want, then Resume. After I answer, observe the page and report what you see. Do not invent credentials.'
   },
   {
     id: 'export-trajectory',

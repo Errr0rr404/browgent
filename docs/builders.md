@@ -76,8 +76,8 @@ Keep in-app driver on **dom** while Playwright is attached. Detail: [playwright.
 
 ## Hero demo (recording)
 
-**In-app:** Agent → **Run demo** (example.com, no login).  
-**Automated B-roll:** with app running, `npm run demo:hero` → `examples/demo-last-run.json`.
+**In-app:** Agent → **Run demo** (a public multi-page research task — browse + reason, no login).  
+**Automated B-roll:** with app running, `npm run demo:hero` → `release/demo-last-run.json` (`release/` is gitignored).
 
 Full take for video (login + takeover):
 

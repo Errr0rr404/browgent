@@ -104,7 +104,7 @@ Playwright attach: see [playwright.md](./playwright.md) and `examples/playwright
 | Goal | What should happen |
 |------|--------------------|
 | `go to gh` | Opens GitHub (not a Google search) |
-| **Run demo** | example.com → observe → extract → done |
+| **Run demo** | Public research task → browses a few real pages → reasons → done summary |
 | Mic button | Speech → agent instruction |
 | Takeover / Resume | Human owns tabs mid-task |
 | Summarize / shield | Page summary recipe; status bar shows blocked request count |

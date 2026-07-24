@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 /**
- * Build a YC / investor traction packet on disk (no secrets).
+ * Build a YC / investor usage-instrumentation packet on disk (no secrets).
+ * This is usage instrumentation "ready to fill" — NOT a traction claim.
+ * Numbers come from local, opt-in metrics and may legitimately be zero.
  * Usage: npm run yc:packet
  * Output: release/yc-traction-packet.json + prints application bullets
  */
@@ -40,32 +42,33 @@ function loadLocalMetrics() {
 }
 
 const metrics = loadLocalMetrics()
-const commits = git('git rev-list --count HEAD')
 const lastTag = git('git describe --tags --abbrev=0')
 const branch = git('git branch --show-current')
 
 const packet = {
   schemaVersion: 1,
   format: 'browgent.yc-packet',
+  kind: 'usage-instrumentation',
+  disclaimer:
+    'Usage instrumentation, ready to fill — not a traction claim. Metrics are local + opt-in and may legitimately be zero until real users arrive.',
   generatedAt: new Date().toISOString(),
   product: {
     name: 'Browgent',
     version: pkg.version,
     oneLiner:
-      'Local co-browse runtime where humans and agents share real Chromium tabs — policy, takeover, MCP, Playwright.',
+      'An AI agent working inside your real, logged-in browser — with you one click from taking the wheel. Local-first, open-source co-browse runtime with MCP + Playwright attach.',
     repo: pkg.repository?.url?.replace(/^git\+/, '').replace(/\.git$/, '') || pkg.homepage
   },
-  engineering: {
+  build: {
     branch,
-    commitCount: commits ? Number(commits) : null,
     lastTag,
     scripts: ['mcp', 'mcp:smoke', 'demo:hero', 'dist:mac', 'dist:win', 'dist:linux']
   },
-  localMetrics: metrics,
+  usageInstrumentation: metrics,
   applicationFillIn: {
     progress:
-      'Replace with: weekly users, MCP sessions, design-partner quotes, download counts from GitHub Releases.',
-    demoVideo: 'Record using docs/hero-demo.md + npm run demo:hero for B-roll.',
+      'Fill from real signal as it arrives: weekly active installs, MCP sessions, design-partner quotes, GitHub Release download counts.',
+    demoVideo: 'Record the hero flow documented in docs/builders.md; npm run demo:hero for automated B-roll.',
     whyYou: 'Founder-market fit — fill personally.'
   },
   checklist: [
@@ -83,14 +86,15 @@ mkdirSync(outDir, { recursive: true })
 const outPath = join(outDir, 'yc-traction-packet.json')
 writeFileSync(outPath, JSON.stringify(packet, null, 2))
 
-console.log('YC traction packet →', outPath)
+console.log('YC usage-instrumentation packet →', outPath)
+console.log('(usage instrumentation, ready to fill — not a traction claim)')
 console.log('\n— Progress bullets (edit before paste) —')
 if (metrics) {
   console.log(
-    `• ${metrics.appLaunchCount} launches · ${metrics.agentRunCount} agent runs · ${metrics.mcpCallCount} MCP calls · ${metrics.demoRunCount ?? 0} demos`
+    `• ${metrics.appLaunchCount ?? 0} launches · ${metrics.agentRunCount ?? 0} agent runs · ${metrics.mcpCallCount ?? 0} MCP calls · ${metrics.demoRunCount ?? 0} demos (local, opt-in)`
   )
 } else {
-  console.log('• (no local metrics.json yet — run the app)')
+  console.log('• (no local metrics.json yet — run the app to start capturing usage)')
 }
 console.log(`• Open source co-browse runtime v${pkg.version} · MCP + Playwright attach`)
 console.log('• See docs/yc-application.md for full answer drafts')

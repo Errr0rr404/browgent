@@ -2,11 +2,14 @@
 
 ## Who we want
 
+**Beachhead (lead here):** developers building browser agents that keep failing on real **login / SSO / CAPTCHA** walls. Browgent gives those agents a local, logged-in session, a human who can take over mid-task and hand control back, and an exportable audit trail. Speak to this persona first.
+
+**Also useful for** (secondary — don't lead with these):
+
 | Fit | Examples |
 |-----|----------|
-| Agent startups | Teams building browser agents who need local SSO |
-| Automation / ops | HITL workflows with audit |
-| Indie builders | Claude Code users on logged-in web apps |
+| Automation / ops | HITL workflows that need an audit trail |
+| Indie builders | Claude Code users driving logged-in web apps |
 | Eval / safety | Labs that need trajectory export |
 
 ## What they get
