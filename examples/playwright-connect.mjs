@@ -63,10 +63,12 @@ async function main() {
   const cookies = await contexts[0].cookies()
   console.log(`Cookies in context: ${cookies.length}`)
 
-  // Leave Browgent running — do not browser.close() the remote connection aggressively
-  // if you want the desktop session to stay up. Disconnect only:
-  browser.close()
-  console.log('Disconnected (Browgent keeps running).')
+  // Leave Browgent running: do NOT browser.close() here — on a connectOverCDP handle that
+  // force-quits the shared desktop session. Just exit the process, which drops only our CDP
+  // client (Playwright's websocket would otherwise keep the event loop alive) and leaves
+  // Browgent's tabs untouched.
+  console.log('Done — dropping our CDP client (Browgent keeps running).')
+  process.exit(0)
 }
 
 main().catch((err) => {

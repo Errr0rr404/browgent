@@ -26,6 +26,27 @@ import { recordMcpCall } from '../metrics/store'
 const MAX_BODY = 256 * 1024
 const HOST = '127.0.0.1'
 
+/** Max elements shipped to HTTP clients; full arrays stay in-session only. */
+const MAX_HTTP_ELEMENTS = 40
+
+/**
+ * Cap an observe/snapshot-shaped object's `elements` array so large element
+ * arrays never ship uncapped to HTTP clients. Returns a shallow copy with the
+ * array sliced (and an accurate `elementCount`) when over the cap; otherwise the
+ * original object unchanged. Applied to BOTH the flat observe shape
+ * (data.elements) and the nested snapshot shape (data.snapshot.elements).
+ */
+function capElements(obj: Record<string, unknown>): Record<string, unknown> {
+  if (Array.isArray(obj.elements) && obj.elements.length > MAX_HTTP_ELEMENTS) {
+    return {
+      ...obj,
+      elementCount: obj.elements.length,
+      elements: obj.elements.slice(0, MAX_HTTP_ELEMENTS)
+    }
+  }
+  return obj
+}
+
 export interface McpBridgeDeps {
   getAgent: () => AgentSession | null
   getTabs: () => TabManager | null
@@ -43,6 +64,8 @@ export class McpBridge {
   private toolChain: Promise<void> = Promise.resolve()
   private queuedTools = 0
   private static readonly MAX_QUEUED = 8
+  /** Bridge-level ceiling so one wedged tool can't freeze the FIFO queue. */
+  private static readonly TOOL_TIMEOUT_MS = 60_000
 
   attach(deps: McpBridgeDeps): void {
     this.deps = deps
@@ -158,7 +181,14 @@ export class McpBridge {
 
   private loadOrCreateToken(): string {
     const envToken = process.env.BROWGENT_MCP_TOKEN?.trim()
-    if (envToken) return envToken
+    // Enforce the same >=16 floor as the file-stored token: a too-short env token is
+    // rejected (warn + fall through) rather than silently accepted as a weak secret.
+    if (envToken && envToken.length >= 16) return envToken
+    if (envToken) {
+      console.warn(
+        '[browgent-mcp] BROWGENT_MCP_TOKEN too short (<16 chars) — ignoring, using file/generated token'
+      )
+    }
 
     try {
       const dir = app.getPath('userData')
@@ -222,7 +252,8 @@ export class McpBridge {
     this.queuedTools += 1
     const run = this.toolChain.then(async () => {
       try {
-        return await fn()
+        // Race each tool against a ceiling so one stuck call can't block the queue forever.
+        return await this.withTimeout(fn(), McpBridge.TOOL_TIMEOUT_MS)
       } finally {
         this.queuedTools -= 1
       }
@@ -233,6 +264,20 @@ export class McpBridge {
       () => undefined
     )
     return run
+  }
+
+  /** Reject with a clear timeout error if `p` doesn't settle within `ms`. */
+  private withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () => reject(new Error(`Tool timed out after ${Math.round(ms / 1000)}s`)),
+        ms
+      )
+    })
+    return Promise.race([p, timeout]).finally(() => {
+      if (timer) clearTimeout(timer)
+    })
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -316,20 +361,18 @@ export class McpBridge {
           } satisfies McpToolCallResponse)
           return
         }
-        // Strip oversized data for HTTP clients (observe elements stay in-session only)
+        // Strip oversized element arrays for HTTP clients (full arrays stay in-session only).
+        // Covers BOTH the flat observe shape (data.elements) and the nested snapshot shape
+        // most tools attach via withAutoSnapshot (data.snapshot.elements).
         let data = result.data
         if (data && typeof data === 'object' && !Array.isArray(data)) {
-          const o = data as Record<string, unknown>
-          if (Array.isArray(o.elements) && o.elements.length > 40) {
-            data = {
-              url: o.url,
-              title: o.title,
-              textPreview: o.textPreview,
-              compact: o.compact,
-              elementCount: o.elements.length,
-              elements: o.elements.slice(0, 40)
-            }
+          let o = capElements(data as Record<string, unknown>)
+          const snap = o.snapshot
+          if (snap && typeof snap === 'object' && !Array.isArray(snap)) {
+            const cappedSnap = capElements(snap as Record<string, unknown>)
+            if (cappedSnap !== snap) o = { ...o, snapshot: cappedSnap }
           }
+          data = o
         }
         if (result.ok) {
           this.callCount += 1
@@ -394,8 +437,17 @@ export class McpBridge {
   }
 
   private json(res: ServerResponse, status: number, body: unknown): void {
+    let payload: string
+    try {
+      payload = JSON.stringify(body)
+    } catch {
+      // A non-serializable body (circular ref / BigInt) must never throw inside this
+      // void-ed async handler and take down Electron main — fall back to a safe body.
+      status = 500
+      payload = JSON.stringify({ ok: false, error: 'Response serialization failed' })
+    }
     res.statusCode = status
-    res.end(JSON.stringify(body))
+    res.end(payload)
   }
 }
 
