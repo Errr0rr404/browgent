@@ -67,6 +67,9 @@ export function FloatingAgentPet({
     moved: boolean
   } | null>(null)
   const rootRef = useRef<HTMLDivElement>(null)
+  // A click always fires right after a drag-release; this lets us swallow it so
+  // dragging never toggles the panel. Reset at the start of every gesture.
+  const suppressClickRef = useRef(false)
 
   const mood = moodFromAgent(agentStatus)
   const formPref: PetFormPref = agentPetForm
@@ -130,6 +133,7 @@ export function FloatingAgentPet({
 
   const onPointerDown = (e: React.PointerEvent): void => {
     if (e.button !== 0) return
+    suppressClickRef.current = false
     e.currentTarget.setPointerCapture(e.pointerId)
     dragRef.current = {
       startX: e.clientX,
@@ -167,10 +171,35 @@ export function FloatingAgentPet({
       const next = clampPos(d.origX + (e.clientX - d.startX), d.origY + (e.clientY - d.startY))
       setPos(next)
       setAgentPetPosition(next.x, next.y)
+      // Swallow the click the browser fires after a drag so it can't toggle.
+      suppressClickRef.current = true
       return
     }
+    // A genuine tap: let the button's click event drive activation so the same
+    // path serves mouse (click) and keyboard (Enter/Space).
+  }
+
+  // Shared activation for pointer + keyboard: dismiss the intro bubble, toggle panel.
+  const activatePet = (): void => {
     dismissWelcome()
     onToggle()
+  }
+
+  const onHitClick = (e: React.MouseEvent): void => {
+    if (suppressClickRef.current) {
+      suppressClickRef.current = false
+      return
+    }
+    // Keyboard-synthesized clicks (detail 0) are handled by onHitKeyDown instead.
+    if (e.detail === 0) return
+    activatePet()
+  }
+
+  const onHitKeyDown = (e: React.KeyboardEvent): void => {
+    if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
+      e.preventDefault() // avoid page scroll + a duplicate synthesized click
+      activatePet()
+    }
   }
 
   const pickForm = (pref: PetFormPref): void => {
@@ -228,6 +257,8 @@ export function FloatingAgentPet({
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
+        onClick={onHitClick}
+        onKeyDown={onHitKeyDown}
         onContextMenu={(e) => {
           e.preventDefault()
           setMenuOpen(true)

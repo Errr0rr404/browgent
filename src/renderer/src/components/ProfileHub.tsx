@@ -37,17 +37,30 @@ export function ProfileHub(): React.JSX.Element {
     void refresh()
   }, [refresh])
 
-  const dirty = useMemo(
-    () => JSON.stringify(profile) !== (savedSnapshot || JSON.stringify(emptyUserProfile())),
-    [profile, savedSnapshot]
-  )
+  const dirty = useMemo(() => {
+    // A typed-but-unadded custom pair is unsaved work too, so Save must enable.
+    const hasStagedCustom = customKey.trim().length > 0
+    return (
+      hasStagedCustom ||
+      JSON.stringify(profile) !== (savedSnapshot || JSON.stringify(emptyUserProfile()))
+    )
+  }, [profile, savedSnapshot, customKey])
 
   const save = async (): Promise<void> => {
     setSaving(true)
     try {
-      const next = await window.browgent.setUserProfile(profile)
+      // Fold any typed-but-unadded custom pair in so it is never silently dropped.
+      const stagedKey = customKey.trim()
+      const toSave: UserProfile = stagedKey
+        ? { ...profile, custom: { ...profile.custom, [stagedKey]: customVal } }
+        : profile
+      const next = await window.browgent.setUserProfile(toSave)
       setProfile(next)
       setSavedSnapshot(JSON.stringify(next))
+      if (stagedKey) {
+        setCustomKey('')
+        setCustomVal('')
+      }
       setSavedFlash(true)
       window.setTimeout(() => setSavedFlash(false), 1600)
     } catch (e) {
@@ -193,6 +206,7 @@ export function ProfileHub(): React.JSX.Element {
         <div className="profile-custom-add">
           <input
             placeholder="Key"
+            aria-label="Custom field key"
             value={customKey}
             onChange={(e) => setCustomKey(e.target.value)}
             onKeyDown={(e) => {
@@ -211,6 +225,7 @@ export function ProfileHub(): React.JSX.Element {
           />
           <input
             placeholder="Value"
+            aria-label="Custom field value"
             value={customVal}
             onChange={(e) => setCustomVal(e.target.value)}
             onKeyDown={(e) => {

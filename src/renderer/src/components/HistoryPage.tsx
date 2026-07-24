@@ -118,15 +118,18 @@ export function HistoryPage({ open, onClose, onOpenUrl }: Props): React.JSX.Elem
               className="history-search"
               type="search"
               placeholder="Search history"
+              aria-label="Search history"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               autoFocus
             />
           </div>
+          {/* Filtered rows shouldn't gate a global clear — only disable when the
+              unfiltered history is genuinely empty (no active search + no rows). */}
           <button
             type="button"
             className="history-clear-btn settings-btn settings-btn-danger"
-            disabled={entries.length === 0}
+            disabled={query.trim() === '' && entries.length === 0}
             onClick={() => {
               if (!window.confirm('Clear all browsing history?')) return
               void window.browgent.clearHistory?.().then(() => refresh(query))

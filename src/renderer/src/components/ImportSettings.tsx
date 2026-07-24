@@ -220,13 +220,13 @@ export function ImportSettings(): React.JSX.Element {
               Passwords are in Settings → User Hub → vault (origins only).
             </p>
           )}
-          {lastResult.warnings.map((w) => (
-            <p key={w} className="settings-toggle-sub import-warn">
+          {lastResult.warnings.map((w, i) => (
+            <p key={`warn-${i}-${w}`} className="settings-toggle-sub import-warn">
               {w}
             </p>
           ))}
-          {lastResult.errors.map((err) => (
-            <p key={err} className="settings-toggle-sub import-error-line">
+          {lastResult.errors.map((err, i) => (
+            <p key={`err-${i}-${err}`} className="settings-toggle-sub import-error-line">
               {err}
             </p>
           ))}

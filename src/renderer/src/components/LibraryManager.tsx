@@ -196,7 +196,7 @@ export function LibraryManager({
       </div>
 
       <footer className="library-manager-foot">
-        Right-click any tab to save it here · drag to reorder
+        Click a row to open · star to pin to Favorites · trash to remove
       </footer>
     </section>
   )

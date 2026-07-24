@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Bot, Cable, Shield, X, Zap } from 'lucide-react'
 import type { McpStatus } from '@shared/mcp'
 import type { CdpEndpointStatus } from '@shared/driver'
-import { AGENT_RECIPES } from '@shared/recipes'
+import { getRecipe, type AgentRecipe } from '@shared/recipes'
 import { HERO_DEMO_MODE, HERO_DEMO_PROMPT } from '@shared/demo'
 
 interface Props {
@@ -21,6 +21,7 @@ export function FirstRunModal({
   const [mcp, setMcp] = useState<McpStatus | null>(null)
   const [cdp, setCdp] = useState<CdpEndpointStatus | null>(null)
   const primaryRef = useRef<HTMLButtonElement>(null)
+  const cardRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!open) return
@@ -40,6 +41,32 @@ export function FirstRunModal({
       if (e.key === 'Escape') {
         e.preventDefault()
         onDismiss()
+        return
+      }
+      // Focus trap: keep Tab / Shift+Tab cycling inside the modal card.
+      if (e.key === 'Tab') {
+        const card = cardRef.current
+        if (!card) return
+        const focusables = Array.from(
+          card.querySelectorAll<HTMLElement>(
+            'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+          )
+        ).filter(
+          (el) => !el.hasAttribute('disabled') && el.getAttribute('aria-hidden') !== 'true'
+        )
+        if (focusables.length === 0) return
+        const first = focusables[0]
+        const last = focusables[focusables.length - 1]
+        const active = document.activeElement as HTMLElement | null
+        if (e.shiftKey) {
+          if (active === first || !card.contains(active)) {
+            e.preventDefault()
+            last.focus()
+          }
+        } else if (active === last || !card.contains(active)) {
+          e.preventDefault()
+          first.focus()
+        }
       }
     }
     window.addEventListener('keydown', onKey)
@@ -48,7 +75,11 @@ export function FirstRunModal({
 
   if (!open) return null
 
-  const starters = AGENT_RECIPES.slice(0, 3)
+  // Lead the first-run chips with the human-in-the-loop takeover story, then
+  // two low-friction wins. Referenced by id so a recipe rename fails loudly.
+  const starters = ['takeover-handoff', 'research-summary', 'form-smoke']
+    .map((id) => getRecipe(id))
+    .filter((r): r is AgentRecipe => Boolean(r))
 
   return (
     <div
@@ -60,7 +91,7 @@ export function FirstRunModal({
         if (e.target === e.currentTarget) onDismiss()
       }}
     >
-      <div className="firstrun-card">
+      <div className="firstrun-card" ref={cardRef}>
         <header className="firstrun-header">
           <div>
             <p className="firstrun-kicker">Local co-browse runtime</p>

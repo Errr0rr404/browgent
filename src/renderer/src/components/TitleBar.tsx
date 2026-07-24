@@ -1,4 +1,5 @@
-import { Minus, Square, X } from 'lucide-react'
+import { useState } from 'react'
+import { Minus, Square, SquareStack, X } from 'lucide-react'
 
 interface Props {
   platform: string
@@ -6,22 +7,36 @@ interface Props {
 
 /** Windows/Linux only — macOS uses system traffic lights on the first chrome row. */
 export function TitleBar({ platform }: Props): React.JSX.Element | null {
+  // No IPC event exposes the native maximized state, so track it optimistically:
+  // the title-bar double-click and the button share one toggle. Best-effort — it
+  // can drift if the OS maximizes/restores the window by other means.
+  const [maximized, setMaximized] = useState(false)
+
   if (platform === 'darwin') return null
 
+  const toggleMaximize = (): void => {
+    setMaximized((m) => !m)
+    void window.browgent.maximize()
+  }
+
   return (
-    <div
-      className="titlebar titlebar-controls-only"
-      onDoubleClick={() => {
-        void window.browgent.maximize()
-      }}
-    >
+    <div className="titlebar titlebar-controls-only" onDoubleClick={toggleMaximize}>
       <div className="titlebar-spacer" />
       <div className="window-controls">
         <button type="button" aria-label="Minimize" onClick={() => void window.browgent.minimize()}>
           <Minus size={14} strokeWidth={1.75} />
         </button>
-        <button type="button" aria-label="Maximize" onClick={() => void window.browgent.maximize()}>
-          <Square size={12} strokeWidth={1.75} />
+        <button
+          type="button"
+          aria-label={maximized ? 'Restore' : 'Maximize'}
+          title={maximized ? 'Restore' : 'Maximize'}
+          onClick={toggleMaximize}
+        >
+          {maximized ? (
+            <SquareStack size={12} strokeWidth={1.75} />
+          ) : (
+            <Square size={12} strokeWidth={1.75} />
+          )}
         </button>
         <button
           type="button"

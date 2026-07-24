@@ -129,6 +129,8 @@ export function SettingsPage({
   const [mcpStatus, setMcpStatus] = useState<McpStatus | null>(null)
   const [metrics, setMetrics] = useState<LocalMetrics | null>(null)
   const [mcpConfigCopied, setMcpConfigCopied] = useState(false)
+  const [mcpConfigError, setMcpConfigError] = useState(false)
+  const [tractionStatus, setTractionStatus] = useState<'idle' | 'ok' | 'error'>('idle')
 
   const prefs = useChromePrefs()
   const shortcuts = useMemo(() => buildShortcuts(platformModKey()), [])
@@ -177,10 +179,18 @@ export function SettingsPage({
       }
     }
     const text = JSON.stringify(cfg, null, 2)
-    void navigator.clipboard.writeText(text).then(() => {
-      setMcpConfigCopied(true)
-      window.setTimeout(() => setMcpConfigCopied(false), 2000)
-    })
+    setMcpConfigError(false)
+    void navigator.clipboard
+      .writeText(text)
+      .then(() => {
+        setMcpConfigCopied(true)
+        window.setTimeout(() => setMcpConfigCopied(false), 2000)
+      })
+      .catch(() => {
+        // Clipboard can reject (denied permission / insecure context) — surface it.
+        setMcpConfigError(true)
+        window.setTimeout(() => setMcpConfigError(false), 3000)
+      })
   }, [mcpStatus?.baseUrl])
 
   const commitMaxSteps = (): void => {
@@ -620,16 +630,41 @@ export function SettingsPage({
                     type="button"
                     className="settings-btn"
                     style={{ marginTop: 10 }}
-                    onClick={() =>
+                    onClick={() => {
+                      // No toast prop is wired from App — surface the result inline.
+                      setTractionStatus('idle')
                       void exportTractionPacketFile()
                         .then(() => {
-                          /* optional toast via parent not wired */
+                          setTractionStatus('ok')
+                          window.setTimeout(() => setTractionStatus('idle'), 4000)
                         })
-                        .catch((e) => console.error(e))
-                    }
+                        .catch((e) => {
+                          console.error(e)
+                          setTractionStatus('error')
+                          window.setTimeout(() => setTractionStatus('idle'), 6000)
+                        })
+                    }}
                   >
                     Export YC traction JSON
                   </button>
+                  {tractionStatus === 'ok' && (
+                    <span
+                      className="settings-muted"
+                      role="status"
+                      style={{ marginLeft: 10 }}
+                    >
+                      Exported ✓
+                    </span>
+                  )}
+                  {tractionStatus === 'error' && (
+                    <span
+                      className="import-error"
+                      role="alert"
+                      style={{ marginLeft: 10 }}
+                    >
+                      Export failed — see console
+                    </span>
+                  )}
                 </div>
                 <div className="settings-card settings-card-pad">
                   <p className="settings-toggle-label">Claude Code / Cursor MCP config</p>
@@ -637,7 +672,11 @@ export function SettingsPage({
                     Copy JSON for your MCP client. Token required — see userData/mcp-bridge.json.
                   </p>
                   <button type="button" className="settings-btn" onClick={copyMcpConfig}>
-                    {mcpConfigCopied ? 'Copied' : 'Copy MCP config'}
+                    {mcpConfigError
+                      ? 'Copy failed'
+                      : mcpConfigCopied
+                        ? 'Copied'
+                        : 'Copy MCP config'}
                   </button>
                 </div>
                 <div className="settings-actions">
@@ -755,31 +794,71 @@ function PrivacyBlockingCard(): React.JSX.Element {
   const [prefs, setPrefs] = useState<import('@shared/privacy-prefs').PrivacyPrefs | null>(null)
   const [stats, setStats] = useState<import('@shared/privacy-prefs').PrivacyStats | null>(null)
   const [allowText, setAllowText] = useState('')
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [patchError, setPatchError] = useState<string | null>(null)
+
+  const load = useCallback(() => {
+    if (!window.browgent?.getPrivacyPrefs) {
+      setLoadError('Privacy controls are unavailable in this build.')
+      return
+    }
+    setLoadError(null)
+    void window.browgent
+      .getPrivacyPrefs()
+      .then((p) => {
+        setPrefs(p)
+        setAllowText((p.allowHosts || []).join('\n'))
+      })
+      .catch((e) => {
+        // Without this, a rejected IPC call left the card stuck on "Loading…".
+        setLoadError(e instanceof Error ? e.message : 'Could not load privacy settings')
+      })
+    void window.browgent.getPrivacyStats?.().then(setStats).catch(() => undefined)
+  }, [])
 
   useEffect(() => {
-    if (!window.browgent?.getPrivacyPrefs) return
-    void window.browgent.getPrivacyPrefs().then((p) => {
-      setPrefs(p)
-      setAllowText((p.allowHosts || []).join('\n'))
-    })
-    void window.browgent.getPrivacyStats?.().then(setStats)
-    const unsub = window.browgent.onPrivacyState?.((snap) => {
+    load()
+    const unsub = window.browgent?.onPrivacyState?.((snap) => {
       setPrefs(snap.prefs)
       setStats(snap.stats)
+      setLoadError(null)
     })
     return () => unsub?.()
-  }, [])
+  }, [load])
 
   const patch = useCallback(async (partial: Partial<import('@shared/privacy-prefs').PrivacyPrefs>) => {
     if (!window.browgent?.setPrivacyPrefs) return
-    const next = await window.browgent.setPrivacyPrefs(partial)
-    setPrefs(next)
+    setPatchError(null)
+    try {
+      const next = await window.browgent.setPrivacyPrefs(partial)
+      setPrefs(next)
+    } catch (e) {
+      // Keep the last-known-good prefs (toggle stays put) and tell the user.
+      setPatchError(e instanceof Error ? e.message : 'Could not save privacy change')
+      window.setTimeout(() => setPatchError(null), 4000)
+    }
   }, [])
 
   if (!prefs) {
     return (
       <div className="settings-card settings-card-pad">
-        <p className="settings-lead">Loading privacy settings…</p>
+        {loadError ? (
+          <>
+            <p className="settings-lead import-error" role="alert">
+              {loadError}
+            </p>
+            <button
+              type="button"
+              className="settings-btn"
+              style={{ marginTop: 8 }}
+              onClick={load}
+            >
+              Retry
+            </button>
+          </>
+        ) : (
+          <p className="settings-lead">Loading privacy settings…</p>
+        )}
       </div>
     )
   }
@@ -794,6 +873,11 @@ function PrivacyBlockingCard(): React.JSX.Element {
         Session blocked: {stats?.blockedSession ?? 0} · all time: {stats?.blockedTotal ?? 0}
         {stats?.lastBlockedHost ? ` · last: ${stats.lastBlockedHost}` : ''}
       </p>
+      {patchError && (
+        <p className="settings-toggle-sub import-error" role="alert" style={{ marginBottom: 8 }}>
+          {patchError}
+        </p>
+      )}
       <ToggleRow
         label="Block ads"
         sub="Cancel known ad network requests"
