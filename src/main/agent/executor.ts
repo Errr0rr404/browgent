@@ -113,31 +113,33 @@ export class ToolExecutor {
           if (!ctx.requestConfirm) {
             return fail(name, 'Credential access requires human confirmation')
           }
-          // Bind lookup to the active tab when possible to avoid confused-deputy URL injection.
+          // Bind lookup to the visible http(s) tab — never accept an agent-supplied URL when
+          // the active tab has no host (about:blank) or is a different registrable site.
           const activeUrl = this.tabs.getState().find((t) => t.isActive)?.url || ''
+          const activeHost = hostFromUrl(activeUrl)
+          if (!activeHost || !/^https?:\/\//i.test(activeUrl)) {
+            return fail(
+              name,
+              'Open an http(s) page first — credential lookup is bound to the active tab'
+            )
+          }
           const argUrl = str(args.url) || ''
           let url = activeUrl
           if (argUrl) {
-            const activeHost = hostFromUrl(activeUrl)
             const argHost = hostFromUrl(argUrl)
-            // Allow agent-supplied URL only when same host (or subdomain) as the visible tab.
-            if (
-              !activeHost ||
-              !argHost ||
-              argHost === activeHost ||
-              argHost.endsWith(`.${activeHost}`) ||
-              activeHost.endsWith(`.${argHost}`)
-            ) {
-              url = argUrl
-            } else {
+            if (!argHost || !/^https?:\/\//i.test(argUrl)) {
+              return fail(name, 'Credential URL must be http(s) with a valid host')
+            }
+            // Same host, or a subdomain of the active host (not parent → child vault fishing).
+            const sameOrSub =
+              argHost === activeHost || argHost.endsWith(`.${activeHost}`)
+            if (!sameOrSub) {
               return fail(
                 name,
                 `Credential URL host (${argHost}) does not match active tab (${activeHost})`
               )
             }
-          }
-          if (!url || !/^https?:\/\//i.test(url)) {
-            return fail(name, 'No http(s) tab URL for credential lookup')
+            url = argUrl
           }
           const vault = getPasswordVault()
           const meta = vault.findMetaForUrl(url)
@@ -369,7 +371,8 @@ export class ToolExecutor {
         }
 
         case 'observe': {
-          const snap = await this.tabs.observe(str(args.tabId))
+          const tabId = str(args.tabId) || this.tabs.getActiveTabId() || undefined
+          const snap = await this.tabs.observe(tabId)
           if (!snap) return fail(name, 'Could not observe page')
           const compact = snap.elements
             .slice(0, 40)
@@ -382,7 +385,10 @@ export class ToolExecutor {
               title: snap.title,
               elements: snap.elements,
               textPreview: snap.textPreview.slice(0, 800),
-              compact
+              compact,
+              // Stamp tabId so multi-tab ref identity / sensitive-click gates stay bound
+              // to the observed page (not whichever tab is later active).
+              tabId: tabId ?? snap.tabId
             },
             `Observed ${snap.elements.length} elements on ${snap.title || snap.url}`
           )
@@ -607,11 +613,26 @@ export class ToolExecutor {
         }
 
         case 'press_key': {
+          const keyRaw = String(args.key ?? '')
+          const keyLower = keyRaw.toLowerCase()
+          // Enter / numpad Enter often submits forms — same human gate as sensitive clicks.
+          if (
+            policy.confirmSensitiveClicks &&
+            ctx.requestConfirm &&
+            (keyLower === 'enter' || keyLower === 'return' || keyLower === 'numpadenter')
+          ) {
+            const allowed = await ctx.requestConfirm(
+              'Press Enter (may submit a form). Allow?',
+              name,
+              args
+            )
+            if (!allowed) return fail(name, 'Key press rejected by human')
+          }
           const keyTab = str(args.tabId)
           const r = await this.tabs.domAction('press', args, keyTab, ctx.signal)
           if (!r.ok) return fail(name, r.error ?? 'Key failed')
           // Enter often navigates — short settle then snapshot
-          if (String(args.key ?? '').toLowerCase() === 'enter') {
+          if (keyLower === 'enter' || keyLower === 'return' || keyLower === 'numpadenter') {
             await abortSleep(400, ctx.signal)
           }
           return this.withAutoSnapshot(ok(name, r, `Pressed ${args.key}`), keyTab, ctx.signal)

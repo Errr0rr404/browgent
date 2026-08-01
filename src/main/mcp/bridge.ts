@@ -251,8 +251,9 @@ export class McpBridge {
     this.queuedTools += 1
     const run = this.toolChain.then(async () => {
       try {
-        // Race each tool against a ceiling so one stuck call can't block the queue forever.
-        return await this.withTimeout(fn(), McpBridge.TOOL_TIMEOUT_MS)
+        // Client-facing timeout + wait-for-settle so the FIFO queue never advances while
+        // a timed-out navigate/click is still mutating the same tabs.
+        return await this.runToolWithTimeout(fn, McpBridge.TOOL_TIMEOUT_MS)
       } finally {
         this.queuedTools -= 1
       }
@@ -265,18 +266,28 @@ export class McpBridge {
     return run
   }
 
-  /** Reject with a clear timeout error if `p` doesn't settle within `ms`. */
-  private withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  /**
+   * Reject with a clear timeout if `fn` exceeds `ms`, but always await the underlying
+   * work before returning control to the tool queue (prevents overlapping mutators).
+   */
+  private async runToolWithTimeout<T>(fn: () => Promise<T>, ms: number): Promise<T> {
     let timer: ReturnType<typeof setTimeout> | undefined
+    let timedOut = false
+    const work = fn()
     const timeout = new Promise<never>((_, reject) => {
-      timer = setTimeout(
-        () => reject(new Error(`Tool timed out after ${Math.round(ms / 1000)}s`)),
-        ms
-      )
+      timer = setTimeout(() => {
+        timedOut = true
+        reject(new Error(`Tool timed out after ${Math.round(ms / 1000)}s`))
+      }, ms)
     })
-    return Promise.race([p, timeout]).finally(() => {
+    try {
+      return await Promise.race([work, timeout])
+    } finally {
       if (timer) clearTimeout(timer)
-    })
+      if (timedOut) {
+        await work.catch(() => undefined)
+      }
+    }
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {

@@ -73,6 +73,8 @@ export class AgentSession {
   private runGeneration = 0
   private taskInFlight = false
   private mutationInFlight = false
+  /** MCP mutators currently executing (serialized at the bridge, counted here for chat races). */
+  private mcpMutatorsInFlight = 0
   private pendingOwnershipTransfer = false
   /**
    * Fix #2: set when a human Takeover→Resume happened mid-run. The LLM loop
@@ -195,6 +197,7 @@ export class AgentSession {
     this.humanHandoff = null
     this.taskInFlight = false
     this.mutationInFlight = false
+    this.mcpMutatorsInFlight = 0
     this.pendingOwnershipTransfer = false
     this.resumeContextPending = false
     this.resumeObserveTabId = null
@@ -214,6 +217,8 @@ export class AgentSession {
     this.paused = false
     this.taskInFlight = false
     this.mutationInFlight = false
+    // Leave mcpMutatorsInFlight alone — in-flight MCP calls finish; queue serialization
+    // in the bridge prevents overlap. Chat stay unblocked after Stop.
     this.pendingOwnershipTransfer = false
     this.resumeContextPending = false
     this.resumeObserveTabId = null
@@ -346,6 +351,11 @@ export class AgentSession {
 
     let deniedReason: string | null = null
     const call: ToolCall = { id: randomUUID(), name, args }
+    const isMutator = !isRead
+    if (isMutator) {
+      this.mcpMutatorsInFlight += 1
+      this.mutationInFlight = true
+    }
     try {
       const result = await this.executor.execute(call, {
         policy: this.policy,
@@ -377,12 +387,14 @@ export class AgentSession {
           title?: string
           elements?: ObserveSnapshot['elements']
           textPreview?: string
+          tabId?: string
         }
         if (Array.isArray(d.elements)) {
           const obsTabId =
-            typeof args.tabId === 'string' && args.tabId
-              ? args.tabId
-              : this.tabs.getActiveTabId() ?? undefined
+            (typeof d.tabId === 'string' && d.tabId) ||
+            (typeof args.tabId === 'string' && args.tabId) ||
+            this.tabs.getActiveTabId() ||
+            undefined
           this.lastObservation = {
             url: d.url ?? '',
             title: d.title ?? '',
@@ -428,13 +440,31 @@ export class AgentSession {
       this.emit()
       return result
     } finally {
+      if (isMutator) {
+        this.mcpMutatorsInFlight = Math.max(0, this.mcpMutatorsInFlight - 1)
+        if (this.mcpMutatorsInFlight === 0 && !this.taskInFlight) {
+          this.mutationInFlight = false
+        }
+      }
       // MCP is fire-and-forget vs chat loops: release ownership so human browsing
       // is not stuck behind agent tab guards after a lone navigate/click.
       // Defer release so in-flight loadURL / redirects keep agent scheme+host guards
       // (new_tab returns before load finishes).
-      if (!this.taskInFlight && !this.paused && !this.pendingConfirmation) {
+      if (
+        !this.taskInFlight &&
+        this.mcpMutatorsInFlight === 0 &&
+        !this.paused &&
+        !this.pendingConfirmation
+      ) {
         setTimeout(() => {
-          if (this.taskInFlight || this.paused || this.pendingConfirmation) return
+          if (
+            this.taskInFlight ||
+            this.mcpMutatorsInFlight > 0 ||
+            this.paused ||
+            this.pendingConfirmation
+          ) {
+            return
+          }
           try {
             this.tabs.releaseAgentTabs()
           } catch {
@@ -474,7 +504,10 @@ export class AgentSession {
     this.waitingQuestion = null
     this.paused = false
     this.push('user', answer)
-    this.status = 'idle'
+    // Close the idle window before the async resume/runTask schedules: otherwise MCP
+    // mutators (and a second send) can race between status=idle and taskInFlight=true.
+    this.taskInFlight = true
+    this.status = 'thinking'
     this.emit()
 
     const handoff = this.humanHandoff
@@ -541,10 +574,23 @@ export class AgentSession {
       this.emit()
       throw new Error('Confirm or deny the pending action before sending a new instruction.')
     }
-    if (this.taskInFlight || this.status === 'thinking' || this.status === 'acting') {
-      this.pushSystem('Agent is busy — Stop first, or wait for the current task to finish.')
+    if (
+      this.taskInFlight ||
+      this.mcpMutatorsInFlight > 0 ||
+      this.status === 'thinking' ||
+      this.status === 'acting'
+    ) {
+      this.pushSystem(
+        this.mcpMutatorsInFlight > 0
+          ? 'MCP tool in progress — wait a moment, then try again.'
+          : 'Agent is busy — Stop first, or wait for the current task to finish.'
+      )
       this.emit()
-      throw new Error('Agent is busy — Stop first, or wait for the current task to finish.')
+      throw new Error(
+        this.mcpMutatorsInFlight > 0
+          ? 'MCP tool in progress — wait a moment, then try again.'
+          : 'Agent is busy — Stop first, or wait for the current task to finish.'
+      )
     }
     await this.runTask(text, tabId, { skipUserMessage: false })
   }
@@ -1057,7 +1103,13 @@ export class AgentSession {
     return new Promise((resolve) => {
       const id = randomUUID()
       const waitGen = this.runGeneration
-      this.pendingConfirmation = { id, reason, tool, args }
+      // Never put raw secrets into session state / IPC — executor keeps real args in closure.
+      this.pendingConfirmation = {
+        id,
+        reason,
+        tool,
+        args: scrubArgsForConfirmation(tool, args)
+      }
       this.status = 'waiting_human'
 
       const wasInFlight = this.mutationInFlight
@@ -1933,6 +1985,21 @@ function scrubCallArgsForTrajectory(call: ToolCall): ToolArgs {
   if (typeof args.question === 'string') args.question = redactTextForTrajectory(args.question)
   if (typeof args.thought === 'string') args.thought = redactTextForTrajectory(args.thought)
   return args
+}
+
+/** UI/IPC-safe args for pending policy confirms — always redact type text and secrets. */
+function scrubArgsForConfirmation(tool: ToolName, args: ToolArgs): ToolArgs {
+  const scrubbed = scrubCallArgsForTrajectory({ id: 'confirm', name: tool, args })
+  if (tool === 'type' && typeof scrubbed.text === 'string') {
+    scrubbed.text = '[REDACTED]'
+  }
+  // Defensive: never surface password-like keys over IPC even if a tool adds them later.
+  for (const key of Object.keys(scrubbed)) {
+    if (/pass(word)?|secret|token|otp|pin/i.test(key) && typeof scrubbed[key] === 'string') {
+      scrubbed[key] = '[REDACTED]'
+    }
+  }
+  return scrubbed
 }
 
 function resolveCallPlaceholders(call: ToolCall, map: SecretRedactionMap): ToolArgs {

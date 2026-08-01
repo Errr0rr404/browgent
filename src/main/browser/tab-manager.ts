@@ -18,7 +18,8 @@ import type { DriverMode } from '../../shared/driver'
 import { getRuntimeFlags, setDriverMode as setRuntimeDriverMode } from './runtime-flags'
 import { detachDebugger, runPageAction, type DomActionKind } from './page-driver'
 import {
-  canonicalHost,
+  DEFAULT_POLICY,
+  isHostAllowed,
   isHttpOrHttpsOrAboutBlank,
   isPrivateOrMetadataHost,
   looksLikeForbiddenScheme
@@ -757,10 +758,12 @@ export class TabManager {
   }
 
   async observe(tabId?: TabId): Promise<ObserveSnapshot | null> {
-    const wc = this.getWebContents(tabId)
+    const resolvedId = tabId ?? this.activeTabId ?? undefined
+    const wc = this.getWebContents(resolvedId)
     if (!wc) return null
     try {
-      return await observePage(wc)
+      const snap = await observePage(wc)
+      return { ...snap, tabId: resolvedId ?? snap.tabId }
     } catch {
       return null
     }
@@ -891,24 +894,14 @@ export class TabManager {
   }
 
   private hostAllowedByPolicy(host: string, policy: AgentGuardPolicy): boolean {
-    // Canonicalize the host AND every list entry (lowercase, strip trailing dot) so a trailing-dot
-    // host (google.com.) or mixed-case block entry (Google.com) can't bypass the block-list.
-    // Mirrors isHostAllowed in shared/policies. [block-bypass fix]
-    const h = canonicalHost(host)
-    if (!h) return false
-    if (
-      policy.blockHosts.some((b) => {
-        const entry = canonicalHost(b)
-        return entry !== '' && (h === entry || h.endsWith(`.${entry}`))
-      })
-    ) {
-      return false
-    }
-    if (policy.allowHosts.length === 0) return true
-    return policy.allowHosts.some((a) => {
-      const entry = canonicalHost(a)
-      if (!entry || entry.length < 2) return false
-      return h === entry || h.endsWith(`.${entry}`)
+    // Single source of truth with executor policy gates: block/allow lists, trailing-dot /
+    // case canonicalization, AND private/metadata SSRF hosts when the allowlist is empty.
+    // (Previously this helper omitted the private-host check, so will-navigate / redirects
+    // could reach 169.254.169.254 after the agent opened a public page.)
+    return isHostAllowed(host, {
+      ...DEFAULT_POLICY,
+      allowHosts: policy.allowHosts,
+      blockHosts: policy.blockHosts
     })
   }
 

@@ -229,14 +229,14 @@ export function AgentPanel({
     onActivate: (t) => setTab(t)
   })
 
+  const pendingConfirmId = state?.pendingConfirmation?.id
   useEffect(() => {
-    if (!open) return
-    if (!state?.pendingConfirmation) return
+    if (!open || !pendingConfirmId) return
     const root = confirmDialogRef.current
     if (!root) return
     const first = root.querySelector<HTMLElement>('button')
     first?.focus()
-  }, [open, state?.pendingConfirmation?.id])
+  }, [open, pendingConfirmId])
 
   // Focus composer when agent asks for human input
   useEffect(() => {
