@@ -70,14 +70,15 @@ src/
       store.ts            Local counters + traction packet
   preload/
     index.ts · guest.ts · pet.ts
-  renderer/src/           React chrome only
+  renderer/src/           React chrome only (Settings: appearance, agent, brain, import, profile, privacy, search, shortcuts)
   shared/
     tools · policies · policy-presets · recipes · demo · summary
     privacy-prefs · profile · blocklists · mcp · metrics
     sites · types · driver · bookmarks · import-types
-scripts/                  browgent-mcp, unit smokes, demo-hero, yc-packet
+scripts/                  browgent-mcp, unit smokes (schema / privacy / policy), demo-hero, yc-packet
 examples/                 playwright-connect, sample trajectory
 recipes/README.md         Index (canonical prompts in shared/recipes.ts)
+website/                  GitHub Pages landing
 ```
 
 ## Dual driver
@@ -126,7 +127,8 @@ Exposed as `window.browgent` (see `src/preload/index.ts`):
 - Chrome layout (top/right/bottom/left) for view bounds
 - Agent: send, getState, stop, clear, pause, resume, takeover, mode, policy, confirm, reject, answerHuman, export
 - Driver: status (CDP URL when enabled, mode), setMode (`dom` | `cdp`)
-- MCP: getMcpStatus; metrics get/export/demo/recipe  
+- MCP: getMcpStatus; metrics get/export/demo/recipe; telemetry opt-in
+- Pet overlay: configure / click / hide / moved (native view above guest pages)
 - STDIO adapter: `scripts/browgent-mcp.mjs`
 - Window controls (non-macOS)
 
@@ -136,6 +138,7 @@ Exposed as `window.browgent` (see `src/preload/index.ts`):
 - Compact host/path blocklist (`src/shared/blocklists/compact-hosts.ts`), not a full uBlock engine.
 - Settings → **Privacy & data**: block ads/trackers, cookie-banner mode, allowlist hosts, shield badge.
 - Status bar shows session block count when the shield badge is enabled.
+- Local metrics (no page content) live in userData. Remote flush only if `BROWGENT_TELEMETRY_URL` is set **and** the user opts in (Settings → Privacy & data).
 
 ## Related
 

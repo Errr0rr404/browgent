@@ -17,6 +17,7 @@ Modifier is **⌘** on macOS, **Ctrl** on Windows/Linux.
 | ⌘/Ctrl+- | Zoom out |
 | ⌘/Ctrl+0 | Reset zoom |
 | ⌘/Ctrl+J | Toggle agent panel |
+| ⌘/Ctrl+, | Settings |
 | ⌘/Ctrl+⇧+S | Toggle sidebar |
 | ⌘/Ctrl+D | Pin / unpin favorite (Arc-style) |
 | ⌘/Ctrl+1 … 8 | Switch to tab N |

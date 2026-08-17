@@ -10,6 +10,7 @@ npm install                    # otherwise
 npm run dev                    # normal UI; CDP off by default
 BROWGENT_CDP_PORT=9222 npm run dev
 npm run typecheck
+npm run lint
 npm run build
 npm run preview
 npm run dist:mac              # DMG → release/
@@ -19,7 +20,7 @@ npm run dev:headless          # hidden + agent-only + CDP
 npm run playwright:example    # needs Browgent running + playwright
 npm run mcp                   # STDIO MCP (Browgent must be running)
 npm run mcp:smoke             # HTTP bridge smoke (Browgent must be running)
-npm run test:unit             # tool schema + privacy host-match smokes
+npm run test:unit             # tool schema + privacy host-match + policy/SSRF smokes
 npm run test:identity         # guest navigate smoke (app + MCP up)
 npm run demo:hero             # automated YC hero path via MCP
 npm run yc:packet             # traction packet for application
@@ -31,7 +32,7 @@ Docs index: [docs/README.md](./docs/README.md). YC: [docs/yc-application.md](./d
 
 | Path | Role |
 |------|------|
-| `src/main/` | Window, tabs, agent, MCP bridge |
+| `src/main/` | Window, tabs, agent, MCP bridge, metrics |
 | `src/main/browser/request-filter.ts` | Guest ad/tracker network cancel |
 | `src/main/browser/cookie-banner.ts` | Consent banner auto-click |
 | `src/main/browser/privacy-store.ts` | Privacy prefs + block stats |
@@ -40,6 +41,9 @@ Docs index: [docs/README.md](./docs/README.md). YC: [docs/yc-application.md](./d
 | `src/main/browser/page-driver.ts` | Dual DOM / CDP actuation |
 | `src/main/browser/guest-identity.ts` | Chrome-like UA / client hints for guest tabs |
 | `src/main/browser/cdp-endpoint.ts` | Playwright `connectOverCDP` endpoint |
+| `src/main/browser/browser-import.ts` | One-click import from other browsers |
+| `src/main/browser/profile-store.ts` | User Hub contact fields |
+| `src/main/browser/password-vault.ts` | Local encrypted password vault |
 | `scripts/browgent-mcp.mjs` | STDIO MCP proxy → localhost bridge |
 | `src/preload/guest.ts` | Early main-world identity patches for guest pages |
 | `src/renderer/` | Chrome UI only (no guest DOM) |
@@ -47,6 +51,7 @@ Docs index: [docs/README.md](./docs/README.md). YC: [docs/yc-application.md](./d
 | `src/shared/blocklists/` | Compact ad/tracker host lists |
 | `examples/` | Playwright attach sample |
 | `docs/` | Human documentation |
+| `website/` | GitHub Pages landing |
 
 ## Invariants
 

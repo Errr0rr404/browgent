@@ -27,6 +27,7 @@
 - Docs consolidated under [docs/README.md](./docs/README.md) (install/positioning/hero merged into getting-started / builders / yc-application)
 - Recipe markdown reduced to [recipes/README.md](./recipes/README.md); prompts live in `src/shared/recipes.ts`
 - Docs refreshed for privacy pack, summarize, assets, fill_form, and QA asserts
+- Docs refreshed to match the current tree: stack/versions, CI (`typecheck` / `lint` / `test:unit` / build), env var names (including vision, token file, telemetry), release workflow (draft multi-OS on `v*` tags), and repo layout
 - Removed unused theme-based agent pet skin stack (morphing FloatingAgentPet is the only companion UI)
 
 ## 0.2.0

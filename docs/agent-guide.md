@@ -6,7 +6,7 @@
 |------|-------|----------|
 | **Act** | Full set (navigate, click, type, fill_form, download_assets, asserts, …) | Automation, form fill, multi-step goals |
 | **Research** | Nav/history, observe, extract, screenshot, scroll/wait, tabs, `list_assets`, asserts, `get_profile` — **no** click/type/hover/press/`fill_form` | Read + move without form mutation |
-| **Watch** | observe, extract, get_url, screenshot, list_tabs, think, done, ask_human, `list_assets`, asserts, `get_profile` | You drive; agent answers / QA-checks from page state |
+| **Watch** | observe, extract_text / extract_links, get_url, screenshot, list_tabs, think, done, ask_human, `list_assets`, asserts, `get_profile` | You drive; agent answers / QA-checks from page state |
 
 Set mode in the agent panel. Mode updates policy (`researchOnly` when Research).
 
@@ -22,6 +22,8 @@ Set mode in the agent panel. Mode updates policy (`researchOnly` when Research).
 **Any OpenAI-compatible API** works — OpenAI, OpenRouter (Claude/Gemini/…), Groq, DeepSeek, Ollama, custom proxies — via `BROWGENT_PROVIDER`, `BROWGENT_API_KEY`, `BROWGENT_BASE_URL`, and `BROWGENT_MODEL`. See [Getting started](./getting-started.md#environment-variables).
 
 If the LLM fails (network, bad key), the session falls back to heuristics and notes it in chat.
+
+Settings → **Brain** shows the resolved provider and model. Keys are never stored in the UI. `BROWGENT_VISION=1` sends viewport screenshots to multimodal models (off by default; extra tokens).
 
 ## Tools (canonical)
 
@@ -71,7 +73,7 @@ External Playwright always uses the **CDP endpoint** (`connectOverCDP`) — keep
 
 ## Policies
 
-Configurable in the **Policy** tab (and via IPC):
+Named packs in the **Policy** tab (and Settings → Agent & policy): **Strict** (confirm new hosts + sensitive clicks, 30 steps), **Builder** (default — sensitive clicks only, 40 steps), **Open** (minimal gates, 60 steps). Per-setting defaults (Builder / `DEFAULT_POLICY`):
 
 | Setting | Default | Effect |
 |---------|---------|--------|
@@ -118,7 +120,9 @@ The agent and app only navigate `http://`, `https://`, or `about:blank`. `file:`
 |----|----------|
 | **Summarize** (toolbar / ⌘⇧U) | Research-mode page summary (`src/shared/summary.ts`) |
 | Downloads → **Save page assets** | List/select images & docs; same as `list_assets` / `download_assets` |
+| Settings → **Brain** | Resolved provider/model (keys stay in `.env`) |
 | Settings → **Privacy & data** | Ad/tracker filter, cookie banners, metrics/traction export |
 | Settings → **User Hub** | Profile for `fill_form` / `get_profile`; vault for `get_credentials` |
+| Settings → **Search & new tab** | Omnibox engine (Google / DuckDuckGo / Brave / Kagi). Agent `search` stays on DuckDuckGo |
 
 QA recipes and assert tools: [qa.md](./qa.md).

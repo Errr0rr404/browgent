@@ -5,7 +5,7 @@
 | Platform | How |
 |----------|-----|
 | **macOS** Apple Silicon | [Browgent-mac-arm64.dmg](https://github.com/Errr0rr404/browgent/releases/latest/download/Browgent-mac-arm64.dmg) — drag to Applications |
-| **Windows / Linux** | Build with `npm run dist:win` / `dist:linux`, or check [Releases](https://github.com/Errr0rr404/browgent/releases) when published |
+| **Windows / Linux** | Build with `npm run dist:win` / `dist:linux`. Tag CI also produces NSIS / AppImage as a **draft** release; they are not on the published latest (v0.2.0) assets |
 
 ### macOS Gatekeeper (unsigned OSS)
 
@@ -51,21 +51,31 @@ Copy `.env.example` to `.env` (never commit `.env`).
 | `BROWGENT_PROVIDER` | No | `auto` · `grok` · `openai` · `openrouter` · `groq` · `deepseek` · `ollama` · `custom` |
 | `BROWGENT_API_KEY` | No | Generic API key (any OpenAI-compatible provider) |
 | `BROWGENT_BASE_URL` | No | Generic base URL (…`/v1`) |
+| `BROWGENT_VISION` | No | Send viewport screenshots to multimodal models (`1` / `on`) |
+| `BROWGENT_MAX_TOKENS` | No | Cap completion length (positive integer; unset = provider default) |
 | `XAI_BASE_URL` | No | Grok API base (default `https://api.x.ai/v1`) |
 | `OPENAI_API_KEY` / `OPENROUTER_API_KEY` / `GROQ_API_KEY` / `DEEPSEEK_API_KEY` | No | Provider keys (auto-detected) |
-| `OLLAMA_BASE_URL` / `OLLAMA_HOST` | No | Local Ollama OpenAI-compatible endpoint |
+| `OPENAI_BASE_URL` / `OPENROUTER_BASE_URL` / `GROQ_BASE_URL` / `DEEPSEEK_BASE_URL` | No | Per-provider base URL overrides |
+| `OLLAMA_BASE_URL` / `OLLAMA_HOST` / `OLLAMA_API_KEY` | No | Local Ollama OpenAI-compatible endpoint (key optional) |
 | `SPACE_XAI_API_KEY` / `GROK_API_KEY` | No | Aliases for the Grok key |
 | `BROWGENT_CDP_PORT` | No | Enable CDP on the given port. Off by default for normal `npm run dev`; positive port enables, `0` disables |
 | `BROWGENT_CDP` | No | Shorthand toggle: `1`/`on` enables port 9222; `0`/`off`/`false` disables |
 | `BROWGENT_DRIVER` | No | In-app driver: `dom` (default) or `cdp` |
-| `BROWGENT_AGENT_ONLY` | No | Compact automation shell (`1` = on) |
-| `BROWGENT_HEADLESS` | No | Hide window; drive via CDP (`1` = on) |
-| `BROWGENT_CDP_URL` | No | Playwright example endpoint override |
+| `BROWGENT_AGENT_ONLY` | No | Compact automation shell (`1` = on; implies CDP unless disabled) |
+| `BROWGENT_HEADLESS` | No | Hide window; drive via CDP (`1` = on; implies CDP unless disabled) |
+| `BROWGENT_CDP_URL` | No | Playwright **example script** endpoint override only |
 | `BROWGENT_MCP` / `BROWGENT_MCP_PORT` | No | MCP bridge (default on, port **17342**; `0` disables) |
-| `BROWGENT_MCP_TOKEN` | No | Override auto token (`userData/mcp-bridge.json`) — **required by clients** |
+| `BROWGENT_MCP_TOKEN` | No | Override auto token (`userData/mcp-bridge.json`) — **required by `/v1/*` clients** |
+| `BROWGENT_MCP_TOKEN_FILE` | No | Path to a JSON file with a `token` field (STDIO adapter / smokes) |
+| `BROWGENT_MCP_URL` | No | STDIO adapter / smoke scripts target (default `http://127.0.0.1:17342`) |
 | `BROWGENT_ALLOW_PRIVATE_HOSTS` | No | Allow agent/MCP to open loopback/LAN (default blocked) |
+| `BROWGENT_TELEMETRY_URL` | No | Optional remote metrics flush; only used when the user also opts in in Settings |
 
-**Auto-detect order:** Grok → OpenAI → OpenRouter → Groq → DeepSeek → Ollama (if host set) → custom `BROWGENT_*`.
+Legacy aliases (same meaning): `LLM_PROVIDER`, `LLM_API_KEY`, `LLM_BASE_URL`, `LLM_MODEL`, `LLM_VISION`, `LLM_MAX_TOKENS`.
+
+**Auto-detect order:** Grok → OpenAI → OpenRouter → Groq → DeepSeek → Ollama (if host set) → custom `BROWGENT_*`. Native `BROWGENT_PROVIDER=anthropic` is **not** supported — use OpenRouter (`anthropic/…`) or an OpenAI-compatible proxy via `BROWGENT_BASE_URL`.
+
+CLI mirrors: `--cdp-port`, `--cdp`, `--driver`, `--agent-only`, `--headless`, `--mcp-port`, `--mcp`.
 
 Without any key, Browgent uses a **heuristic planner** (site aliases, observe, click/type patterns). Still useful for demos and offline work.
 
@@ -97,9 +107,11 @@ Playwright attach: see [playwright.md](./playwright.md) and `examples/playwright
 3. Status bar: `mcp · :17342` → wire Claude Code ([mcp.md](./mcp.md))  
 4. Policy tab → Strict / Builder / Open  
 5. Trajectory → **Export eval JSON**  
-6. Settings → **Import** (one-click from Chrome/Arc/Edge/…) and **User Hub** (profile + password vault)
-7. Settings → **Privacy & data** → ad/tracker filter + cookie banners; optional **Export YC traction JSON**
-8. Toolbar **Summarize** (⌘⇧U) or Downloads → save page assets
+6. Settings (⌘,) → **Import** (one-click from Chrome/Arc/Edge/…) and **User Hub** (profile + password vault)
+7. Settings → **Brain** shows the resolved provider/model (keys stay in `.env`, never in the UI)
+8. Settings → **Search & new tab** — omnibox engine (Google / DuckDuckGo / Brave / Kagi). Agent `search` still uses DuckDuckGo to avoid reCAPTCHA during automation
+9. Settings → **Privacy & data** → ad/tracker filter + cookie banners; optional **Export YC traction JSON**
+10. Toolbar **Summarize** (⌘⇧U) or Downloads → save page assets
 
 | Goal | What should happen |
 |------|--------------------|
@@ -117,7 +129,18 @@ npm run dist:win     # NSIS x64
 npm run dist:linux   # AppImage x64
 ```
 
-Tag `v*` triggers multi-OS CI ([releasing.md](./releasing.md)).
+Tag `v*` triggers multi-OS CI and a **draft** GitHub Release ([releasing.md](./releasing.md)). Published **latest** today is the macOS arm64 DMG.
+
+## Verify from source
+
+```bash
+npm run typecheck
+npm run lint
+npm run test:unit
+npm run build
+```
+
+With the app running: `npm run mcp:smoke`. With CDP enabled: `npm run playwright:example`.
 
 ## Next
 

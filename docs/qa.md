@@ -47,3 +47,13 @@ Claude Code / Cursor can drive the same tabs; use assert tools from the shared t
 ## Privacy while testing
 
 Ads/trackers/cookie banners: **Settings → Privacy & data**. Allowlist your app’s hosts if a CDN is misclassified.
+
+## Repo smokes (no app required)
+
+```bash
+npm run test:unit     # tool JSON Schema + privacy host-match + policy/SSRF gates
+npm run typecheck
+npm run lint
+```
+
+With the app running: `npm run mcp:smoke` and `npm run test:identity`.

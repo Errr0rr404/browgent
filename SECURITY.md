@@ -26,5 +26,8 @@ Browgent is a **local desktop browser** that runs agent tools against real web c
 - Pages can attempt XSS; guest tabs are sandboxed but not a hardened browser-isolation product
 - Agents with Act mode can click/type/navigate on behalf of the user — use policies and Takeover
 - API keys in `.env` stay on the local machine; never commit them
+- The MCP HTTP bridge binds **127.0.0.1** only and requires a token on `/v1/*`; do not tunnel it
+- CDP (when enabled) is localhost-only and has **no** token — any local process can drive the session
+- Agent navigation blocks `file:` / `data:` / `javascript:` and private/metadata hosts by default
 
 Feature requests that improve isolation, policy, or consent UX are welcome as public issues.

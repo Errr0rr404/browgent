@@ -64,12 +64,15 @@ Or from the repo root: `"command": "npm", "args": ["run", "mcp"], "cwd": "/path/
 |----------|---------|
 | `BROWGENT_MCP=0` | Disable bridge |
 | `BROWGENT_MCP_PORT=17342` | Port (default **on**) |
-| `BROWGENT_MCP_TOKEN` | Optional shared secret (must match if client sends one) |
+| `BROWGENT_MCP_TOKEN` | Shared secret for `/v1/*` (required). Overrides the auto file |
+| `BROWGENT_MCP_TOKEN_FILE` | JSON file with a `token` field (STDIO adapter / smokes) |
 | `BROWGENT_MCP_URL` | STDIO proxy target (default `http://127.0.0.1:17342`) |
 
 CLI: `--mcp=0`, `--mcp-port=17342`.
 
-Token file (optional): `userData/mcp-bridge.json` after first launch (`app.setName('browgent')`).
+Token file (auto after first launch): `userData/mcp-bridge.json` (`app.setName('browgent')`). Mode `0600`. The STDIO adapter also probes common userData paths on macOS / Linux / Windows if env is unset.
+
+In-app: **Settings → Privacy & data → Copy MCP config**.
 
 ## Policy & human-in-the-loop
 
