@@ -114,14 +114,25 @@ export function useAppShortcuts({
 
       if (!mod) return
 
-      // Guard EVERY modifier shortcut below while the user is typing in the agent
+      // With Shift, Chromium reports e.key as "J"/"S" — always compare lowercased.
+      const key = e.key.length === 1 ? e.key.toLowerCase() : e.key
+
+      // Restore-tab is an undo and should work even from the composer / omnibox.
+      if (key === 't' && e.shiftKey) {
+        e.preventDefault()
+        void window.browgent.reopenClosedTab?.().then((id) => {
+          if (!id) return
+          setSettingsOpen(false)
+          setHistoryOpen?.(false)
+        })
+        return
+      }
+
+      // Guard remaining modifier shortcuts while the user is typing in the agent
       // composer or the sidebar rename input — otherwise ⌘W closes the tab and ⌘R
       // reloads it mid-sentence. Escape (handled above) and the zoom / back-forward
       // branches keep their own explicit `!typing` rules.
       if (typing) return
-
-      // With Shift, Chromium reports e.key as "J"/"S" — always compare lowercased.
-      const key = e.key.length === 1 ? e.key.toLowerCase() : e.key
 
       if (key === 't') {
         e.preventDefault()
@@ -186,7 +197,13 @@ export function useAppShortcuts({
         if (settingsOpen || historyOpen) return
         const active = tabs.find((t) => t.isActive)
         if (!active || isBlankUrl(active.url)) return
-        setFindOpen?.((v) => !v)
+        if (findOpen) {
+          const input = document.querySelector<HTMLInputElement>('.find-bar-input')
+          input?.focus()
+          input?.select()
+          return
+        }
+        setFindOpen?.(true)
       }
       if (key === 'y' && !e.shiftKey) {
         e.preventDefault()

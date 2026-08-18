@@ -397,7 +397,7 @@ export function DownloadsPanel({
         ref={triggerRef}
         className={`icon-btn downloads-btn${open ? ' active' : ''}`}
         aria-label="Downloads"
-        title="Downloads (⌘⇧J)"
+        title={`Downloads (${window.browgent?.platform === 'darwin' ? '⌘⇧J' : 'Ctrl+Shift+J'})`}
         aria-pressed={open}
         aria-haspopup="dialog"
         aria-expanded={open}

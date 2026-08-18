@@ -80,6 +80,16 @@ export function buildSearchUrl(engine: SearchEngine, query: string): string {
   return `${base}${encodeURIComponent(query.trim())}`
 }
 
+/** True for hosts, IPs, localhost, and explicit schemes — not free-text search. */
+export function looksLikeNavigableUrl(raw: string): boolean {
+  const trimmed = raw.trim()
+  if (!trimmed || /\s/.test(trimmed)) return false
+  if (/^https?:\/\//i.test(trimmed) || /^\/\//.test(trimmed)) return true
+  if (/^(localhost|(\d{1,3}\.){3}\d{1,3})(:\d+)?(\/.*)?$/i.test(trimmed)) return true
+  if (/^[a-z0-9.-]+:\d{2,5}(\/.*)?$/i.test(trimmed)) return true
+  return /^[^\s]+\.[a-z]{2,}([/:?#].*)?$/i.test(trimmed)
+}
+
 /** Design rule: multi-word or no-dot → search; otherwise treat as URL/host. */
 export function resolveOmniboxInput(
   raw: string,
@@ -88,10 +98,17 @@ export function resolveOmniboxInput(
   const trimmed = raw.trim()
   if (!trimmed) return ''
   if (/^https?:\/\//i.test(trimmed)) return trimmed
-  if (/\s/.test(trimmed) || !trimmed.includes('.')) {
-    return buildSearchUrl(engine, trimmed)
+  if (looksLikeNavigableUrl(trimmed)) {
+    if (trimmed.startsWith('//')) return `https:${trimmed}`
+    if (
+      /^(localhost|(\d{1,3}\.){3}\d{1,3})(:\d+)?(\/.*)?$/i.test(trimmed) ||
+      /^[a-z0-9.-]+:\d{2,5}(\/.*)?$/i.test(trimmed)
+    ) {
+      return `http://${trimmed}`
+    }
+    return `https://${trimmed}`
   }
-  return trimmed.startsWith('//') ? `https:${trimmed}` : `https://${trimmed}`
+  return buildSearchUrl(engine, trimmed)
 }
 
 export function isSearchEngine(v: string): v is SearchEngine {

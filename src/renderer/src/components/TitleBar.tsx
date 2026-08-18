@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Minus, Square, SquareStack, X } from 'lucide-react'
 
 interface Props {
@@ -7,15 +7,19 @@ interface Props {
 
 /** Windows/Linux only — macOS uses system traffic lights on the first chrome row. */
 export function TitleBar({ platform }: Props): React.JSX.Element | null {
-  // No IPC event exposes the native maximized state, so track it optimistically:
-  // the title-bar double-click and the button share one toggle. Best-effort — it
-  // can drift if the OS maximizes/restores the window by other means.
   const [maximized, setMaximized] = useState(false)
+
+  useEffect(() => {
+    if (!window.browgent?.isMaximized) return
+    void window.browgent.isMaximized().then(setMaximized).catch(() => {
+      /* ignore */
+    })
+    return window.browgent.onMaximizedChanged?.(setMaximized)
+  }, [])
 
   if (platform === 'darwin') return null
 
   const toggleMaximize = (): void => {
-    setMaximized((m) => !m)
     void window.browgent.maximize()
   }
 

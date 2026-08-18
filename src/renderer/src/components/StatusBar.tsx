@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { copyText } from '../lib/clipboard'
 import type { AgentSessionState, TabState } from '@shared/types'
 import type { CdpEndpointStatus, DriverMode } from '@shared/driver'
 import type { McpStatus } from '@shared/mcp'
@@ -15,6 +16,7 @@ interface Props {
   onZoomOut?: () => void
   onZoomReset?: () => void
   onToast?: (kind: 'success' | 'info' | 'error', text: string) => void
+  onOpenAgent?: () => void
 }
 
 const APP_VERSION_FALLBACK = 'dev'
@@ -28,7 +30,8 @@ export function StatusBar({
   onZoomIn,
   onZoomOut,
   onZoomReset,
-  onToast
+  onToast,
+  onOpenAgent
 }: Props): React.JSX.Element {
   const host = statusLabel ?? safeHost(activeTab?.url)
   const status = agent?.status ?? 'idle'
@@ -152,15 +155,18 @@ export function StatusBar({
         </>
       )}
       <span className="statusbar-sep" />
-      <span
-        className={`statusbar-pill statusbar-agent${live ? ' live' : ''}`}
+      <button
+        type="button"
+        className={`statusbar-btn statusbar-pill statusbar-agent${live ? ' live' : ''}`}
         aria-live="polite"
-        aria-label={`Agent ${status}, mode ${mode}`}
+        aria-label={`Agent ${status}, mode ${mode}. Click to open agent.`}
+        title="Open agent panel"
+        onClick={() => onOpenAgent?.()}
       >
         <span className={`agent-status-dot status-${status}`} aria-hidden />
         <strong>{formatStatus(status)}</strong>
         <span className="statusbar-muted"> · {mode}</span>
-      </span>
+      </button>
       <span className="statusbar-sep" />
       <span
         className={`statusbar-pill${agent?.provider && agent.provider !== 'heuristic' ? ' live' : ''}`}
@@ -246,13 +252,20 @@ export function StatusBar({
       {host ? (
         <>
           <span className="statusbar-sep" />
-          <span
-            className="statusbar-host"
-            title={statusLabel ?? activeTab?.url}
-            aria-label={`Active host: ${host}`}
+          <button
+            type="button"
+            className="statusbar-btn statusbar-host"
+            title={`${statusLabel ?? activeTab?.url ?? host} — click to copy`}
+            aria-label={`Active host: ${host}. Click to copy URL.`}
+            onClick={() => {
+              const text = statusLabel ?? activeTab?.url ?? host
+              void copyText(text).then((ok) => {
+                onToast?.(ok ? 'success' : 'error', ok ? 'URL copied' : 'Could not copy URL')
+              })
+            }}
           >
             {host}
-          </span>
+          </button>
         </>
       ) : (
         <span style={{ flex: 1 }} aria-hidden />
@@ -264,7 +277,7 @@ export function StatusBar({
             <button
               type="button"
               className="statusbar-btn statusbar-zoom-btn"
-              title="Zoom out (⌘-)"
+              title="Zoom out"
               aria-label="Zoom out"
               onClick={onZoomOut}
             >
@@ -273,7 +286,7 @@ export function StatusBar({
             <button
               type="button"
               className="statusbar-btn statusbar-zoom-pct"
-              title="Reset zoom (⌘0)"
+              title="Reset zoom"
               aria-label={`Zoom ${zoomPct} percent. Click to reset.`}
               onClick={onZoomReset}
             >
@@ -282,7 +295,7 @@ export function StatusBar({
             <button
               type="button"
               className="statusbar-btn statusbar-zoom-btn"
-              title="Zoom in (⌘+)"
+              title="Zoom in"
               aria-label="Zoom in"
               onClick={onZoomIn}
             >
@@ -291,9 +304,11 @@ export function StatusBar({
           </span>
         </>
       )}
-      <span className="statusbar-version" aria-label={`Browgent version ${appVersion}`}>
-        v{appVersion}
-      </span>
+      {appVersion !== APP_VERSION_LOADING && (
+        <span className="statusbar-version" aria-label={`Browgent version ${appVersion}`}>
+          v{appVersion}
+        </span>
+      )}
     </footer>
   )
 }

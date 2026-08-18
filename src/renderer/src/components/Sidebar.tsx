@@ -29,6 +29,7 @@ import {
   type BookmarkItem
 } from '@shared/bookmarks'
 import { isBlankUrl, tabDisplayTitle } from '../lib/urls'
+import { copyText } from '../lib/clipboard'
 import { useBookmarks } from '../stores/bookmarks'
 import { useRovingTablist } from '../hooks/useRovingTablist'
 import { Favicon } from './Favicon'
@@ -89,7 +90,7 @@ interface Props {
   onToggleLibrary?: () => void
 }
 
-type MenuKind = 'favorite' | 'item' | 'folder' | 'space'
+type MenuKind = 'favorite' | 'item' | 'folder' | 'space' | 'tab'
 
 interface MenuStateBase {
   kind: MenuKind
@@ -100,6 +101,7 @@ interface MenuStateBase {
 type MenuState =
   | (MenuStateBase & { kind: 'favorite' | 'item' | 'folder'; id: BookmarkId })
   | (MenuStateBase & { kind: 'space' })
+  | (MenuStateBase & { kind: 'tab'; tabId: string })
 
 const MENU_VPAD = 8
 const MENU_TOP_MIN = 48
@@ -130,12 +132,16 @@ export function Sidebar({
     toggleFavorite,
     isFavorite,
     renameSpace,
+    renameFolder,
     pinCurrentAsFavorite
   } = useBookmarks()
 
   const [menu, setMenu] = useState<MenuState | null>(null)
   const [editingSpace, setEditingSpace] = useState(false)
   const [spaceName, setSpaceName] = useState('')
+  const [editingFolderId, setEditingFolderId] = useState<BookmarkId | null>(null)
+  const [folderName, setFolderName] = useState('')
+  const folderInputRef = useRef<HTMLInputElement>(null)
   const [favDropActive, setFavDropActive] = useState(false)
   const cancelledRef = useRef(false)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -251,6 +257,13 @@ export function Sidebar({
     }
   }, [editingSpace])
 
+  useEffect(() => {
+    if (editingFolderId) {
+      cancelledRef.current = false
+      folderInputRef.current?.select()
+    }
+  }, [editingFolderId])
+
   // Declared before the early return below so every hook runs on every render
   // (react-hooks/rules-of-hooks) — toggling the sidebar must not change hook count.
   const pinFromPayload = useCallback(
@@ -283,8 +296,8 @@ export function Sidebar({
 
   const openCtxFromMouse = (
     e: React.MouseEvent,
-    kind: 'favorite' | 'item' | 'folder' | 'space',
-    id?: BookmarkId
+    kind: 'favorite' | 'item' | 'folder' | 'space' | 'tab',
+    id?: BookmarkId | string
   ): void => {
     e.preventDefault()
     e.stopPropagation()
@@ -293,6 +306,9 @@ export function Sidebar({
     const openerId = el.id || ''
     if (kind === 'space') {
       setMenu({ kind: 'space', anchor, openerId })
+    } else if (kind === 'tab') {
+      if (!id) return
+      setMenu({ kind: 'tab', tabId: id, anchor, openerId })
     } else {
       if (!id) return
       setMenu({ kind, id, anchor, openerId })
@@ -301,8 +317,8 @@ export function Sidebar({
 
   const openCtxFromKey = (
     e: React.KeyboardEvent,
-    kind: 'favorite' | 'item' | 'folder' | 'space',
-    id?: BookmarkId
+    kind: 'favorite' | 'item' | 'folder' | 'space' | 'tab',
+    id?: BookmarkId | string
   ): void => {
     if (!isMenuKeyTrigger(e)) return
     e.preventDefault()
@@ -312,6 +328,9 @@ export function Sidebar({
     const openerId = el.id || ''
     if (kind === 'space') {
       setMenu({ kind: 'space', anchor, openerId })
+    } else if (kind === 'tab') {
+      if (!id) return
+      setMenu({ kind: 'tab', tabId: id, anchor, openerId })
     } else {
       if (!id) return
       setMenu({ kind, id, anchor, openerId })
@@ -483,6 +502,17 @@ export function Sidebar({
             role="menuitem"
             tabIndex={-1}
             onClick={() => {
+              if (item) void copyText(item.url)
+              closeAndRestoreOpener()
+            }}
+          >
+            Copy URL
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            tabIndex={-1}
+            onClick={() => {
               toggleFavorite(menu.id)
               closeAndRestoreOpener()
             }}
@@ -506,8 +536,100 @@ export function Sidebar({
         </>
       )
     }
+    if (menu.kind === 'tab') {
+      const tab = tabs.find((t) => t.id === menu.tabId)
+      const blank = !tab || isBlankUrl(tab.url)
+      return (
+        <>
+          <button
+            type="button"
+            role="menuitem"
+            tabIndex={-1}
+            onClick={() => {
+              void window.browgent.duplicateTab?.(menu.tabId)
+              closeAndRestoreOpener()
+            }}
+          >
+            Duplicate
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            tabIndex={-1}
+            disabled={blank}
+            onClick={() => {
+              void window.browgent.reload(menu.tabId)
+              closeAndRestoreOpener()
+            }}
+          >
+            Reload
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            tabIndex={-1}
+            disabled={blank}
+            onClick={() => {
+              if (tab) void copyText(tab.url)
+              closeAndRestoreOpener()
+            }}
+          >
+            Copy URL
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            tabIndex={-1}
+            className="danger"
+            onClick={() => {
+              onCloseTab(menu.tabId)
+              closeAndRestoreOpener()
+            }}
+          >
+            Close
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            tabIndex={-1}
+            disabled={tabs.length < 2}
+            onClick={() => {
+              void window.browgent.closeOtherTabs?.(menu.tabId)
+              closeAndRestoreOpener()
+            }}
+          >
+            Close Others
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            tabIndex={-1}
+            onClick={() => {
+              void window.browgent.reopenClosedTab?.()
+              closeAndRestoreOpener()
+            }}
+          >
+            Reopen Closed Tab
+          </button>
+        </>
+      )
+    }
     if (menu.kind === 'folder') {
       return (
+        <>
+        <button
+          type="button"
+          role="menuitem"
+          tabIndex={-1}
+          onClick={() => {
+            const folder = folders[menu.id]
+            setFolderName(folder?.title ?? '')
+            setEditingFolderId(menu.id)
+            closeAndRestoreOpener()
+          }}
+        >
+          Rename
+        </button>
         <button
           type="button"
           role="menuitem"
@@ -521,6 +643,7 @@ export function Sidebar({
           <Trash2 size={13} strokeWidth={1.75} />
           Delete Folder
         </button>
+        </>
       )
     }
     return (
@@ -538,7 +661,11 @@ export function Sidebar({
           role="menuitem"
           tabIndex={-1}
           onClick={() => {
-            addFolder('New Folder')
+            const id = addFolder('New Folder')
+            if (id) {
+              setFolderName('New Folder')
+              setEditingFolderId(id)
+            }
             closeAndRestoreOpener()
           }}
         >
@@ -556,7 +683,7 @@ export function Sidebar({
           type="button"
           className="arc-icon-btn"
           aria-label="Hide sidebar"
-          title="Hide sidebar (⌘⇧S)"
+          title={`Hide sidebar (${window.browgent?.platform === 'darwin' ? '⌘⇧S' : 'Ctrl+Shift+S'})`}
           onClick={onClose}
         >
           <PanelLeftClose size={16} strokeWidth={1.75} />
@@ -709,11 +836,45 @@ export function Sidebar({
 
           return (
             <div key={folder.id} className="arc-folder">
+              {editingFolderId === folder.id ? (
+                <div className="arc-row arc-folder-row">
+                  <span className="arc-row-chevron" aria-hidden>
+                    {collapsed ? (
+                      <ChevronRight size={14} strokeWidth={1.75} />
+                    ) : (
+                      <ChevronDown size={14} strokeWidth={1.75} />
+                    )}
+                  </span>
+                  <Folder size={16} strokeWidth={1.75} className="arc-row-icon" />
+                  <input
+                    ref={folderInputRef}
+                    className="arc-space-input"
+                    value={folderName}
+                    aria-label="Folder name"
+                    onChange={(e) => setFolderName(e.target.value)}
+                    onBlur={() => {
+                      if (!cancelledRef.current) renameFolder(folder.id, folderName)
+                      cancelledRef.current = false
+                      setEditingFolderId(null)
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault()
+                        ;(e.currentTarget as HTMLInputElement).blur()
+                      }
+                      if (e.key === 'Escape') {
+                        cancelledRef.current = true
+                        setEditingFolderId(null)
+                      }
+                    }}
+                  />
+                </div>
+              ) : (
               <button
                 type="button"
                 id={`sidebar-folder-${folder.id}`}
                 className="arc-row arc-folder-row"
-                aria-haspopup="menu"
+                aria-expanded={!collapsed}
                 onClick={() => toggleFolder(folder.id)}
                 onContextMenu={(e) => openCtxFromMouse(e, 'folder', folder.id)}
                 onKeyDown={(e) => openCtxFromKey(e, 'folder', folder.id)}
@@ -728,6 +889,7 @@ export function Sidebar({
                 <Folder size={16} strokeWidth={1.75} className="arc-row-icon" />
                 <span className="arc-row-title">{folder.title}</span>
               </button>
+              )}
               {!collapsed &&
                 folderItems.map((item) => (
                   <button
@@ -805,11 +967,15 @@ export function Sidebar({
                 key={tab.id}
                 role="tab"
                 aria-selected={tab.isActive}
-                className={`arc-row arc-tab-row${tab.isActive ? ' active' : ''}`}
+                id={`sidebar-tab-${tab.id}`}
+                className={`arc-row arc-tab-row${tab.isActive ? ' active' : ''}${tab.loadError ? ' has-error' : ''}`}
                 tabIndex={tp.tabIndex}
                 draggable={!blank}
                 onFocus={tp.onFocus}
-                onKeyDown={tp.onKeyDown}
+                onKeyDown={(e) => {
+                  openCtxFromKey(e, 'tab', tab.id)
+                  tp.onKeyDown(e)
+                }}
                 onClick={tp.onClick}
                 onDragStart={(e) => {
                   if (blank) {
@@ -824,6 +990,7 @@ export function Sidebar({
                   })
                   e.dataTransfer.setDragImage(e.currentTarget, 12, 12)
                 }}
+                onContextMenu={(e) => openCtxFromMouse(e, 'tab', tab.id)}
                 onAuxClick={(e) => {
                   if (e.button === 1) {
                     e.preventDefault()

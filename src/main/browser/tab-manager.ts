@@ -1,13 +1,22 @@
-import { BrowserWindow, WebContentsView, shell, type WebContents } from 'electron'
+import {
+  BrowserWindow,
+  Menu,
+  WebContentsView,
+  clipboard,
+  shell,
+  type Input,
+  type WebContents
+} from 'electron'
 import { randomUUID } from 'crypto'
 import type {
   BrowserChromeMetrics,
+  ChromeCommand,
   FindInPageOptions,
   FindInPageResult,
   TabId,
   TabState
 } from '../../shared/types'
-import { normalizeUrl } from '../../shared/types'
+import { IPC, normalizeUrl } from '../../shared/types'
 import {
   extractLinks,
   extractText,
@@ -56,7 +65,14 @@ interface ManagedTab {
   guardPolicy: AgentGuardPolicy | null
   activeAttempt: NavigationAttempt | null
   navFailedReason: string | null
+  /** True failed load of the committed URL — distinct from policy-blocked hops. */
+  pageError: string | null
   zoomFactor: number
+}
+
+interface ClosedTabSnapshot {
+  url: string
+  title: string
 }
 
 export interface VisitRecord {
@@ -69,6 +85,7 @@ export interface VisitRecord {
 /** Default new-tab target — chrome renders the New Tab page over about:blank */
 const HOME_URL = 'about:blank'
 const MAX_TABS = 24
+const MAX_CLOSED_TABS = 20
 export const PAGE_PARTITION = 'persist:browgent-pages'
 // Align with waitForLoad (~15s) + multi-hop OAuth redirects; 5s was too short.
 const ATTEMPT_MAX_AGE_MS = 20_000
@@ -89,6 +106,33 @@ function hostOf(u: string | null | undefined): string {
     return new URL(u).hostname.toLowerCase()
   } catch {
     return ''
+  }
+}
+
+function friendlyLoadError(errorCode: number, description?: string): string {
+  switch (errorCode) {
+    case -105:
+      return 'Server not found'
+    case -106:
+      return 'No internet connection'
+    case -118:
+    case -7:
+      return 'Connection timed out'
+    case -102:
+      return 'Connection refused'
+    case -101:
+      return 'Connection reset'
+    case -324:
+      return 'Empty response'
+    case -6:
+      return 'Not found'
+    case -2:
+      return 'Failed to load'
+    default: {
+      const raw = (description || '').trim()
+      if (!raw) return 'Failed to load'
+      return raw.replace(/^ERR_/i, '').replace(/_/g, ' ').toLowerCase()
+    }
   }
 }
 
@@ -122,6 +166,8 @@ export class TabManager {
   onFindResult: ((result: FindInPageResult) => void) | null = null
   /** Optional downloads manager for asset batch saves. */
   downloadManager: DownloadManager | null = null
+  /** LIFO stack of recently closed real pages for ⌘⇧T. */
+  private closedStack: ClosedTabSnapshot[] = []
 
   constructor(
     private window: BrowserWindow,
@@ -314,6 +360,7 @@ export class TabManager {
         ts: Date.now()
       },
       navFailedReason: null,
+      pageError: null,
       zoomFactor: 1
     }
 
@@ -329,6 +376,7 @@ export class TabManager {
       tab.isLoading = false
       tab.title = 'Failed to load'
       tab.navFailedReason = 'Failed to load'
+      tab.pageError = 'Failed to load'
       tab.activeAttempt = null
       this.emitState()
     })
@@ -365,6 +413,7 @@ export class TabManager {
       guardPolicy: null,
       activeAttempt: null,
       navFailedReason: null,
+      pageError: null,
       zoomFactor: 1
     }
 
@@ -379,6 +428,8 @@ export class TabManager {
       console.warn('loadURL failed', err)
       tab.isLoading = false
       tab.title = 'Failed to load'
+      tab.navFailedReason = 'Failed to load'
+      tab.pageError = 'Failed to load'
       this.emitState()
     })
 
@@ -393,6 +444,7 @@ export class TabManager {
     const tab = this.tabs.get(id)
     if (!tab) return false
 
+    this.rememberClosed(tab)
     this.destroyTab(tab)
     this.tabs.delete(id)
     this.lastPopupAt.delete(id)
@@ -439,6 +491,7 @@ export class TabManager {
     const url = gate.url
 
     tab.navFailedReason = null
+    tab.pageError = null
     tab.url = url
     tab.title = 'Loading…'
     tab.isLoading = true
@@ -453,6 +506,7 @@ export class TabManager {
       tab.isLoading = false
       tab.title = 'Failed to load'
       tab.navFailedReason = 'Failed to load'
+      tab.pageError = 'Failed to load'
       tab.activeAttempt = null
       this.emitState()
     })
@@ -469,6 +523,7 @@ export class TabManager {
     const targetUrl = this.getHistoryTargetUrl(tab.id, -1)
     tab.isLoading = true
     tab.navFailedReason = null
+    tab.pageError = null
     if (tab.owner === 'agent' && tab.guardPolicy) {
       this.beginNavigationAttempt(tab.id, targetUrl ? hostOf(targetUrl) : '')
     }
@@ -483,6 +538,7 @@ export class TabManager {
     const targetUrl = this.getHistoryTargetUrl(tab.id, 1)
     tab.isLoading = true
     tab.navFailedReason = null
+    tab.pageError = null
     if (tab.owner === 'agent' && tab.guardPolicy) {
       this.beginNavigationAttempt(tab.id, targetUrl ? hostOf(targetUrl) : '')
     }
@@ -495,9 +551,55 @@ export class TabManager {
     if (!tab || tab.view.webContents.isDestroyed()) return false
     tab.isLoading = true
     tab.navFailedReason = null
+    tab.pageError = null
     tab.view.webContents.reload()
     this.emitState()
     return true
+  }
+
+  duplicateTab(id?: TabId): TabId | null {
+    const tab = this.resolve(id)
+    const url = !tab || this.isBlankTabUrl(tab.url) ? HOME_URL : tab.url
+    const newId = this.createTab(url, true)
+    if (!newId || !tab) return newId
+    const from = this.order.indexOf(newId)
+    if (from < 0) return newId
+    this.order.splice(from, 1)
+    const insertAt = this.order.indexOf(tab.id) + 1
+    this.order.splice(Math.max(0, insertAt), 0, newId)
+    this.emitState()
+    return newId
+  }
+
+  reopenClosedTab(): TabId | null {
+    const snap = this.closedStack.pop()
+    if (!snap) return null
+    const id = this.createTab(snap.url, true)
+    if (!id) this.closedStack.push(snap)
+    return id
+  }
+
+  closeOtherTabs(keepId: TabId): number {
+    if (this.destroyed || !this.tabs.has(keepId)) return 0
+    const ids = this.order.filter((id) => id !== keepId)
+    let n = 0
+    for (const id of ids) {
+      if (this.closeTab(id)) n += 1
+    }
+    this.activateTab(keepId)
+    return n
+  }
+
+  closeTabsToTheRight(id: TabId): number {
+    if (this.destroyed) return 0
+    const idx = this.order.indexOf(id)
+    if (idx < 0) return 0
+    const right = this.order.slice(idx + 1)
+    let n = 0
+    for (const rid of right) {
+      if (this.closeTab(rid)) n += 1
+    }
+    return n
   }
 
   stop(id?: TabId): boolean {
@@ -597,9 +699,234 @@ export class TabManager {
     this.layoutActiveView()
   }
 
+  private sendChromeCommand(cmd: ChromeCommand): void {
+    if (this.window.isDestroyed()) return
+    this.window.webContents.send(IPC.CHROME_COMMAND, cmd)
+  }
+
+  private handleGuestInput(tab: ManagedTab, event: Electron.Event, input: Input): void {
+    if (input.type !== 'keyDown') return
+    const isMac = process.platform === 'darwin'
+    const mod = isMac ? input.meta : input.control
+    const key = input.key.length === 1 ? input.key.toLowerCase() : input.key
+
+    if (!mod) {
+      if (input.key === 'Escape') this.sendChromeCommand('escape')
+      return
+    }
+
+    const steal = (): void => {
+      event.preventDefault()
+    }
+
+    if (key === 't' && input.shift) {
+      steal()
+      this.reopenClosedTab()
+      return
+    }
+    if (key === 't') {
+      steal()
+      this.createTab(HOME_URL, true)
+      return
+    }
+    if (key === 'w' && (!isMac || input.meta)) {
+      steal()
+      this.closeTab(tab.id)
+      return
+    }
+    if (key === 'r' && !input.shift && (!isMac || input.meta)) {
+      steal()
+      this.reload(tab.id)
+      return
+    }
+    if (key === 'l') {
+      steal()
+      this.window.webContents.focus()
+      this.sendChromeCommand('focus-omnibox')
+      return
+    }
+    if (key === 'f' && !input.shift) {
+      steal()
+      this.window.webContents.focus()
+      this.sendChromeCommand('find')
+      return
+    }
+    if (key === 'j' && input.shift) {
+      steal()
+      this.sendChromeCommand('downloads')
+      return
+    }
+    if (key === 'j') {
+      steal()
+      this.sendChromeCommand('agent')
+      return
+    }
+    if (key === 's' && input.shift) {
+      steal()
+      this.sendChromeCommand('sidebar')
+      return
+    }
+    if (key === ',' && !input.shift) {
+      steal()
+      this.sendChromeCommand('settings')
+      return
+    }
+    if (key === 'y' && !input.shift) {
+      steal()
+      this.sendChromeCommand('history')
+      return
+    }
+    if (key === 'd' && !input.shift) {
+      steal()
+      this.sendChromeCommand('bookmark')
+      return
+    }
+    if (key === 'u' && input.shift) {
+      steal()
+      this.sendChromeCommand('summarize')
+      return
+    }
+    if (key === 'p' && !input.shift) {
+      steal()
+      this.print(tab.id)
+      return
+    }
+    if (key === '=' || key === '+' || input.code === 'Equal') {
+      steal()
+      this.zoomIn(tab.id)
+      return
+    }
+    if (key === '-' || key === '_') {
+      steal()
+      this.zoomOut(tab.id)
+      return
+    }
+    if (key === '0') {
+      steal()
+      this.zoomReset(tab.id)
+      return
+    }
+    if (key >= '1' && key <= '9') {
+      steal()
+      const idx = key === '9' ? this.order.length - 1 : Number(key) - 1
+      const id = this.order[idx]
+      if (id) this.activateTab(id)
+      return
+    }
+    if (key === '[' || key === ']') {
+      steal()
+      if (key === '[') this.goBack(tab.id)
+      else this.goForward(tab.id)
+    }
+  }
+
+  private showGuestContextMenu(
+    tab: ManagedTab,
+    params: Electron.ContextMenuParams
+  ): void {
+    const items: Electron.MenuItemConstructorOptions[] = []
+    const link = params.linkURL?.trim()
+    const safeLink = link && /^https?:\/\//i.test(link) ? link : ''
+    if (safeLink) {
+      items.push(
+        {
+          label: 'Open Link in New Tab',
+          click: () => {
+            this.createTab(safeLink, true)
+          }
+        },
+        {
+          label: 'Copy Link Address',
+          click: () => clipboard.writeText(safeLink)
+        },
+        { type: 'separator' }
+      )
+    }
+    if (params.mediaType === 'image' && params.srcURL && /^https?:\/\//i.test(params.srcURL)) {
+      items.push(
+        {
+          label: 'Open Image in New Tab',
+          click: () => {
+            this.createTab(params.srcURL, true)
+          }
+        },
+        {
+          label: 'Copy Image Address',
+          click: () => clipboard.writeText(params.srcURL)
+        },
+        { type: 'separator' }
+      )
+    }
+    if (params.isEditable) {
+      items.push(
+        { role: 'undo' },
+        { role: 'redo' },
+        { type: 'separator' },
+        { role: 'cut' },
+        { role: 'copy' },
+        { role: 'paste' },
+        { role: 'selectAll' },
+        { type: 'separator' }
+      )
+    } else if (params.selectionText?.trim()) {
+      const q = params.selectionText.trim()
+      items.push(
+        { role: 'copy' },
+        {
+          label: `Search for “${q.slice(0, 32)}${q.length > 32 ? '…' : ''}”`,
+          click: () => {
+            this.createTab(`https://www.google.com/search?q=${encodeURIComponent(q)}`, true)
+          }
+        },
+        { type: 'separator' }
+      )
+    }
+    items.push(
+      {
+        label: 'Back',
+        enabled: tab.canGoBack,
+        click: () => {
+          this.goBack(tab.id)
+        }
+      },
+      {
+        label: 'Forward',
+        enabled: tab.canGoForward,
+        click: () => {
+          this.goForward(tab.id)
+        }
+      },
+      {
+        label: 'Reload',
+        click: () => {
+          this.reload(tab.id)
+        }
+      },
+      { type: 'separator' },
+      {
+        label: 'Inspect',
+        click: () => {
+          if (!tab.view.webContents.isDestroyed()) {
+            tab.view.webContents.inspectElement(params.x, params.y)
+          }
+        }
+      }
+    )
+    Menu.buildFromTemplate(items).popup({ window: this.window })
+  }
+
   private isBlankTabUrl(url: string): boolean {
     const u = (url || '').trim().toLowerCase()
     return !u || u === 'about:blank' || u === 'about:blank/' || u === 'about:newtab'
+  }
+
+  private rememberClosed(tab: ManagedTab): void {
+    if (this.isBlankTabUrl(tab.url)) return
+    this.closedStack.push({
+      url: tab.url,
+      title: tab.title || tab.url
+    })
+    if (this.closedStack.length > MAX_CLOSED_TABS) this.closedStack.shift()
   }
 
   layoutActiveView(): void {
@@ -652,7 +979,8 @@ export class TabManager {
         canGoForward: tab.canGoForward,
         isActive: tab.id === this.activeTabId,
         owner: tab.owner,
-        zoomFactor: tab.zoomFactor
+        zoomFactor: tab.zoomFactor,
+        loadError: tab.pageError
       }))
   }
 
@@ -1019,6 +1347,13 @@ export class TabManager {
       if (!this.destroyed) this.emitState()
     }
 
+    webContents.on('before-input-event', (event, input) => {
+      this.handleGuestInput(tab, event, input)
+    })
+    webContents.on('context-menu', (_e, params) => {
+      this.showGuestContextMenu(tab, params)
+    })
+
     webContents.setWindowOpenHandler(({ url: target }) => {
       const now = Date.now()
       // Debounce popup storms (ads / multi-window openers)
@@ -1076,6 +1411,7 @@ export class TabManager {
     webContents.on('did-start-loading', () => {
       tab.isLoading = true
       tab.navFailedReason = null
+      tab.pageError = null
       safeEmit()
     })
     webContents.on('did-stop-loading', () => {
@@ -1086,6 +1422,7 @@ export class TabManager {
     webContents.on('did-finish-load', () => {
       if (tab.activeAttempt) tab.activeAttempt = null
       tab.navFailedReason = null
+      tab.pageError = null
       safeEmit()
       // Best-effort cookie banner handling (prefs-driven; once per nav key)
       const mode = getPrivacyStore().get().cookieBannerMode
@@ -1117,7 +1454,7 @@ export class TabManager {
       }
       safeEmit()
     })
-    webContents.on('did-fail-load', (_e, errorCode, _d, validatedURL, isMainFrame) => {
+    webContents.on('did-fail-load', (_e, errorCode, errorDescription, validatedURL, isMainFrame) => {
       if (isMainFrame === false) {
         safeEmit()
         return
@@ -1126,9 +1463,12 @@ export class TabManager {
         safeEmit()
         return
       }
+      const reason = friendlyLoadError(errorCode, errorDescription)
       tab.isLoading = false
       tab.title = 'Failed to load'
       tab.url = validatedURL || tab.url
+      tab.navFailedReason = reason
+      tab.pageError = reason
       if (tab.activeAttempt) tab.activeAttempt = null
       safeEmit()
     })

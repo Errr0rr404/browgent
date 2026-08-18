@@ -4,6 +4,7 @@ import {
   type AgentSessionState,
   type BrowserChromeMetrics,
   type DownloadItemState,
+  type ChromeCommand,
   type FindInPageOptions,
   type FindInPageResult,
   type HistoryEntry,
@@ -26,6 +27,11 @@ const api = {
   goForward: (id?: TabId): Promise<boolean> => ipcRenderer.invoke(IPC.TAB_FORWARD, id),
   reload: (id?: TabId): Promise<boolean> => ipcRenderer.invoke(IPC.TAB_RELOAD, id),
   stop: (id?: TabId): Promise<boolean> => ipcRenderer.invoke(IPC.TAB_STOP, id),
+  duplicateTab: (id?: TabId): Promise<TabId | null> => ipcRenderer.invoke(IPC.TAB_DUPLICATE, id),
+  reopenClosedTab: (): Promise<TabId | null> => ipcRenderer.invoke(IPC.TAB_REOPEN),
+  closeOtherTabs: (id: TabId): Promise<number> => ipcRenderer.invoke(IPC.TAB_CLOSE_OTHERS, id),
+  closeTabsToTheRight: (id: TabId): Promise<number> =>
+    ipcRenderer.invoke(IPC.TAB_CLOSE_RIGHT, id),
   onTabsState: (cb: (tabs: TabState[]) => void): (() => void) => {
     const listener = (_: Electron.IpcRendererEvent, tabs: TabState[]): void => cb(tabs)
     ipcRenderer.on(IPC.TABS_STATE, listener)
@@ -45,6 +51,17 @@ const api = {
     const listener = (_: Electron.IpcRendererEvent, full: boolean): void => cb(full)
     ipcRenderer.on(IPC.WINDOW_FULLSCREEN_CHANGED, listener)
     return () => ipcRenderer.removeListener(IPC.WINDOW_FULLSCREEN_CHANGED, listener)
+  },
+  isMaximized: (): Promise<boolean> => ipcRenderer.invoke(IPC.WINDOW_MAXIMIZED_GET),
+  onMaximizedChanged: (cb: (max: boolean) => void): (() => void) => {
+    const listener = (_: Electron.IpcRendererEvent, max: boolean): void => cb(max)
+    ipcRenderer.on(IPC.WINDOW_MAXIMIZED_CHANGED, listener)
+    return () => ipcRenderer.removeListener(IPC.WINDOW_MAXIMIZED_CHANGED, listener)
+  },
+  onChromeCommand: (cb: (cmd: ChromeCommand) => void): (() => void) => {
+    const listener = (_: Electron.IpcRendererEvent, cmd: ChromeCommand): void => cb(cmd)
+    ipcRenderer.on(IPC.CHROME_COMMAND, listener)
+    return () => ipcRenderer.removeListener(IPC.CHROME_COMMAND, listener)
   },
 
   sendAgentMessage: (text: string, tabId?: TabId): Promise<void> =>

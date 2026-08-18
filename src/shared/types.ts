@@ -17,6 +17,8 @@ export interface TabState {
   owner?: 'human' | 'agent' | null
   /** Page zoom factor (1 = 100%) */
   zoomFactor?: number
+  /** Main-frame load failure for the current URL (not policy-blocked hops). */
+  loadError?: string | null
 }
 
 /** Persistent browsing history entry (not per-tab back/forward). */
@@ -149,6 +151,20 @@ export interface NavigatePayload {
   input: string
 }
 
+/** Guest-originated chrome actions (page has focus; React keydown never fires). */
+export type ChromeCommand =
+  | 'find'
+  | 'agent'
+  | 'settings'
+  | 'history'
+  | 'sidebar'
+  | 'downloads'
+  | 'bookmark'
+  | 'summarize'
+  | 'stop-agent'
+  | 'focus-omnibox'
+  | 'escape'
+
 export interface ObserveElement {
   ref: string
   role: string
@@ -187,15 +203,23 @@ export const IPC = {
   TAB_FORWARD: 'tab:forward',
   TAB_RELOAD: 'tab:reload',
   TAB_STOP: 'tab:stop',
+  TAB_DUPLICATE: 'tab:duplicate',
+  TAB_REOPEN: 'tab:reopen',
+  TAB_CLOSE_OTHERS: 'tab:closeOthers',
+  TAB_CLOSE_RIGHT: 'tab:closeRight',
   TABS_STATE: 'tabs:state',
   TABS_GET: 'tabs:get',
 
   CHROME_METRICS: 'chrome:metrics',
   /** Hide guest WebContentsView so chrome can paint New Tab / Settings in the content hole */
   GUEST_VISIBLE: 'chrome:guestVisible',
+  /** Guest-page accelerators that need renderer chrome (find, agent, omnibox, …). */
+  CHROME_COMMAND: 'chrome:command',
   APP_VERSION: 'app:version',
   WINDOW_MINIMIZE: 'window:minimize',
   WINDOW_MAXIMIZE: 'window:maximize',
+  WINDOW_MAXIMIZED_GET: 'window:maximizedGet',
+  WINDOW_MAXIMIZED_CHANGED: 'window:maximizedChanged',
   WINDOW_CLOSE: 'window:close',
   WINDOW_FULLSCREEN_GET: 'window:fullscreenGet',
   WINDOW_FULLSCREEN_CHANGED: 'window:fullscreenChanged',

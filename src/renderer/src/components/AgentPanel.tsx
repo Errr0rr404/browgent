@@ -141,7 +141,7 @@ export function AgentPanel({
     const isAnswer = Boolean(state?.waitingQuestion) && state?.status === 'waiting_human'
     return isAnswer
       ? window.browgent.answerHuman(value)
-      : window.browgent.sendAgentMessage(value, state?.activeTabId ?? undefined)
+      : window.browgent.sendAgentMessage(value)
   }
 
   const send = (text?: string): void => {
@@ -268,7 +268,7 @@ export function AgentPanel({
         void window.browgent.recordDemoRun?.().catch(() => undefined)
         void window.browgent.recordRecipeRun?.().catch(() => undefined)
         send(HERO_DEMO_PROMPT)
-        onToast?.('success', 'Hero demo started — watch the agent on example.com')
+        onToast?.('success', 'Hero demo started — watch the agent research')
       } catch {
         onToast?.('error', 'Could not start demo')
       }

@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Clock, Search, Trash2, X } from 'lucide-react'
+import { Clock, Copy, Search, Trash2, X } from 'lucide-react'
 import type { HistoryEntry } from '@shared/types'
 import { Favicon } from './Favicon'
+import { copyText } from '../lib/clipboard'
 import '../styles/chrome-pages.css'
 
 interface Props {
   open: boolean
   onClose: () => void
   onOpenUrl: (url: string, newTab?: boolean) => void
+  onToast?: (kind: 'success' | 'info' | 'error', text: string) => void
 }
 
 function formatWhen(ts: number): string {
@@ -45,7 +47,12 @@ function dayKey(ts: number): string {
   })
 }
 
-export function HistoryPage({ open, onClose, onOpenUrl }: Props): React.JSX.Element | null {
+export function HistoryPage({
+  open,
+  onClose,
+  onOpenUrl,
+  onToast
+}: Props): React.JSX.Element | null {
   const [query, setQuery] = useState('')
   const [entries, setEntries] = useState<HistoryEntry[]>([])
   const [loading, setLoading] = useState(false)
@@ -129,7 +136,8 @@ export function HistoryPage({ open, onClose, onOpenUrl }: Props): React.JSX.Elem
           <button
             type="button"
             className="history-clear-btn settings-btn settings-btn-danger"
-            disabled={query.trim() === '' && entries.length === 0}
+            disabled={query.trim() !== '' || entries.length === 0}
+            title={query.trim() ? 'Clear the search first to wipe all history' : 'Clear all browsing history'}
             onClick={() => {
               if (!window.confirm('Clear all browsing history?')) return
               void window.browgent.clearHistory?.().then(() => refresh(query))
@@ -157,8 +165,14 @@ export function HistoryPage({ open, onClose, onOpenUrl }: Props): React.JSX.Elem
                       <button
                         type="button"
                         className="history-row-main"
-                        onClick={() => onOpenUrl(e.url)}
-                        title={e.url}
+                        onClick={(ev) => onOpenUrl(e.url, ev.metaKey || ev.ctrlKey)}
+                        onAuxClick={(ev) => {
+                          if (ev.button === 1) {
+                            ev.preventDefault()
+                            onOpenUrl(e.url, true)
+                          }
+                        }}
+                        title={`${e.url} — ⌘-click or middle-click for a new tab`}
                       >
                         <Favicon src={e.favicon} title={e.title || e.url} size={16} />
                         <span className="history-row-text">
@@ -169,6 +183,22 @@ export function HistoryPage({ open, onClose, onOpenUrl }: Props): React.JSX.Elem
                           {e.visitCount > 1 ? `${e.visitCount}× · ` : ''}
                           {formatWhen(e.lastVisit)}
                         </span>
+                      </button>
+                      <button
+                        type="button"
+                        className="history-row-delete"
+                        aria-label="Copy URL"
+                        title="Copy URL"
+                        onClick={() => {
+                          void copyText(e.url).then((ok) => {
+                            onToast?.(
+                              ok ? 'success' : 'error',
+                              ok ? 'URL copied' : 'Could not copy URL'
+                            )
+                          })
+                        }}
+                      >
+                        <Copy size={13} strokeWidth={1.75} />
                       </button>
                       <button
                         type="button"

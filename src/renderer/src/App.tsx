@@ -20,10 +20,11 @@ import { useBookmarks } from './stores/bookmarks'
 import { useChromePrefs } from './stores/chromePrefs'
 import { exportTrajectoryFile } from './lib/download'
 import { platformCssToken } from './lib/platform'
-import { isBlankUrl } from './lib/urls'
+import { isBlankUrl, tabDisplayTitle } from './lib/urls'
 import { moodFromAgent } from './components/agent/AgentPet'
 import { FloatingAgentPet } from './components/agent/AgentPet/FloatingAgentPet'
 import { FirstRunModal } from './components/FirstRunModal'
+import { ErrorPage } from './components/ErrorPage'
 import { Toast, type ToastMessage } from './components/Toast'
 import type { AgentMode } from '@shared/policies'
 // Static import: summary.ts is already pulled into the main chunk via recipes.ts,
@@ -130,7 +131,18 @@ export default function App(): React.JSX.Element {
     }
     creatingRef.current = true
     try {
-      await window.browgent.createTab(url)
+      const id = await window.browgent.createTab(url)
+      if (!id) {
+        setToastQueue((q) => [
+          ...q,
+          {
+            id: `toast-${(toastIdRef.current += 1)}`,
+            kind: 'info',
+            text: 'Tab limit (24) reached'
+          }
+        ])
+        return
+      }
       setSettingsOpen(false)
       setHistoryOpen(false)
     } finally {
@@ -329,6 +341,109 @@ export default function App(): React.JSX.Element {
     onSummarizePage
   })
 
+  useEffect(() => {
+    if (!window.browgent?.onChromeCommand) return
+    return window.browgent.onChromeCommand((cmd) => {
+      if (cmd === 'find') {
+        const active = tabs.find((t) => t.isActive)
+        if (!active || isBlankUrl(active.url) || settingsOpen || historyOpen) return
+        setFindOpen(true)
+        window.setTimeout(() => {
+          const input = document.querySelector<HTMLInputElement>('.find-bar-input')
+          input?.focus()
+          input?.select()
+        }, 20)
+        return
+      }
+      if (cmd === 'agent') {
+        setAgentOpen((v) => !v)
+        return
+      }
+      if (cmd === 'settings') {
+        toggleSettings('appearance')
+        return
+      }
+      if (cmd === 'history') {
+        toggleHistory()
+        return
+      }
+      if (cmd === 'sidebar') {
+        setSidebarOpen((v) => !v)
+        return
+      }
+      if (cmd === 'downloads') {
+        setDownloadsOpen((v) => !v)
+        return
+      }
+      if (cmd === 'bookmark') {
+        const active = tabs.find((t) => t.isActive)
+        if (!active?.url || isBlankUrl(active.url)) return
+        const existing = isBookmarkedUrl(active.url)
+        if (existing) toggleFavorite(existing)
+        else pinCurrentAsFavorite(active.title, active.url, active.favicon)
+        return
+      }
+      if (cmd === 'summarize') {
+        onSummarizePage()
+        return
+      }
+      if (cmd === 'stop-agent') {
+        void window.browgent.stopAgent()
+        return
+      }
+      if (cmd === 'focus-omnibox') {
+        setSettingsOpen(false)
+        setHistoryOpen(false)
+        window.setTimeout(() => {
+          const input = document.querySelector<HTMLInputElement>('.omnibox')
+          input?.focus()
+          input?.select()
+        }, 20)
+        return
+      }
+      if (cmd === 'escape') {
+        if (findOpen) {
+          setFindOpen(false)
+          return
+        }
+        if (downloadsOpen) {
+          setDownloadsOpen(false)
+          return
+        }
+        if (historyOpen) {
+          setHistoryOpen(false)
+          return
+        }
+        if (settingsOpen) {
+          setSettingsOpen(false)
+          return
+        }
+        const status = agent?.status
+        if (
+          status === 'thinking' ||
+          status === 'acting' ||
+          status === 'paused' ||
+          status === 'waiting_human'
+        ) {
+          void window.browgent.stopAgent()
+        }
+      }
+    })
+  }, [
+    tabs,
+    settingsOpen,
+    historyOpen,
+    findOpen,
+    downloadsOpen,
+    toggleSettings,
+    toggleHistory,
+    onSummarizePage,
+    isBookmarkedUrl,
+    toggleFavorite,
+    pinCurrentAsFavorite,
+    agent?.status
+  ])
+
   const activeTab = useMemo(() => tabs.find((t) => t.isActive), [tabs])
   const agentBusy =
     agent?.status === 'thinking' ||
@@ -340,14 +455,16 @@ export default function App(): React.JSX.Element {
   const favorited = bookmarkedId ? isFavorite(bookmarkedId) : false
   const firstRunOpen = prefsHydrated && !onboardingDismissed
   const chromeOverlay = settingsOpen || historyOpen
+  const loadError = !chromeOverlay && Boolean(activeTab?.loadError)
   // First-run is a full-window HTML modal — guest view would cover it if a real page is showing
-  const guestMustHide = chromeOverlay || firstRunOpen
-  const showNewTab = !chromeOverlay && isBlankUrl(activeTab?.url)
+  const guestMustHide = chromeOverlay || firstRunOpen || loadError
+  const showNewTab = !chromeOverlay && !loadError && isBlankUrl(activeTab?.url)
   // Guest WebContentsView covers the content hole on real pages — native overlay there.
   // On New Tab / Settings the guest is hidden — React float is reliable.
   const guestCoveringPage = !guestMustHide && !showNewTab
   // Hide React pet on Settings/History (chrome overlays) so it does not steal clicks
-  const showReactPet = agentPetVisible && !agentOpen && !guestCoveringPage && !chromeOverlay
+  const showReactPet =
+    agentPetVisible && !agentOpen && !guestCoveringPage && !chromeOverlay && !firstRunOpen
   const downloadActiveCount = useMemo(
     () => downloads.filter((d) => d.state === 'progressing').length,
     [downloads]
@@ -384,8 +501,19 @@ export default function App(): React.JSX.Element {
   }, [guestMustHide])
 
   useEffect(() => {
-    if (chromeOverlay || showNewTab) setFindOpen(false)
-  }, [chromeOverlay, showNewTab])
+    if (chromeOverlay || showNewTab || loadError) setFindOpen(false)
+  }, [chromeOverlay, showNewTab, loadError])
+
+  useEffect(() => {
+    const page = settingsOpen
+      ? 'Settings'
+      : historyOpen
+        ? 'History'
+        : loadError
+          ? 'Failed to load'
+          : tabDisplayTitle(activeTab?.title, activeTab?.url)
+    document.title = `${page} — Browgent`
+  }, [settingsOpen, historyOpen, loadError, activeTab?.title, activeTab?.url])
 
   const favorites = useMemo(() => {
     const space =
@@ -428,6 +556,7 @@ export default function App(): React.JSX.Element {
             }}
             onClose={(id) => void window.browgent.closeTab(id)}
             onNew={() => void createTabOnce()}
+            onToast={pushToast}
           />
         )}
         <Toolbar
@@ -456,9 +585,10 @@ export default function App(): React.JSX.Element {
           onOpenDownloads={openDownloads}
           onDownloadsOpenChange={setDownloadsOpen}
           onSummarizePage={onSummarizePage}
+          onToast={pushToast}
         />
         <FindBar
-          open={findOpen && !chromeOverlay && !showNewTab}
+          open={findOpen && !chromeOverlay && !showNewTab && !loadError}
           tabId={activeTab?.id}
           onClose={() => setFindOpen(false)}
         />
@@ -492,7 +622,7 @@ export default function App(): React.JSX.Element {
         <div
           className="content-hole"
           ref={contentRef}
-          aria-hidden={!chromeOverlay && !showNewTab}
+          aria-hidden={!chromeOverlay && !showNewTab && !loadError}
         >
           {settingsOpen ? (
             <SettingsPage
@@ -511,6 +641,14 @@ export default function App(): React.JSX.Element {
               open={historyOpen}
               onClose={() => setHistoryOpen(false)}
               onOpenUrl={openUrl}
+              onToast={pushToast}
+            />
+          ) : loadError && activeTab ? (
+            <ErrorPage
+              url={activeTab.url}
+              reason={activeTab.loadError}
+              onRetry={() => void window.browgent.reload(activeTab.id)}
+              onSearch={(url) => openUrl(url)}
             />
           ) : showNewTab ? (
             <NewTabPage
@@ -549,6 +687,7 @@ export default function App(): React.JSX.Element {
         onZoomOut={() => void window.browgent.zoomOut?.(activeTab?.id)}
         onZoomReset={() => void window.browgent.zoomReset?.(activeTab?.id)}
         onToast={pushToast}
+        onOpenAgent={() => setAgentOpen(true)}
       />
 
       {showReactPet && (

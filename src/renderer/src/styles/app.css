@@ -187,6 +187,11 @@
     0 -1px 12px color-mix(in srgb, #000 18%, transparent);
 }
 
+.tab.has-error .tab-title,
+.arc-tab-row.has-error .arc-row-title {
+  color: var(--danger);
+}
+
 .tab-favicon {
   width: 14px;
   height: 14px;
@@ -347,6 +352,14 @@
   color: var(--accent);
 }
 
+.omnibox-cluster {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
 .omnibox-wrap {
   flex: 1;
   min-width: 0;
@@ -367,6 +380,14 @@
 .omnibox-wrap:focus-within {
   border-color: var(--border-focus);
   box-shadow: 0 0 0 3px var(--accent-dim);
+}
+
+.omnibox-wrap.has-error {
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--border-strong));
+}
+
+.omnibox-wrap.has-error .omnibox-icon {
+  color: var(--danger);
 }
 
 .omnibox-icon {
@@ -1713,6 +1734,18 @@
   font-size: var(--fs-sm);
   font-family: var(--font-mono);
   letter-spacing: 0.01em;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.statusbar::-webkit-scrollbar {
+  display: none;
+}
+
+@media (max-width: 1080px) {
+  .statusbar-version {
+    display: none;
+  }
 }
 
 .statusbar-sep {
@@ -2379,6 +2412,102 @@
 .find-bar-btn:hover {
   background: var(--bg-hover);
   color: var(--text-primary);
+}
+
+/* ── Tab context menu (in-flow so guest WebContentsView cannot cover it) ─ */
+.tab-context-flyout {
+  padding: 0 var(--chrome-pad-x) var(--space-4);
+  -webkit-app-region: no-drag;
+}
+
+.tab-context-menu {
+  position: relative;
+  left: auto;
+  top: auto;
+  min-width: 200px;
+  max-width: 280px;
+}
+
+/* ── Omnibox suggestions ─────────────────────────────────────── */
+.omnibox-suggest {
+  z-index: 50;
+  -webkit-app-region: no-drag;
+}
+
+.omnibox-suggest--popup {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+}
+
+.omnibox-suggest--chrome {
+  position: relative;
+  padding: 0 var(--chrome-pad-x) var(--space-4);
+}
+
+.omnibox-suggest-list {
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-2);
+  border-radius: var(--flyout-radius);
+  border: var(--bw) solid var(--border-strong);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-float);
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.omnibox-suggest-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  width: 100%;
+  min-height: 34px;
+  padding: 0 var(--space-4);
+  border-radius: var(--r-md);
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.omnibox-suggest-item:hover,
+.omnibox-suggest-item.is-active {
+  background: var(--bg-hover);
+}
+
+.omnibox-suggest-icon {
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.omnibox-suggest-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.omnibox-suggest-title {
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semibold);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.omnibox-suggest-sub {
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ── Downloads panel (mirrors theme picker flyout modes) ──────── */

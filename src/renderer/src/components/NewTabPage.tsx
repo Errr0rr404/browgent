@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Info, Search, X } from 'lucide-react'
+import type { HistoryEntry } from '@shared/types'
 import { Favicon } from './Favicon'
 import { BrandMark } from './BrandMark'
 import {
   buildSearchUrl,
+  looksLikeNavigableUrl,
   resolveOmniboxInput,
   useChromePrefs
 } from '../stores/chromePrefs'
@@ -26,8 +28,8 @@ interface Props {
 }
 
 const AGENT_CHIPS = [
-  'summarize this page in 3 bullets',
-  'list interactive elements on this page',
+  'open news.ycombinator.com and summarize the top 5 stories',
+  'open wikipedia.org and extract the featured article title',
   'open example.com and extract the main text'
 ] as const
 
@@ -72,6 +74,7 @@ export function NewTabPage({
   const { greetingName, ntClock, ntFavs, ntChips, searchEngine } =
     useChromePrefs()
   const [query, setQuery] = useState('')
+  const [recents, setRecents] = useState<HistoryEntry[]>([])
   const [now, setNow] = useState(() => new Date())
   const [infoOpen, setInfoOpen] = useState(() => {
     try {
@@ -100,6 +103,14 @@ export function NewTabPage({
     return () => window.clearTimeout(t)
   }, [])
 
+  useEffect(() => {
+    if (!window.browgent?.getHistory) return
+    void window.browgent
+      .getHistory(8)
+      .then((rows) => setRecents(rows.filter((e) => e.url)))
+      .catch(() => setRecents([]))
+  }, [])
+
   const clock = useMemo(() => formatClock(now), [now])
   const greeting = useMemo(() => {
     const base = greetingPrefix(now.getHours())
@@ -117,10 +128,7 @@ export function NewTabPage({
     const raw = currentQuery()
     if (!raw) return
     // Prefer real search for plain language; only treat as URL when it looks like one
-    const looksLikeUrl =
-      /^https?:\/\//i.test(raw) ||
-      /^\/\//.test(raw) ||
-      (/^[^\s]+\.[a-z]{2,}([/:?#].*)?$/i.test(raw) && !/\s/.test(raw))
+    const looksLikeUrl = looksLikeNavigableUrl(raw)
     const target = looksLikeUrl
       ? resolveOmniboxInput(raw, searchEngine)
       : buildSearchUrl(searchEngine, raw)
@@ -275,6 +283,32 @@ export function NewTabPage({
               Pin sites with the star or {mod}D — they show up here.
             </p>
           )
+        )}
+
+        {recents.filter((e) => !favorites.some((f) => f.url === e.url)).length > 0 && (
+          <div className="newtab-recents newtab-enter newtab-enter-5">
+            <p className="chrome-section-label">Recent</p>
+            <ul className="newtab-recent-list">
+              {recents
+                .filter((e) => !favorites.some((f) => f.url === e.url))
+                .map((e) => (
+                <li key={e.id}>
+                  <button
+                    type="button"
+                    className="newtab-recent"
+                    title={e.url}
+                    onClick={() => onNavigate(e.url)}
+                  >
+                    <Favicon src={e.favicon} title={e.title || e.url} size={16} />
+                    <span className="newtab-recent-text">
+                      <span className="newtab-recent-title">{e.title || e.url}</span>
+                      <span className="newtab-recent-url">{e.url}</span>
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
         )}
       </div>
     </div>

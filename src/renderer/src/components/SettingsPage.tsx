@@ -73,6 +73,7 @@ function buildShortcuts(mod: string): Array<{ label: string; keys: string[] }> {
   const shift = mod === '⌘' ? '⇧' : 'Shift'
   return [
     { label: 'New tab', keys: [mod, 'T'] },
+    { label: 'Reopen closed tab', keys: [mod, shift, 'T'] },
     { label: 'Close tab', keys: [mod, 'W'] },
     { label: 'Focus address bar', keys: [mod, 'L'] },
     { label: 'Toggle agent panel', keys: [mod, 'J'] },
@@ -273,6 +274,7 @@ export function SettingsPage({
                 key={n.id}
                 type="button"
                 className={`settings-nav-btn${section === n.id ? ' active' : ''}`}
+                aria-current={section === n.id ? 'page' : undefined}
                 onClick={() => setSection(n.id)}
               >
                 {n.icon}
@@ -904,7 +906,7 @@ function PrivacyBlockingCard(): React.JSX.Element {
           </span>
         </span>
         <select
-          className="settings-num"
+          className="settings-select"
           value={prefs.cookieBannerMode}
           aria-label="Cookie banner mode"
           onChange={(e) => {

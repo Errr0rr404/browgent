@@ -3,6 +3,15 @@
 /* ── Shared tokens (map design → app theme vars) ─────────────── */
 .newtab,
 .settings-page,
+.history-page,
+.error-page,
+.firstrun-card,
+.library-manager {
+  user-select: text;
+}
+
+.newtab,
+.settings-page,
 .library-manager {
   --cp-input-grad: var(--input-grad);
   --cp-chip-bg: var(--chip-bg);
@@ -367,6 +376,156 @@
   font-size: var(--fs-md);
   line-height: 1.45;
   color: var(--text-muted);
+}
+
+.newtab-recents {
+  position: relative;
+  width: min(640px, 90%);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.newtab-recent-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.newtab-recent {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  width: 100%;
+  min-height: 40px;
+  padding: 0 var(--space-5);
+  border-radius: var(--r-md);
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.newtab-recent:hover {
+  background: var(--bg-hover);
+}
+
+.newtab-recent-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.newtab-recent-title {
+  font-size: var(--fs-base);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.newtab-recent-url {
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.error-page {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow-y: auto;
+  background: var(--bg-app);
+  padding: var(--space-10);
+}
+
+.error-page-inner {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-5);
+  max-width: 440px;
+  text-align: center;
+}
+
+.error-page-icon {
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  color: var(--danger);
+  border: var(--bw) solid color-mix(in srgb, var(--danger) 28%, transparent);
+}
+
+.error-page-title {
+  margin: 0;
+  font-size: var(--fs-xl);
+  font-weight: var(--fw-bold);
+  letter-spacing: -0.02em;
+}
+
+.error-page-host {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-base);
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.error-page-reason {
+  margin: 0;
+  font-size: var(--fs-md);
+  color: var(--text-muted);
+}
+
+.error-page-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-4);
+  margin-top: var(--space-4);
+}
+
+.error-page-retry,
+.error-page-search {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: var(--ctrl-lg);
+  padding: 0 var(--space-8);
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semibold);
+  cursor: pointer;
+}
+
+.error-page-retry {
+  background: var(--accent-grad);
+  color: var(--text-inverse);
+  border: none;
+}
+
+.error-page-search {
+  background: transparent;
+  color: var(--text-secondary);
+  border: var(--bw) solid var(--border-strong);
+}
+
+.error-page-search:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
 }
 
 /* ── Settings ────────────────────────────────────────────────── */
@@ -846,6 +1005,17 @@
   background: var(--bg-input);
   color: var(--text-primary);
   user-select: text;
+}
+
+.settings-select {
+  min-width: 11rem;
+  width: auto;
+  height: var(--ctrl-md);
+  padding: 0 var(--space-5);
+  border-radius: var(--radius-sm);
+  border: var(--cp-bw) solid var(--border-strong);
+  background: var(--bg-input);
+  color: var(--text-primary);
 }
 
 .settings-num.mono,

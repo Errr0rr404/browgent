@@ -411,6 +411,12 @@ function createWindow(): void {
   }
   mainWindow.on('enter-full-screen', emitFullscreen)
   mainWindow.on('leave-full-screen', emitFullscreen)
+  const emitMaximized = (): void => {
+    if (!mainWindow || mainWindow.isDestroyed()) return
+    mainWindow.webContents.send(IPC.WINDOW_MAXIMIZED_CHANGED, mainWindow.isMaximized())
+  }
+  mainWindow.on('maximize', emitMaximized)
+  mainWindow.on('unmaximize', emitMaximized)
   // Some macOS builds report late; re-sync after show
   mainWindow.once('ready-to-show', () => {
     setTimeout(emitFullscreen, 0)
@@ -460,6 +466,8 @@ function registerIpcOnce(): void {
     IPC.DOWNLOADS_STATE,
     IPC.PRIVACY_STATE,
     IPC.WINDOW_FULLSCREEN_CHANGED,
+    IPC.WINDOW_MAXIMIZED_CHANGED,
+    IPC.CHROME_COMMAND,
     IPC.PET_STATE,
     IPC.PET_MOVED,
     // PetOverlay owns these invoke handlers — removing them on first launch
@@ -523,6 +531,25 @@ function registerIpcOnce(): void {
     assertChromeSender(e)
     if (!tabs) return false
     return tabs.stop(ensureOptionalTabId(id, 'tab.stop.id'))
+  })
+  ipcMain.handle(IPC.TAB_DUPLICATE, (e, id?: unknown) => {
+    assertChromeSender(e)
+    if (!tabs) return null
+    return tabs.duplicateTab(ensureOptionalTabId(id, 'tab.duplicate.id'))
+  })
+  ipcMain.handle(IPC.TAB_REOPEN, (e) => {
+    assertChromeSender(e)
+    return tabs?.reopenClosedTab() ?? null
+  })
+  ipcMain.handle(IPC.TAB_CLOSE_OTHERS, (e, id: unknown) => {
+    assertChromeSender(e)
+    if (!tabs) return 0
+    return tabs.closeOtherTabs(ensureTabId(id, 'tab.closeOthers.id'))
+  })
+  ipcMain.handle(IPC.TAB_CLOSE_RIGHT, (e, id: unknown) => {
+    assertChromeSender(e)
+    if (!tabs) return 0
+    return tabs.closeTabsToTheRight(ensureTabId(id, 'tab.closeRight.id'))
   })
 
   ipcMain.handle(IPC.CHROME_METRICS, (e, metrics: unknown) => {
@@ -591,6 +618,10 @@ function registerIpcOnce(): void {
   ipcMain.handle(IPC.WINDOW_FULLSCREEN_GET, (e) => {
     assertChromeSender(e)
     return Boolean(mainWindow && !mainWindow.isDestroyed() && mainWindow.isFullScreen())
+  })
+  ipcMain.handle(IPC.WINDOW_MAXIMIZED_GET, (e) => {
+    assertChromeSender(e)
+    return Boolean(mainWindow && !mainWindow.isDestroyed() && mainWindow.isMaximized())
   })
 
   ipcMain.handle(IPC.AGENT_SEND, async (e, text: unknown, tabId?: unknown) => {

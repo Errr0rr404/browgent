@@ -18,6 +18,19 @@
 - **Autofill:** `fill_form` tool + profile recipes
 - **QA asserts:** `assert_text` / `assert_url` / `assert_element` + [docs/qa.md](./docs/qa.md)
 
+### Improved
+- **Failed loads** now surface a chrome error page (retry / search) instead of a silent “Failed to load” title; agent wait-for-load also sees the failure
+- **Reopen closed tab** (⌘⇧T), **duplicate tab**, and a tab context menu (close others / close to the right / copy URL)
+- **Address bar suggestions** from history, plus copy-URL in the omnibox and status bar
+- History: ⌘/middle-click opens in a new tab; copy URL on each row
+- New Tab shows recent visits under favorites
+- Status bar no longer overflows on narrow windows
+- Keyboard shortcuts and a page context menu now work **while a guest page is focused**
+- `localhost:3000` / `127.0.0.1` in the address bar navigate locally instead of searching
+- Agent panel send always targets the **active** tab; status-bar agent pill opens the panel
+- New Tab agent chips no longer assume a live page; folders can be renamed
+- Cookie-banner select, history “Clear all” while searching, and Win/Linux maximize icon drift fixed
+
 ### Changed
 - **Narrative sharpened for YC:** outcome-first README one-liner (agent in your real browser, one click from takeover); comparison table trimmed to 5 defensible, checkable rows with a **BrowserOS** column that concedes the OSS + local-first tie
 - **Positioning:** BrowserOS named as the primary foil consistently across README + [docs/market.md](./docs/market.md) + [docs/yc-application.md](./docs/yc-application.md); beachhead ICP called out — developers whose browser agents keep failing on real login/SSO/CAPTCHA walls (other personas demoted to "also useful for")
